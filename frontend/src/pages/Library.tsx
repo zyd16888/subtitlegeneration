@@ -18,8 +18,6 @@ import {
 } from 'antd';
 import {
   SearchOutlined,
-  CheckCircleFilled,
-  CloseCircleFilled,
   PlayCircleOutlined,
   FilterOutlined,
   AppstoreOutlined,
@@ -33,9 +31,6 @@ const { Search } = Input;
 const { Option } = Select;
 const { Text, Title } = Typography;
 
-/**
- * 增强型媒体项卡片图片组件
- */
 const MediaItemImage: React.FC<{
   imageUrl?: string;
   name: string;
@@ -50,8 +45,8 @@ const MediaItemImage: React.FC<{
       style={{
         position: 'relative',
         width: '100%',
-        paddingTop: '150%', // 2:3 Aspect Ratio
-        background: '#141414',
+        paddingTop: '150%',
+        background: 'var(--bg-container)',
         overflow: 'hidden',
         borderRadius: '8px 8px 0 0',
       }}
@@ -86,24 +81,16 @@ const MediaItemImage: React.FC<{
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'linear-gradient(135deg, #1f1f1f 0%, #141414 100%)',
-            gap: 12
+            background: 'var(--placeholder-bg)',
+            gap: 12,
           }}
         >
-          <PlayCircleOutlined style={{ fontSize: 40, color: 'rgba(255,255,255,0.1)' }} />
+          <PlayCircleOutlined style={{ fontSize: 40, color: 'var(--placeholder-icon)' }} />
           <Text type="secondary" style={{ fontSize: 10 }}>暂无封面</Text>
         </div>
       )}
-      
-      {/* Subtitle Badge */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 8,
-          right: 8,
-          zIndex: 2,
-        }}
-      >
+
+      <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
         <Badge
           count={hasSubtitles ? '已有字幕' : '无字幕'}
           style={{
@@ -115,20 +102,19 @@ const MediaItemImage: React.FC<{
         />
       </div>
 
-      {/* Hover Overlay */}
       <div className="media-card-overlay">
         <div className="overlay-content">
-          <Button 
-            type="primary" 
-            shape="circle" 
-            icon={<PlayCircleOutlined />} 
-            size="large" 
-            style={{ 
-              width: 50, 
-              height: 50, 
+          <Button
+            type="primary"
+            shape="circle"
+            icon={<PlayCircleOutlined />}
+            size="large"
+            style={{
+              width: 50,
+              height: 50,
               fontSize: 24,
-              boxShadow: '0 4px 15px rgba(22, 119, 255, 0.4)'
-            }} 
+              boxShadow: '0 4px 15px rgba(22, 119, 255, 0.4)',
+            }}
           />
           <div style={{ marginTop: 12, color: 'white', fontSize: 12, fontWeight: 500 }}>
             {type === 'Series' ? '展开剧集' : '生成字幕'}
@@ -146,7 +132,8 @@ const LibraryPage: React.FC = () => {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined);
   const [searchText, setSearchText] = useState<string>('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_error, setError] = useState<string | null>(null);
   const [embyConfigured, setEmbyConfigured] = useState(true);
   const [configValid, setConfigValid] = useState(true);
   const [configMessage, setConfigMessage] = useState<string>('');
@@ -190,7 +177,7 @@ const LibraryPage: React.FC = () => {
 
   const fetchMediaItems = async () => {
     if (!embyConfigured || !selectedLibrary) return;
-    
+
     setLoading(true);
     try {
       const response = await api.media.getMediaItems({
@@ -266,7 +253,6 @@ const LibraryPage: React.FC = () => {
         />
       )}
 
-      {/* Floating Filter Bar */}
       <Card className="glass-card" style={{ marginBottom: 24, borderRadius: 16 }} bodyStyle={{ padding: '16px 24px' }}>
         <Row gutter={[24, 16]} align="middle">
           <Col xs={24} md={6}>
@@ -314,7 +300,6 @@ const LibraryPage: React.FC = () => {
         </Row>
       </Card>
 
-      {/* Media Grid */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '100px' }}><Spin size="large" tip="正在同步媒体库..." /></div>
       ) : !selectedLibrary ? (
@@ -326,7 +311,7 @@ const LibraryPage: React.FC = () => {
           <Row gutter={[20, 20]}>
             {mediaItems.map((item) => (
               <Col key={item.id} xs={12} sm={8} md={6} lg={4} xl={3}>
-                <div 
+                <div
                   className="media-card"
                   onClick={() => handleItemClick(item)}
                 >
@@ -339,7 +324,7 @@ const LibraryPage: React.FC = () => {
                   <div className="media-card-info">
                     <Text className="media-card-title" ellipsis={{ tooltip: item.name }}>{item.name}</Text>
                     <div style={{ marginTop: 4 }}>
-                      <Tag color="rgba(255,255,255,0.08)" style={{ fontSize: 10, border: 'none', margin: 0, color: 'rgba(255,255,255,0.45)' }}>
+                      <Tag style={{ fontSize: 10, border: 'none', margin: 0, color: 'var(--text-secondary)', background: 'var(--bg-spotlight)' }}>
                         {item.type === 'Series' ? '剧集' : item.type === 'Movie' ? '电影' : '视频'}
                       </Tag>
                     </div>
@@ -388,9 +373,9 @@ const LibraryPage: React.FC = () => {
 
       <style dangerouslySetInnerHTML={{ __html: `
         .media-card {
-          background: #141414;
+          background: var(--bg-container);
           border-radius: 12px;
-          border: 1px solid rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--border-color);
           cursor: pointer;
           transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
           height: 100%;
@@ -399,8 +384,8 @@ const LibraryPage: React.FC = () => {
         }
         .media-card:hover {
           transform: translateY(-8px);
-          border-color: rgba(22, 119, 255, 0.3);
-          box-shadow: 0 12px 24px rgba(0, 0, 0, 0.5);
+          border-color: var(--card-hover-border);
+          box-shadow: var(--card-hover-shadow);
         }
         .media-card:hover .media-card-img {
           transform: scale(1.1);
@@ -415,7 +400,7 @@ const LibraryPage: React.FC = () => {
           font-size: 13px;
           font-weight: 500;
           display: block;
-          color: rgba(255, 255, 255, 0.85);
+          color: var(--text-primary);
         }
         .media-card-overlay {
           position: absolute;

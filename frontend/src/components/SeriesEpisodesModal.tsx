@@ -139,8 +139,8 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
             fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mN8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
           />
         ) : (
-          <div style={{ width: 60, height: 40, background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <PlayCircleOutlined style={{ fontSize: 20, color: '#ccc' }} />
+          <div style={{ width: 60, height: 40, background: 'var(--bg-spotlight)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <PlayCircleOutlined style={{ fontSize: 20, color: 'var(--placeholder-icon)' }} />
           </div>
         )
       ),

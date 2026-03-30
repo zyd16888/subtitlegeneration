@@ -12,7 +12,11 @@ from services.emby_connector import EmbyConnector
 from services.translation_service import (
     OpenAITranslator,
     DeepSeekTranslator,
-    LocalLLMTranslator
+    LocalLLMTranslator,
+    GoogleTranslator,
+    MicrosoftTranslator,
+    BaiduTranslator,
+    DeepLTranslator,
 )
 
 router = APIRouter(prefix="/api", tags=["config"])
@@ -32,10 +36,21 @@ class TestEmbyRequest(BaseModel):
 
 class TestTranslationRequest(BaseModel):
     """测试翻译服务请求模型"""
-    translation_service: str  # openai, deepseek, local
+    translation_service: str  # openai, deepseek, local, google, microsoft, baidu, deepl
     api_key: Optional[str] = None
     api_url: Optional[str] = None
     model: Optional[str] = None
+    # Google 翻译
+    google_translate_mode: Optional[str] = "free"
+    # 微软翻译
+    microsoft_translate_mode: Optional[str] = "free"
+    microsoft_region: Optional[str] = "global"
+    # 百度翻译
+    baidu_app_id: Optional[str] = None
+    baidu_secret_key: Optional[str] = None
+    # DeepL
+    deepl_mode: Optional[str] = "deeplx"
+    deeplx_url: Optional[str] = None
 
 
 @router.get("/config", response_model=SystemConfigData)
@@ -202,9 +217,43 @@ async def test_translation_service(request: TestTranslationRequest):
         elif request.translation_service == "local":
             if not request.api_url:
                 raise ValueError("本地 LLM 翻译服务需要 API URL")
-            
+
             translator = LocalLLMTranslator(api_url=request.api_url)
-            
+
+        elif request.translation_service == "google":
+            translator = GoogleTranslator(
+                mode=request.google_translate_mode or "free",
+                api_key=request.api_key,
+            )
+
+        elif request.translation_service == "microsoft":
+            ms_mode = request.microsoft_translate_mode or "free"
+            if ms_mode == "api" and not request.api_key:
+                raise ValueError("微软翻译 API 模式需要 API Key")
+            translator = MicrosoftTranslator(
+                mode=ms_mode,
+                api_key=request.api_key,
+                region=request.microsoft_region or "global",
+            )
+
+        elif request.translation_service == "baidu":
+            if not request.baidu_app_id or not request.baidu_secret_key:
+                raise ValueError("百度翻译服务需要 APP ID 和 Secret Key")
+            translator = BaiduTranslator(
+                app_id=request.baidu_app_id,
+                secret_key=request.baidu_secret_key,
+            )
+
+        elif request.translation_service == "deepl":
+            dl_mode = request.deepl_mode or "deeplx"
+            if dl_mode == "api" and not request.api_key:
+                raise ValueError("DeepL 官方 API 模式需要 API Key")
+            translator = DeepLTranslator(
+                mode=dl_mode,
+                api_key=request.api_key,
+                deeplx_url=request.deeplx_url,
+            )
+
         else:
             raise ValueError(f"不支持的翻译服务类型: {request.translation_service}")
         
@@ -290,7 +339,26 @@ async def validate_config(db: Session = Depends(get_db)):
         elif config.translation_service == "local":
             if not config.local_llm_url:
                 missing_fields.append("本地 LLM URL")
-        
+        elif config.translation_service == "google":
+            mode = getattr(config, "google_translate_mode", "free")
+            if mode == "api" and not getattr(config, "google_api_key", None):
+                missing_fields.append("Google API Key")
+        elif config.translation_service == "microsoft":
+            ms_mode = getattr(config, "microsoft_translate_mode", "free")
+            if ms_mode == "api" and not getattr(config, "microsoft_api_key", None):
+                missing_fields.append("微软翻译 API Key")
+        elif config.translation_service == "baidu":
+            if not getattr(config, "baidu_app_id", None):
+                missing_fields.append("百度翻译 APP ID")
+            if not getattr(config, "baidu_secret_key", None):
+                missing_fields.append("百度翻译 Secret Key")
+        elif config.translation_service == "deepl":
+            dl_mode = getattr(config, "deepl_mode", "deeplx")
+            if dl_mode == "api" and not getattr(config, "deepl_api_key", None):
+                missing_fields.append("DeepL API Key")
+            if dl_mode == "deeplx" and not getattr(config, "deeplx_url", None):
+                missing_fields.append("DeepLX 服务地址")
+
         is_valid = len(missing_fields) == 0
         
         if is_valid:

@@ -28,17 +28,27 @@ class SystemConfigData(BaseModel):
     target_language: str = "zh"
 
     # 翻译服务配置
-    translation_service: str = "openai"  # openai, deepseek, local
+    translation_service: str = "openai"  # openai, deepseek, local, google, microsoft, baidu, deepl
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4"
     deepseek_api_key: Optional[str] = None
     local_llm_url: Optional[str] = None
+    google_translate_mode: str = "free"  # free, api
+    google_api_key: Optional[str] = None
+    microsoft_translate_mode: str = "free"  # free, api
+    microsoft_api_key: Optional[str] = None
+    microsoft_region: str = "global"
+    baidu_app_id: Optional[str] = None
+    baidu_secret_key: Optional[str] = None
+    deepl_mode: str = "deeplx"  # deeplx, api
+    deepl_api_key: Optional[str] = None
+    deeplx_url: Optional[str] = None
     
     # 任务配置
     max_concurrent_tasks: int = 2
     temp_dir: str = "/tmp/subtitle_service"
     
-    @field_validator('emby_url', 'cloud_asr_url', 'local_llm_url')
+    @field_validator('emby_url', 'cloud_asr_url', 'local_llm_url', 'deeplx_url')
     @classmethod
     def validate_url(cls, v: Optional[str]) -> Optional[str]:
         """验证 URL 格式"""
@@ -61,8 +71,8 @@ class SystemConfigData(BaseModel):
     @classmethod
     def validate_translation_service(cls, v: str) -> str:
         """验证翻译服务类型"""
-        if v not in ['openai', 'deepseek', 'local']:
-            raise ValueError('翻译服务必须是 openai, deepseek 或 local')
+        if v not in ['openai', 'deepseek', 'local', 'google', 'microsoft', 'baidu', 'deepl']:
+            raise ValueError('翻译服务必须是 openai, deepseek, local, google, microsoft, baidu 或 deepl')
         return v
 
 

@@ -24,6 +24,10 @@ from services.translation_service import (
     OpenAITranslator,
     DeepSeekTranslator,
     LocalLLMTranslator,
+    GoogleTranslator,
+    MicrosoftTranslator,
+    BaiduTranslator,
+    DeepLTranslator,
 )
 from services.subtitle_generator import SubtitleGenerator, SubtitleSegment
 from services.task_manager import TaskManager
@@ -95,6 +99,24 @@ def _get_translation_service(config) -> TranslationService:
         if not config.local_llm_url:
             raise ValueError("本地 LLM 翻译服务需要配置 API URL")
         return LocalLLMTranslator(config.local_llm_url)
+    elif config.translation_service == "google":
+        mode = getattr(config, "google_translate_mode", "free")
+        api_key = getattr(config, "google_api_key", None)
+        return GoogleTranslator(mode=mode, api_key=api_key)
+    elif config.translation_service == "microsoft":
+        mode = getattr(config, "microsoft_translate_mode", "free")
+        api_key = getattr(config, "microsoft_api_key", None)
+        region = getattr(config, "microsoft_region", "global")
+        return MicrosoftTranslator(mode=mode, api_key=api_key, region=region)
+    elif config.translation_service == "baidu":
+        if not getattr(config, "baidu_app_id", None) or not getattr(config, "baidu_secret_key", None):
+            raise ValueError("百度翻译服务需要配置 APP ID 和 Secret Key")
+        return BaiduTranslator(app_id=config.baidu_app_id, secret_key=config.baidu_secret_key)
+    elif config.translation_service == "deepl":
+        mode = getattr(config, "deepl_mode", "deeplx")
+        api_key = getattr(config, "deepl_api_key", None)
+        deeplx_url = getattr(config, "deeplx_url", None)
+        return DeepLTranslator(mode=mode, api_key=api_key, deeplx_url=deeplx_url)
     else:
         raise ValueError(f"不支持的翻译服务类型: {config.translation_service}")
 

@@ -83,7 +83,7 @@ const Tasks: React.FC = () => {
         <div>
           <p>确定要取消以下任务吗？</p>
           {mediaTitle && <p style={{ fontWeight: 'bold' }}>{mediaTitle}</p>}
-          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px' }}>取消后任务将停止处理，无法恢复。</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>取消后任务将停止处理，无法恢复。</p>
         </div>
       ),
       okText: '确认取消',
@@ -109,7 +109,7 @@ const Tasks: React.FC = () => {
         <div>
           <p>确定要重试以下任务吗？</p>
           {mediaTitle && <p style={{ fontWeight: 'bold' }}>{mediaTitle}</p>}
-          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px' }}>将创建新的任务并重新开始处理。</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>将创建新的任务并重新开始处理。</p>
         </div>
       ),
       okText: '确认重试',
@@ -168,7 +168,7 @@ const Tasks: React.FC = () => {
       dataIndex: 'media_item_title',
       key: 'media_item_title',
       ellipsis: true,
-      render: (title: string) => <Text strong style={{ color: 'rgba(255,255,255,0.85)' }}>{title || '未知媒体'}</Text>,
+      render: (title: string) => <Text strong style={{ color: 'var(--text-primary)' }}>{title || '未知媒体'}</Text>,
     },
     {
       title: '当前状态',
@@ -183,10 +183,10 @@ const Tasks: React.FC = () => {
       key: 'progress',
       width: 180,
       render: (progress: number, record: Task) => (
-        <Progress 
-          percent={progress} 
-          size="small" 
-          status={record.status === 'failed' ? 'exception' : (record.status === 'completed' ? 'success' : 'active')} 
+        <Progress
+          percent={progress}
+          size="small"
+          status={record.status === 'failed' ? 'exception' : (record.status === 'completed' ? 'success' : 'active')}
           strokeColor={record.status === 'completed' ? '#52c41a' : { '0%': '#1677ff', '100%': '#722ed1' }}
         />
       ),
@@ -225,7 +225,6 @@ const Tasks: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto' }}>
-      {/* Header / Filter Bar */}
       <Card className="glass-card" style={{ marginBottom: 24, borderRadius: 16 }} bodyStyle={{ padding: '16px 24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
           <Space size={12}>
@@ -237,7 +236,7 @@ const Tasks: React.FC = () => {
 
           <Space size="middle">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <FilterOutlined style={{ color: 'rgba(255,255,255,0.45)' }} />
+              <FilterOutlined style={{ color: 'var(--text-secondary)' }} />
               <Select
                 style={{ width: 140 }}
                 placeholder="筛选状态"
@@ -257,7 +256,6 @@ const Tasks: React.FC = () => {
         </div>
       </Card>
 
-      {/* Task List Table */}
       <Card className="glass-card" bodyStyle={{ padding: 0 }} bordered={false}>
         <Table
           columns={columns}
@@ -268,9 +266,9 @@ const Tasks: React.FC = () => {
           className="custom-table"
           expandable={{
             expandedRowRender: (record) => record.error_message && (
-              <div style={{ padding: '16px 24px', background: 'rgba(255, 77, 79, 0.05)', borderLeft: '4px solid #ff4d4f' }}>
+              <div style={{ padding: '16px 24px', background: 'var(--error-bg)', borderLeft: '4px solid #ff4d4f' }}>
                 <Text type="danger" strong>错误详情：</Text>
-                <div style={{ marginTop: 8, color: 'rgba(255,255,255,0.65)', fontFamily: 'monospace' }}>{record.error_message}</div>
+                <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{record.error_message}</div>
               </div>
             ),
             rowExpandable: (record) => !!record.error_message,
@@ -295,8 +293,6 @@ const Tasks: React.FC = () => {
         width={640}
         onClose={() => setDetailsVisible(false)}
         open={detailsVisible}
-        headerStyle={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
-        bodyStyle={{ padding: '24px' }}
       >
         {selectedTask && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
@@ -310,7 +306,7 @@ const Tasks: React.FC = () => {
               <Descriptions.Item label="当前总进度">
                 <Progress percent={selectedTask.progress} size="small" strokeColor={{ '0%': '#1677ff', '100%': '#722ed1' }} />
               </Descriptions.Item>
-              <Descriptions.Item label="任务 ID"><Text copyable style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{selectedTask.id}</Text></Descriptions.Item>
+              <Descriptions.Item label="任务 ID"><Text copyable style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{selectedTask.id}</Text></Descriptions.Item>
             </Descriptions>
 
             <div>
@@ -330,32 +326,8 @@ const Tasks: React.FC = () => {
           </div>
         )}
       </Drawer>
-
-      <style dangerouslySetInnerHTML={{ __html: `
-        .custom-table .ant-table { background: transparent !important; }
-        .custom-table .ant-table-thead > tr > th { 
-          background: rgba(255,255,255,0.02) !important; 
-          border-bottom: 1px solid rgba(255,255,255,0.05) !important;
-          color: rgba(255,255,255,0.45) !important;
-        }
-        .custom-table .ant-table-tbody > tr > td { 
-          border-bottom: 1px solid rgba(255,255,255,0.03) !important; 
-        }
-        .custom-table .ant-table-tbody > tr:hover > td {
-          background: rgba(255,255,255,0.02) !important;
-        }
-        .custom-descriptions .ant-descriptions-item-label {
-          background: rgba(255,255,255,0.02) !important;
-          color: rgba(255,255,255,0.45) !important;
-          width: 120px;
-        }
-        .custom-descriptions .ant-descriptions-item-content {
-          color: rgba(255,255,255,0.85) !important;
-        }
-      `}} />
     </div>
   );
 };
 
 export default Tasks;
-

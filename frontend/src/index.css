@@ -4,38 +4,128 @@
     'Noto Color Emoji';
   line-height: 1.5;
   font-weight: 400;
-
-  color-scheme: dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #000000;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* Custom Variables for Glassmorphism & AI Theme */
+  /* Shared accent colors */
   --ai-primary: #1677ff;
   --ai-primary-glow: rgba(22, 119, 255, 0.2);
   --ai-success: #52c41a;
   --ai-warning: #faad14;
   --ai-error: #ff4d4f;
-  
-  --glass-bg: rgba(20, 20, 20, 0.6);
+}
+
+/* ======================== Dark Theme ======================== */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-base: #000000;
+  --bg-container: #141414;
+  --bg-elevated: #1f1f1f;
+  --bg-spotlight: rgba(255, 255, 255, 0.03);
+
+  --glass-bg: rgba(20, 20, 20, 0.7);
+  --glass-bg-light: rgba(20, 20, 20, 0.5);
   --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-blur: blur(12px);
+  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+
+  --text-primary: rgba(255, 255, 255, 0.88);
+  --text-secondary: rgba(255, 255, 255, 0.45);
+  --text-tertiary: rgba(255, 255, 255, 0.25);
+  --text-on-glass: white;
+
+  --border-color: rgba(255, 255, 255, 0.08);
+  --border-color-subtle: rgba(255, 255, 255, 0.05);
+  --border-color-muted: rgba(255, 255, 255, 0.03);
+
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
+
+  --table-header-bg: rgba(255, 255, 255, 0.02);
+  --table-header-color: rgba(255, 255, 255, 0.45);
+  --table-border: rgba(255, 255, 255, 0.05);
+  --table-row-border: rgba(255, 255, 255, 0.03);
+  --table-row-hover: rgba(255, 255, 255, 0.02);
+
+  --card-hover-border: rgba(22, 119, 255, 0.3);
+  --card-hover-shadow: 0 12px 24px rgba(0, 0, 0, 0.5);
+
+  --placeholder-bg: linear-gradient(135deg, #1f1f1f 0%, #141414 100%);
+  --placeholder-icon: rgba(255, 255, 255, 0.1);
+  --placeholder-text: rgba(255, 255, 255, 0.3);
+
+  --info-bg: rgba(255, 255, 255, 0.04);
+  --info-text: rgba(255, 255, 255, 0.45);
+
+  --progress-trail: rgba(255, 255, 255, 0.05);
+  --error-bg: rgba(255, 77, 79, 0.05);
+
+  --body-gradient-1: rgba(22, 119, 255, 0.1);
+  --body-gradient-2: rgba(114, 46, 209, 0.05);
+}
+
+/* ======================== Light Theme ======================== */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-base: #f0f2f5;
+  --bg-container: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-spotlight: rgba(0, 0, 0, 0.02);
+
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-bg-light: rgba(255, 255, 255, 0.6);
+  --glass-border: rgba(0, 0, 0, 0.06);
+  --glass-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.08);
+
+  --text-primary: rgba(0, 0, 0, 0.88);
+  --text-secondary: rgba(0, 0, 0, 0.45);
+  --text-tertiary: rgba(0, 0, 0, 0.25);
+  --text-on-glass: rgba(0, 0, 0, 0.88);
+
+  --border-color: rgba(0, 0, 0, 0.06);
+  --border-color-subtle: rgba(0, 0, 0, 0.04);
+  --border-color-muted: rgba(0, 0, 0, 0.02);
+
+  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
+
+  --table-header-bg: rgba(0, 0, 0, 0.02);
+  --table-header-color: rgba(0, 0, 0, 0.45);
+  --table-border: rgba(0, 0, 0, 0.06);
+  --table-row-border: rgba(0, 0, 0, 0.04);
+  --table-row-hover: rgba(0, 0, 0, 0.02);
+
+  --card-hover-border: rgba(22, 119, 255, 0.3);
+  --card-hover-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+
+  --placeholder-bg: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+  --placeholder-icon: rgba(0, 0, 0, 0.15);
+  --placeholder-text: rgba(0, 0, 0, 0.3);
+
+  --info-bg: rgba(0, 0, 0, 0.03);
+  --info-text: rgba(0, 0, 0, 0.45);
+
+  --progress-trail: rgba(0, 0, 0, 0.06);
+  --error-bg: rgba(255, 77, 79, 0.06);
+
+  --body-gradient-1: rgba(22, 119, 255, 0.04);
+  --body-gradient-2: rgba(114, 46, 209, 0.02);
 }
 
 body {
   margin: 0;
   padding: 0;
   min-height: 100vh;
-  background-color: #000000;
-  /* Optional subtle background mesh/gradient */
-  background-image: 
-    radial-gradient(at 0% 0%, rgba(22, 119, 255, 0.1) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(114, 46, 209, 0.05) 0px, transparent 50%);
+  color: var(--text-primary);
+  background-color: var(--bg-base);
+  background-image:
+    radial-gradient(at 0% 0%, var(--body-gradient-1) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, var(--body-gradient-2) 0px, transparent 50%);
   background-attachment: fixed;
+  transition: background-color 0.3s, color 0.3s;
 }
 
 #root {
@@ -45,13 +135,14 @@ body {
 /* Glass Card Helper Class */
 .glass-card {
   background: var(--glass-bg) !important;
-  backdrop-filter: var(--glass-blur) !important;
-  -webkit-backdrop-filter: var(--glass-blur) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
   border: 1px solid var(--glass-border) !important;
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3) !important;
+  box-shadow: var(--glass-shadow) !important;
+  transition: background 0.3s, border-color 0.3s, box-shadow 0.3s !important;
 }
 
-/* Scrollbar customization for dark mode */
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -60,11 +151,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--scrollbar-thumb-hover);
 }
 
 a {
@@ -77,18 +168,62 @@ a:hover {
   color: #4096ff;
 }
 
-/* Typography enhancements */
+/* Typography */
 h1, h2, h3, h4, h5, h6 {
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--text-primary);
   font-weight: 600;
   letter-spacing: -0.02em;
+  transition: color 0.3s;
 }
 
 h1 {
   font-size: 24px !important;
   margin-bottom: 24px !important;
+  line-height: 1.2;
+}
+
+[data-theme="dark"] h1 {
   background: linear-gradient(135deg, #fff 0%, #aaa 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  line-height: 1.2;
+}
+
+[data-theme="light"] h1 {
+  color: rgba(0, 0, 0, 0.88);
+}
+
+/* Shared table styles (used by dangerouslySetInnerHTML in pages) */
+.custom-table .ant-table { background: transparent !important; }
+.custom-table .ant-table-thead > tr > th {
+  background: var(--table-header-bg) !important;
+  border-bottom: 1px solid var(--table-border) !important;
+  color: var(--table-header-color) !important;
+}
+.custom-table .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--table-row-border) !important;
+}
+.custom-table .ant-table-tbody > tr:hover > td {
+  background: var(--table-row-hover) !important;
+}
+
+/* Form label override */
+.ant-form-item-label > label {
+  color: var(--text-secondary) !important;
+  font-size: 13px !important;
+}
+
+/* Collapse override */
+.ant-collapse {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Descriptions override */
+.custom-descriptions .ant-descriptions-item-label {
+  background: var(--table-header-bg) !important;
+  color: var(--text-secondary) !important;
+  width: 120px;
+}
+.custom-descriptions .ant-descriptions-item-content {
+  color: var(--text-primary) !important;
 }

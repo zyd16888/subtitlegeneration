@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Layout as AntLayout, Menu, theme, Button } from 'antd';
+import { Layout as AntLayout, Menu, theme, Button, Tooltip } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   DashboardOutlined,
@@ -8,48 +8,29 @@ import {
   SettingOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  SunOutlined,
+  MoonOutlined,
 } from '@ant-design/icons';
+import { useTheme } from '../contexts/ThemeContext';
 
 const { Header, Sider, Content } = AntLayout;
 
-/**
- * 应用主布局组件
- * 
- * 采用悬浮侧边栏和毛玻璃设计
- */
 const Layout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { isDark, toggleTheme } = useTheme();
   const {
-    token: { colorBgContainer, borderRadiusLG },
+    token: { borderRadiusLG },
   } = theme.useToken();
 
-  // 菜单项配置
   const menuItems = [
-    {
-      key: '/',
-      icon: <DashboardOutlined />,
-      label: '仪表盘',
-    },
-    {
-      key: '/library',
-      icon: <FolderOutlined />,
-      label: '媒体库',
-    },
-    {
-      key: '/tasks',
-      icon: <UnorderedListOutlined />,
-      label: '任务管理',
-    },
-    {
-      key: '/settings',
-      icon: <SettingOutlined />,
-      label: '系统设置',
-    },
+    { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
+    { key: '/library', icon: <FolderOutlined />, label: '媒体库' },
+    { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务管理' },
+    { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
   ];
 
-  // 处理菜单点击
   const handleMenuClick = ({ key }: { key: string }) => {
     navigate(key);
   };
@@ -69,11 +50,12 @@ const Layout: React.FC = () => {
           top: 16,
           bottom: 16,
           borderRadius: borderRadiusLG,
-          background: 'rgba(20, 20, 20, 0.7)',
+          background: 'var(--glass-bg)',
           backdropFilter: 'blur(16px)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          border: '1px solid var(--glass-border)',
           zIndex: 100,
-          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.4)',
+          boxShadow: 'var(--glass-shadow)',
+          transition: 'background 0.3s, border-color 0.3s, box-shadow 0.3s',
         }}
       >
         <div
@@ -83,7 +65,7 @@ const Layout: React.FC = () => {
             alignItems: 'center',
             justifyContent: 'center',
             padding: '0 16px',
-            borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+            borderBottom: '1px solid var(--border-color-subtle)',
           }}
         >
           <div
@@ -105,28 +87,28 @@ const Layout: React.FC = () => {
             E
           </div>
           {!collapsed && (
-            <div style={{ 
-              color: 'white', 
-              fontSize: 16, 
-              fontWeight: 600, 
+            <div style={{
+              color: 'var(--text-primary)',
+              fontSize: 16,
+              fontWeight: 600,
               whiteSpace: 'nowrap',
               overflow: 'hidden',
-              textOverflow: 'ellipsis'
+              textOverflow: 'ellipsis',
             }}>
               Emby Subtitle
             </div>
           )}
         </div>
         <Menu
-          theme="dark"
+          theme={isDark ? 'dark' : 'light'}
           mode="inline"
           selectedKeys={[location.pathname]}
           items={menuItems}
           onClick={handleMenuClick}
-          style={{ 
-            background: 'transparent', 
-            padding: '8px', 
-            border: 'none' 
+          style={{
+            background: 'transparent',
+            padding: '8px',
+            border: 'none',
           }}
         />
         <div style={{ position: 'absolute', bottom: 16, width: '100%', padding: '0 8px' }}>
@@ -136,37 +118,56 @@ const Layout: React.FC = () => {
             onClick={() => setCollapsed(!collapsed)}
             style={{
               width: '100%',
-              color: 'rgba(255, 255, 255, 0.45)',
+              color: 'var(--text-secondary)',
               height: 40,
             }}
           />
         </div>
       </Sider>
-      <AntLayout style={{ 
-        marginLeft: collapsed ? 80 + 32 : 240 + 32, 
+      <AntLayout style={{
+        marginLeft: collapsed ? 80 + 32 : 240 + 32,
         transition: 'all 0.2s',
         background: 'transparent',
-        padding: '16px 16px 16px 0'
+        padding: '16px 16px 16px 0',
       }}>
         <Header
           style={{
             padding: '0 24px',
-            background: 'rgba(20, 20, 20, 0.5)',
+            background: 'var(--glass-bg-light)',
             backdropFilter: 'blur(16px)',
             borderRadius: borderRadiusLG,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
+            border: '1px solid var(--glass-border)',
             marginBottom: 16,
             height: 64,
+            transition: 'background 0.3s, border-color 0.3s',
           }}
         >
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 500, color: 'var(--text-primary)' }}>
             {menuItems.find(item => item.key === location.pathname)?.label || 'Dashboard'}
           </h2>
-          <div style={{ color: 'rgba(255, 255, 255, 0.45)', fontSize: 12 }}>
-            Emby AI 中文字幕生成服务
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+              Emby AI 中文字幕生成服务
+            </span>
+            <Tooltip title={isDark ? '切换到亮色模式' : '切换到暗色模式'}>
+              <Button
+                type="text"
+                icon={isDark ? <SunOutlined /> : <MoonOutlined />}
+                onClick={toggleTheme}
+                style={{
+                  color: 'var(--text-secondary)',
+                  fontSize: 18,
+                  width: 36,
+                  height: 36,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              />
+            </Tooltip>
           </div>
         </Header>
         <Content

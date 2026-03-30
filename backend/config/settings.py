@@ -41,11 +41,21 @@ class Settings(BaseSettings):
     model_storage_dir: Optional[str] = None
 
     # 翻译服务配置
-    translation_service: str = "openai"  # openai, deepseek, local
+    translation_service: str = "openai"  # openai, deepseek, local, google, microsoft, baidu, deepl
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4"
     deepseek_api_key: Optional[str] = None
     local_llm_url: Optional[str] = None
+    google_translate_mode: str = "free"  # free, api
+    google_api_key: Optional[str] = None
+    microsoft_translate_mode: str = "free"  # free, api
+    microsoft_api_key: Optional[str] = None
+    microsoft_region: str = "global"
+    baidu_app_id: Optional[str] = None
+    baidu_secret_key: Optional[str] = None
+    deepl_mode: str = "deeplx"  # deeplx, api
+    deepl_api_key: Optional[str] = None
+    deeplx_url: Optional[str] = None
     
     # 任务配置
     max_concurrent_tasks: int = 2

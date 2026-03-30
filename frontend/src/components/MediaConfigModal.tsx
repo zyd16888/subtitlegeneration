@@ -139,14 +139,14 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
               style={{
                 width: 120,
                 height: 180,
-                background: '#f0f0f0',
+                background: 'var(--bg-spotlight)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: 4,
               }}
             >
-              <PlayCircleOutlined style={{ fontSize: 48, color: '#ccc' }} />
+              <PlayCircleOutlined style={{ fontSize: 48, color: 'var(--placeholder-icon)' }} />
             </div>
           )}
           <div>
@@ -170,14 +170,14 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
       <Divider />
 
       {/* 全局配置提示 */}
-      <div style={{ marginBottom: 16, padding: 12, background: '#f5f5f5', borderRadius: 4 }}>
+      <div style={{ marginBottom: 16, padding: 12, background: 'var(--info-bg)', borderRadius: 8 }}>
         <div style={{ marginBottom: 8, fontWeight: 'bold' }}>当前全局配置：</div>
         <Space wrap>
           <Tag>ASR: {globalConfig?.asr_engine || '未配置'}</Tag>
           <Tag>翻译: {globalConfig?.translation_service || '未配置'}</Tag>
           {globalConfig?.openai_model && <Tag>模型: {globalConfig.openai_model}</Tag>}
         </Space>
-        <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
           留空则使用全局配置
         </div>
       </div>

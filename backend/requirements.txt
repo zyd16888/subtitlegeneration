@@ -22,6 +22,8 @@ sherpa-onnx==1.10.45
 
 # Translation Services
 openai==1.10.0
+googletrans==4.0.0rc1
+deepl==1.18.0
 
 # Utilities
 python-dotenv==1.0.0

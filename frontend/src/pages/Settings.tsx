@@ -14,9 +14,7 @@ import {
   Tag,
   Progress,
   Popconfirm,
-  Collapse,
   Typography,
-  Divider,
   Row,
   Col,
   Badge,
@@ -25,7 +23,6 @@ import {
   SaveOutlined,
   ApiOutlined,
   TranslationOutlined,
-  CheckCircleFilled,
   DownloadOutlined,
   DeleteOutlined,
   PlayCircleFilled,
@@ -39,7 +36,7 @@ import { api } from '../services/api';
 import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo } from '../types/api';
 
 const { Option } = Select;
-const { Text, Title, Paragraph } = Typography;
+const { Text } = Typography;
 
 const LANG_LABELS: Record<string, string> = {
   zh: '中文', en: 'English', ja: '日本語', ko: '한국어',
@@ -65,10 +62,14 @@ const Settings: React.FC = () => {
   const [modelSearch, setModelSearch] = useState('');
   const [modelLangFilter, setModelLangFilter] = useState<string | undefined>(undefined);
   const pollTimerRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
-  const [languages, setLanguages] = useState<LanguageInfo[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_languages, setLanguages] = useState<LanguageInfo[]>([]);
 
   const asrEngine = Form.useWatch('asr_engine', form);
   const translationService = Form.useWatch('translation_service', form);
+  const googleTranslateMode = Form.useWatch('google_translate_mode', form);
+  const microsoftTranslateMode = Form.useWatch('microsoft_translate_mode', form);
+  const deeplMode = Form.useWatch('deepl_mode', form);
 
   const loadConfig = async () => {
     setLoading(true);
@@ -182,15 +183,23 @@ const Settings: React.FC = () => {
   const handleSaveTranslation = async () => {
     try {
       const service = form.getFieldValue('translation_service');
-      const fields = ['translation_service'];
+      const fields: string[] = ['translation_service'];
       if (service === 'openai') fields.push('openai_api_key', 'openai_model');
       else if (service === 'deepseek') fields.push('deepseek_api_key');
       else if (service === 'local') fields.push('local_llm_url');
+      else if (service === 'google') { fields.push('google_translate_mode'); if (form.getFieldValue('google_translate_mode') === 'api') fields.push('google_api_key'); }
+      else if (service === 'microsoft') { fields.push('microsoft_translate_mode'); if (form.getFieldValue('microsoft_translate_mode') === 'api') fields.push('microsoft_api_key', 'microsoft_region'); }
+      else if (service === 'baidu') fields.push('baidu_app_id', 'baidu_secret_key');
+      else if (service === 'deepl') { fields.push('deepl_mode'); if (form.getFieldValue('deepl_mode') === 'api') fields.push('deepl_api_key'); else fields.push('deeplx_url'); }
       await form.validateFields(fields);
       const config: any = { translation_service: service };
       if (service === 'openai') { config.openai_api_key = form.getFieldValue('openai_api_key'); config.openai_model = form.getFieldValue('openai_model'); }
       else if (service === 'deepseek') { config.deepseek_api_key = form.getFieldValue('deepseek_api_key'); }
       else if (service === 'local') { config.local_llm_url = form.getFieldValue('local_llm_url'); }
+      else if (service === 'google') { config.google_translate_mode = form.getFieldValue('google_translate_mode'); config.google_api_key = form.getFieldValue('google_api_key'); }
+      else if (service === 'microsoft') { config.microsoft_translate_mode = form.getFieldValue('microsoft_translate_mode'); config.microsoft_api_key = form.getFieldValue('microsoft_api_key'); config.microsoft_region = form.getFieldValue('microsoft_region'); }
+      else if (service === 'baidu') { config.baidu_app_id = form.getFieldValue('baidu_app_id'); config.baidu_secret_key = form.getFieldValue('baidu_secret_key'); }
+      else if (service === 'deepl') { config.deepl_mode = form.getFieldValue('deepl_mode'); config.deepl_api_key = form.getFieldValue('deepl_api_key'); config.deeplx_url = form.getFieldValue('deeplx_url'); }
       setSavingTranslation(true);
       await api.config.partialUpdateConfig(config);
       message.success('翻译服务配置保存成功');
@@ -213,12 +222,22 @@ const Settings: React.FC = () => {
     if (!service) { message.warning('请先选择翻译服务'); return; }
     setTestingTranslation(true);
     try {
-      const res = await api.config.testTranslation({
+      const payload: any = {
         translation_service: service,
-        api_key: service === 'openai' ? form.getFieldValue('openai_api_key') : service === 'deepseek' ? form.getFieldValue('deepseek_api_key') : undefined,
+        api_key: service === 'openai' ? form.getFieldValue('openai_api_key')
+          : service === 'deepseek' ? form.getFieldValue('deepseek_api_key')
+          : service === 'google' && form.getFieldValue('google_translate_mode') === 'api' ? form.getFieldValue('google_api_key')
+          : service === 'microsoft' ? form.getFieldValue('microsoft_api_key')
+          : service === 'deepl' && form.getFieldValue('deepl_mode') === 'api' ? form.getFieldValue('deepl_api_key')
+          : undefined,
         api_url: service === 'local' ? form.getFieldValue('local_llm_url') : undefined,
         model: service === 'openai' ? form.getFieldValue('openai_model') : undefined,
-      });
+      };
+      if (service === 'google') payload.google_translate_mode = form.getFieldValue('google_translate_mode') || 'free';
+      if (service === 'microsoft') { payload.microsoft_translate_mode = form.getFieldValue('microsoft_translate_mode') || 'free'; payload.microsoft_region = form.getFieldValue('microsoft_region') || 'global'; }
+      if (service === 'baidu') { payload.baidu_app_id = form.getFieldValue('baidu_app_id'); payload.baidu_secret_key = form.getFieldValue('baidu_secret_key'); }
+      if (service === 'deepl') { payload.deepl_mode = form.getFieldValue('deepl_mode') || 'deeplx'; payload.deeplx_url = form.getFieldValue('deeplx_url'); }
+      const res = await api.config.testTranslation(payload);
       res.success ? message.success(res.message) : message.error(res.message);
     } catch (err: any) { message.error(err.message || '测试失败'); } finally { setTestingTranslation(false); }
   };
@@ -235,7 +254,6 @@ const Settings: React.FC = () => {
     return list;
   }, [models, modelSearch, modelLangFilter]);
 
-  // 从实际模型数据中提取所有出现的语言，用于过滤下拉
   const availableLangs = useMemo(() => {
     const langSet = new Set<string>();
     models.forEach(m => m.languages.forEach(l => langSet.add(l)));
@@ -243,7 +261,7 @@ const Settings: React.FC = () => {
   }, [models]);
 
   const modelColumns = [
-    { title: '模型名称', dataIndex: 'name', key: 'name', render: (text: string) => <Text strong style={{ color: 'rgba(255,255,255,0.85)' }}>{text}</Text> },
+    { title: '模型名称', dataIndex: 'name', key: 'name', render: (text: string) => <Text strong style={{ color: 'var(--text-primary)' }}>{text}</Text> },
     { title: '类型', dataIndex: 'type', key: 'type', width: 90, render: (t: string) => <Tag color={t === 'online' ? 'blue' : 'green'} style={{ borderRadius: 4 }}>{t === 'online' ? '流式' : '离线'}</Tag> },
     { title: '语言', dataIndex: 'languages', key: 'languages', width: 180, render: (ls: string[]) => <Space size={[0, 4]} wrap>{ls.slice(0, 3).map(l => <Tag key={l} style={{ fontSize: 10, margin: 0 }}>{LANG_LABELS[l] || l}</Tag>)}{ls.length > 3 && <Tag style={{ fontSize: 10 }}>+{ls.length - 3}</Tag>}</Space> },
     { title: '大小', dataIndex: 'size', key: 'size', width: 90, render: (s: string) => <Text type="secondary" style={{ fontSize: 12 }}>{s}</Text> },
@@ -269,10 +287,8 @@ const Settings: React.FC = () => {
 
       <Form form={form} layout="vertical" autoComplete="off" requiredMark={false}>
         <Row gutter={[24, 24]}>
-          {/* Left Column */}
           <Col xs={24} lg={14}>
             <Space direction="vertical" size={24} style={{ width: '100%' }}>
-              {/* Emby Section */}
               <Card className="glass-card" title={<Space><ApiOutlined />Emby 服务器连接</Space>} extra={
                 <Space>
                   <Button type="text" loading={testingEmby} onClick={handleTestEmby}>测试</Button>
@@ -293,7 +309,6 @@ const Settings: React.FC = () => {
                 </Row>
               </Card>
 
-              {/* Model Management */}
               <Card className="glass-card" title={<Space><CloudServerOutlined />ASR 模型库</Space>} extra={
                 <Space>
                   <Button type="text" size="small" icon={<ReloadOutlined />} onClick={handleRefreshModels} loading={refreshingModels}>从 GitHub 刷新</Button>
@@ -316,7 +331,6 @@ const Settings: React.FC = () => {
                 <Table dataSource={filteredModels} columns={modelColumns} rowKey="id" loading={modelsLoading} pagination={{ pageSize: 10, showSizeChanger: false, size: 'small' }} size="middle" className="custom-table" />
               </Card>
 
-              {/* ASR Configuration */}
               <Card className="glass-card" title={<Space><SettingOutlined />识别引擎设置</Space>}>
                 <Form.Item label="引擎类型" name="asr_engine" rules={[{ required: true }]}>
                   <Select>
@@ -334,10 +348,8 @@ const Settings: React.FC = () => {
             </Space>
           </Col>
 
-          {/* Right Column */}
           <Col xs={24} lg={10}>
             <Space direction="vertical" size={24} style={{ width: '100%' }}>
-              {/* Language Section */}
               <Card className="glass-card" title={<Space><GlobalOutlined />多语言偏好</Space>}>
                 <Form.Item label="视频原声语言" name="source_language" rules={[{ required: true }]}>
                   <Select showSearch optionFilterProp="label">
@@ -351,7 +363,6 @@ const Settings: React.FC = () => {
                 </Form.Item>
               </Card>
 
-              {/* Translation Section */}
               <Card className="glass-card" title={<Space><TranslationOutlined />翻译服务引擎</Space>} extra={
                 <Space>
                   <Button type="text" loading={testingTranslation} onClick={handleTestTranslation}>测试</Button>
@@ -363,6 +374,10 @@ const Settings: React.FC = () => {
                     <Option value="openai">OpenAI (GPT-4)</Option>
                     <Option value="deepseek">DeepSeek (性价比首选)</Option>
                     <Option value="local">本地自定义模型 (LLM)</Option>
+                    <Option value="google">Google 翻译</Option>
+                    <Option value="microsoft">微软翻译</Option>
+                    <Option value="baidu">百度翻译</Option>
+                    <Option value="deepl">DeepL</Option>
                   </Select>
                 </Form.Item>
                 {translationService === 'openai' && (
@@ -373,9 +388,59 @@ const Settings: React.FC = () => {
                 )}
                 {translationService === 'deepseek' && <Form.Item label="DeepSeek API Key" name="deepseek_api_key" rules={[{ required: true }]}><Input.Password /></Form.Item>}
                 {translationService === 'local' && <Form.Item label="本地模型 Endpoint" name="local_llm_url" rules={[{ required: true, type: 'url' }]}><Input placeholder="http://localhost:11434" /></Form.Item>}
+                {translationService === 'google' && (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Form.Item label="模式" name="google_translate_mode" initialValue="free">
+                      <Select>
+                        <Option value="free">免费模式（无需 API Key）</Option>
+                        <Option value="api">官方 API（需要 API Key）</Option>
+                      </Select>
+                    </Form.Item>
+                    {googleTranslateMode === 'api' && (
+                      <Form.Item label="Google API Key" name="google_api_key" rules={[{ required: true }]}><Input.Password /></Form.Item>
+                    )}
+                  </Space>
+                )}
+                {translationService === 'microsoft' && (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Form.Item label="模式" name="microsoft_translate_mode" initialValue="free">
+                      <Select>
+                        <Option value="free">免费模式（Bing Translator，无需 Key）</Option>
+                        <Option value="api">官方 API（Azure Translator，需要 Key）</Option>
+                      </Select>
+                    </Form.Item>
+                    {microsoftTranslateMode === 'api' && (
+                      <>
+                        <Form.Item label="API Key" name="microsoft_api_key" rules={[{ required: true }]}><Input.Password placeholder="Azure Translator subscription key" /></Form.Item>
+                        <Form.Item label="区域 (Region)" name="microsoft_region" initialValue="global"><Input placeholder="global" /></Form.Item>
+                      </>
+                    )}
+                  </Space>
+                )}
+                {translationService === 'baidu' && (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Form.Item label="APP ID" name="baidu_app_id" rules={[{ required: true }]}><Input placeholder="百度翻译开放平台 APP ID" /></Form.Item>
+                    <Form.Item label="Secret Key" name="baidu_secret_key" rules={[{ required: true }]}><Input.Password placeholder="百度翻译开放平台密钥" /></Form.Item>
+                  </Space>
+                )}
+                {translationService === 'deepl' && (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Form.Item label="模式" name="deepl_mode" initialValue="deeplx">
+                      <Select>
+                        <Option value="deeplx">DeepLX（免费，需自建服务）</Option>
+                        <Option value="api">官方 API（需要 Auth Key）</Option>
+                      </Select>
+                    </Form.Item>
+                    {deeplMode === 'deeplx' && (
+                      <Form.Item label="DeepLX 服务地址" name="deeplx_url" rules={[{ required: true }]}><Input placeholder="http://localhost:1188" /></Form.Item>
+                    )}
+                    {deeplMode === 'api' && (
+                      <Form.Item label="DeepL API Key" name="deepl_api_key" rules={[{ required: true }]}><Input.Password placeholder="DeepL Auth Key" /></Form.Item>
+                    )}
+                  </Space>
+                )}
               </Card>
 
-              {/* Task Config */}
               <Card className="glass-card" title={<Space><RocketOutlined />性能与调度</Space>}>
                 <Form.Item label="最大并行任务数" name="max_concurrent_tasks" rules={[{ required: true }]}>
                   <InputNumber min={1} max={10} style={{ width: '100%' }} />
@@ -397,30 +462,6 @@ const Settings: React.FC = () => {
           </Col>
         </Row>
       </Form>
-
-      <style dangerouslySetInnerHTML={{ __html: `
-        .custom-table .ant-table { background: transparent !important; }
-        .custom-table .ant-table-thead > tr > th { 
-          background: rgba(255,255,255,0.02) !important; 
-          border-bottom: 1px solid rgba(255,255,255,0.05) !important;
-          color: rgba(255,255,255,0.45) !important;
-          font-size: 12px;
-        }
-        .custom-table .ant-table-tbody > tr > td { 
-          border-bottom: 1px solid rgba(255,255,255,0.03) !important; 
-        }
-        .custom-table .ant-table-tbody > tr:hover > td {
-          background: rgba(255,255,255,0.02) !important;
-        }
-        .ant-form-item-label > label {
-          color: rgba(255,255,255,0.45) !important;
-          font-size: 13px !important;
-        }
-        .ant-collapse {
-          background: transparent !important;
-          border: none !important;
-        }
-      `}} />
     </div>
   );
 };

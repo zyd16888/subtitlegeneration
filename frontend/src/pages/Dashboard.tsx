@@ -16,11 +16,8 @@ import type { ColumnsType } from 'antd/es/table';
 import { api } from '../services/api';
 import type { Statistics, Task, TaskStatus } from '../types/api';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
-/**
- * 精致的统计卡片组件
- */
 const StatCard: React.FC<{
   title: string;
   value: number;
@@ -33,18 +30,18 @@ const StatCard: React.FC<{
       <Statistic
         title={<Text type="secondary" style={{ fontSize: 14 }}>{title}</Text>}
         value={value}
-        valueStyle={{ color: '#fff', fontSize: 28, fontWeight: 'bold' }}
+        valueStyle={{ color: 'var(--text-primary)', fontSize: 28, fontWeight: 'bold' }}
         loading={loading}
       />
-      <div style={{ 
-        padding: 12, 
-        borderRadius: 12, 
-        background: `${color}20`, 
+      <div style={{
+        padding: 12,
+        borderRadius: 12,
+        background: `${color}20`,
         color: color,
         fontSize: 24,
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'center',
       }}>
         {icon}
       </div>
@@ -57,38 +54,36 @@ const StatCard: React.FC<{
   </Card>
 );
 
-/**
- * 状态节点组件
- */
 const StatusNode: React.FC<{
   icon: React.ReactNode;
   label: string;
   status: boolean;
   message: string;
 }> = ({ icon, label, status, message }) => (
-  <div style={{ 
-    display: 'flex', 
-    alignItems: 'center', 
-    gap: 16, 
+  <div style={{
+    display: 'flex',
+    alignItems: 'center',
+    gap: 16,
     padding: '16px',
     borderRadius: 12,
-    background: 'rgba(255, 255, 255, 0.03)',
-    border: '1px solid rgba(255, 255, 255, 0.05)',
-    marginBottom: 12
+    background: 'var(--bg-spotlight)',
+    border: '1px solid var(--border-color-subtle)',
+    marginBottom: 12,
+    transition: 'background 0.3s, border-color 0.3s',
   }}>
-    <div style={{ 
-      fontSize: 24, 
+    <div style={{
+      fontSize: 24,
       color: status ? '#52c41a' : '#ff4d4f',
       background: status ? '#52c41a10' : '#ff4d4f10',
       padding: 10,
       borderRadius: 10,
-      display: 'flex'
+      display: 'flex',
     }}>
       {icon}
     </div>
     <div style={{ flex: 1 }}>
-      <div style={{ fontWeight: 600, fontSize: 14 }}>{label}</div>
-      <div style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.45)' }}>{message}</div>
+      <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{label}</div>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{message}</div>
     </div>
     <div style={{ display: 'flex', alignItems: 'center' }}>
       {status ? (
@@ -146,7 +141,7 @@ const Dashboard: React.FC = () => {
       dataIndex: 'media_item_title',
       key: 'media_item_title',
       ellipsis: true,
-      render: (text) => <Text strong style={{ color: 'rgba(255,255,255,0.85)' }}>{text}</Text>
+      render: (text) => <Text strong style={{ color: 'var(--text-primary)' }}>{text}</Text>
     },
     {
       title: '状态',
@@ -172,7 +167,6 @@ const Dashboard: React.FC = () => {
     <div style={{ maxWidth: 1400, margin: '0 auto' }}>
       {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 24, borderRadius: 12 }} />}
 
-      {/* Bento Grid: Row 1 - Stats */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={12} lg={6}>
           <StatCard title="任务总数" value={statistics?.task_statistics.total || 0} icon={<HistoryOutlined />} color="#1677ff" />
@@ -189,27 +183,26 @@ const Dashboard: React.FC = () => {
       </Row>
 
       <Row gutter={[16, 16]}>
-        {/* Bento Grid: Left Column - System Status & Active Tasks */}
         <Col xs={24} lg={10}>
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Card className="glass-card" title={<Space><ApiOutlined />系统连接状态</Space>} bordered={false}>
-              <StatusNode 
-                icon={<ApiOutlined />} 
-                label="Emby 服务器" 
-                status={statistics?.system_status.emby_connected || false} 
-                message={statistics?.system_status.emby_message || '等待连接...'} 
+              <StatusNode
+                icon={<ApiOutlined />}
+                label="Emby 服务器"
+                status={statistics?.system_status.emby_connected || false}
+                message={statistics?.system_status.emby_message || '等待连接...'}
               />
-              <StatusNode 
-                icon={<AudioOutlined />} 
-                label="ASR 识别引擎" 
-                status={statistics?.system_status.asr_configured || false} 
-                message={statistics?.system_status.asr_message || '引擎就绪'} 
+              <StatusNode
+                icon={<AudioOutlined />}
+                label="ASR 识别引擎"
+                status={statistics?.system_status.asr_configured || false}
+                message={statistics?.system_status.asr_message || '引擎就绪'}
               />
-              <StatusNode 
-                icon={<TranslationOutlined />} 
-                label="翻译服务" 
-                status={statistics?.system_status.translation_configured || false} 
-                message={statistics?.system_status.translation_message || '服务正常'} 
+              <StatusNode
+                icon={<TranslationOutlined />}
+                label="翻译服务"
+                status={statistics?.system_status.translation_configured || false}
+                message={statistics?.system_status.translation_message || '服务正常'}
               />
             </Card>
 
@@ -221,11 +214,11 @@ const Dashboard: React.FC = () => {
                       <Text ellipsis style={{ maxWidth: '70%', fontSize: 13 }}>{task.media_item_title}</Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>{task.progress}%</Text>
                     </div>
-                    <Progress 
-                      percent={task.progress} 
-                      size="small" 
-                      strokeColor={{ '0%': '#1677ff', '100%': '#722ed1' }} 
-                      trailColor="rgba(255,255,255,0.05)"
+                    <Progress
+                      percent={task.progress}
+                      size="small"
+                      strokeColor={{ '0%': '#1677ff', '100%': '#722ed1' }}
+                      trailColor="var(--progress-trail)"
                       showInfo={false}
                     />
                   </div>
@@ -235,11 +228,10 @@ const Dashboard: React.FC = () => {
           </Space>
         </Col>
 
-        {/* Bento Grid: Right Column - Recent History */}
         <Col xs={24} lg={14}>
-          <Card 
-            className="glass-card" 
-            title={<Space><HistoryOutlined />最近活动历史</Space>} 
+          <Card
+            className="glass-card"
+            title={<Space><HistoryOutlined />最近活动历史</Space>}
             bordered={false}
             bodyStyle={{ padding: 0 }}
           >
@@ -256,21 +248,6 @@ const Dashboard: React.FC = () => {
           </Card>
         </Col>
       </Row>
-
-      <style dangerouslySetInnerHTML={{ __html: `
-        .custom-table .ant-table { background: transparent !important; }
-        .custom-table .ant-table-thead > tr > th { 
-          background: rgba(255,255,255,0.02) !important; 
-          border-bottom: 1px solid rgba(255,255,255,0.05) !important;
-          color: rgba(255,255,255,0.45) !important;
-        }
-        .custom-table .ant-table-tbody > tr > td { 
-          border-bottom: 1px solid rgba(255,255,255,0.03) !important; 
-        }
-        .custom-table .ant-table-tbody > tr:hover > td {
-          background: rgba(255,255,255,0.02) !important;
-        }
-      `}} />
     </div>
   );
 };
