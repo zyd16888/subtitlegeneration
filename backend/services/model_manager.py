@@ -285,13 +285,9 @@ class ModelManager:
 
     @staticmethod
     def _default_models_dir() -> Path:
-        system = platform.system()
-        if system == "Windows":
-            base = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
-            return Path(base) / "subtitle-service" / "models"
-        else:
-            base = os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
-            return Path(base) / "subtitle-service" / "models"
+        # 默认放在 backend 同级的 models_data 目录，Docker 挂载方便
+        backend_dir = Path(__file__).resolve().parent.parent  # backend/
+        return backend_dir / "models_data"
 
     # ── 查询 ──
 
@@ -387,13 +383,17 @@ class ModelManager:
         archive_dir_name = meta["archive_dir"]
         target_dir = self.models_dir / model_id
         tmp_file = self.models_dir / f"{model_id}.tmp.tar.bz2"
+        # 解压到独立临时目录，避免和已有文件混淆
+        extract_tmp = self.models_dir / f"_extract_{model_id}"
 
         try:
             # 流式下载
+            logger.info(f"开始下载模型 {model_id}: {url}")
             with httpx.stream("GET", url, follow_redirects=True, timeout=600.0) as resp:
                 resp.raise_for_status()
                 total = int(resp.headers.get("content-length", 0))
                 downloaded = 0
+                logger.info(f"模型 {model_id} 文件大小: {total} bytes")
 
                 with open(tmp_file, "wb") as f:
                     for chunk in resp.iter_bytes(chunk_size=1024 * 256):
@@ -405,30 +405,96 @@ class ModelManager:
                             pct = 50
                         self._set_progress(model_id, pct, DownloadStatus.DOWNLOADING)
 
-            # 解压
+            logger.info(f"模型 {model_id} 下载完成，开始解压...")
             self._set_progress(model_id, 91, DownloadStatus.EXTRACTING)
+
+            # 清理旧目录
             if target_dir.exists():
                 shutil.rmtree(target_dir)
+            if extract_tmp.exists():
+                shutil.rmtree(extract_tmp)
+            extract_tmp.mkdir(parents=True)
 
+            # 解压到临时目录
             with tarfile.open(tmp_file, "r:bz2") as tar:
-                tar.extractall(path=self.models_dir)
+                tar.extractall(path=extract_tmp)
 
-            # sherpa-onnx 的 tar 包解压后目录名通常是 archive_dir
-            extracted_dir = self.models_dir / archive_dir_name
-            if extracted_dir.exists() and extracted_dir != target_dir:
-                extracted_dir.rename(target_dir)
+            # 找到解压后的实际模型目录
+            # 可能情况：
+            #   1) extract_tmp/archive_dir_name/tokens.txt  (标准结构)
+            #   2) extract_tmp/其他目录名/tokens.txt        (目录名不同)
+            #   3) extract_tmp/tokens.txt                    (无顶层目录)
+            model_files = meta["files"]
+            source_dir = self._find_model_dir(extract_tmp, model_files)
+
+            if source_dir is None:
+                # 列出解压内容帮助调试
+                contents = list(extract_tmp.rglob("*"))[:30]
+                content_list = "\n".join(str(p.relative_to(extract_tmp)) for p in contents)
+                raise RuntimeError(
+                    f"解压后找不到模型文件。期望文件: {list(model_files.values())}\n"
+                    f"解压内容:\n{content_list}"
+                )
+
+            # 移动到目标目录（用 shutil.move 兼容跨卷）
+            logger.info(f"模型 {model_id}: 从 {source_dir} 移动到 {target_dir}")
+            shutil.move(str(source_dir), str(target_dir))
+
+            # 验证安装
+            if not self._is_installed(model_id):
+                installed_files = list(target_dir.iterdir()) if target_dir.exists() else []
+                raise RuntimeError(
+                    f"模型文件验证失败。目标目录内容: {[f.name for f in installed_files]}"
+                )
 
             self._set_progress(model_id, 100, DownloadStatus.COMPLETED)
-            logger.info(f"模型 {model_id} 下载完成: {target_dir}")
+            logger.info(f"模型 {model_id} 安装完成: {target_dir}")
 
         except Exception as e:
-            logger.error(f"模型 {model_id} 下载失败: {e}")
+            logger.error(f"模型 {model_id} 下载/安装失败: {e}", exc_info=True)
             self._set_progress(model_id, 0, DownloadStatus.FAILED, str(e))
             if target_dir.exists():
                 shutil.rmtree(target_dir, ignore_errors=True)
         finally:
+            # 清理临时文件
             if tmp_file.exists():
                 tmp_file.unlink(missing_ok=True)
+            if extract_tmp.exists():
+                shutil.rmtree(extract_tmp, ignore_errors=True)
+
+    def _find_model_dir(self, extract_root: Path, model_files: Dict[str, str]) -> Optional[Path]:
+        """
+        在解压目录中搜索包含所有模型文件的目录。
+
+        搜索策略：
+        1. 直接在 extract_root 下查找
+        2. 在 extract_root 的一级子目录中查找
+        3. 在 extract_root 的二级子目录中查找
+        """
+        required_files = set(model_files.values())
+
+        # 检查某个目录是否包含所有需要的文件
+        def has_all_files(d: Path) -> bool:
+            existing = {f.name for f in d.iterdir() if f.is_file()}
+            return required_files.issubset(existing)
+
+        # 策略1: 直接在解压根目录
+        if has_all_files(extract_root):
+            return extract_root
+
+        # 策略2: 一级子目录
+        for child in extract_root.iterdir():
+            if child.is_dir() and has_all_files(child):
+                return child
+
+        # 策略3: 二级子目录
+        for child in extract_root.iterdir():
+            if child.is_dir():
+                for grandchild in child.iterdir():
+                    if grandchild.is_dir() and has_all_files(grandchild):
+                        return grandchild
+
+        return None
 
     def _set_progress(self, model_id: str, progress: int, status: DownloadStatus, error: str = None):
         with _download_lock:

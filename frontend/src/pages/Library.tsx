@@ -11,12 +11,18 @@ import {
   Pagination,
   Empty,
   Button,
+  Typography,
+  Space,
+  Badge,
+  Tag,
 } from 'antd';
 import {
   SearchOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
+  CheckCircleFilled,
+  CloseCircleFilled,
   PlayCircleOutlined,
+  FilterOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
 import { api } from '../services/api';
 import type { Library, MediaItem, TaskConfig } from '../types/api';
@@ -25,47 +31,29 @@ import MediaConfigModal from '../components/MediaConfigModal';
 
 const { Search } = Input;
 const { Option } = Select;
+const { Text, Title } = Typography;
 
 /**
- * 媒体项卡片图片组件
- * 自动适应竖版和横版图片，根据实际图片比例动态调整容器
+ * 增强型媒体项卡片图片组件
  */
 const MediaItemImage: React.FC<{
   imageUrl?: string;
   name: string;
   hasSubtitles: boolean;
-}> = ({ imageUrl, name, hasSubtitles }) => {
+  type: string;
+}> = ({ imageUrl, name, hasSubtitles, type }) => {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
-  const [aspectRatio, setAspectRatio] = useState<number>(1.5); // 默认 2:3
-
-  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    const ratio = img.naturalHeight / img.naturalWidth;
-    setAspectRatio(ratio);
-    setImageLoaded(true);
-  };
-
-  const handleImageError = () => {
-    setImageError(true);
-  };
-
-  // 根据图片实际比例设置容器高度
-  // 限制最小和最大比例，避免过于极端
-  const minRatio = 0.5; // 最扁（2:1）
-  const maxRatio = 1.8; // 最高（接近 2:3）
-  const clampedRatio = Math.max(minRatio, Math.min(maxRatio, aspectRatio));
-  const containerPaddingTop = `${clampedRatio * 100}%`;
 
   return (
     <div
       style={{
         position: 'relative',
         width: '100%',
-        paddingTop: containerPaddingTop,
-        background: '#1a1a1a',
+        paddingTop: '150%', // 2:3 Aspect Ratio
+        background: '#141414',
         overflow: 'hidden',
-        transition: 'padding-top 0.3s ease',
+        borderRadius: '8px 8px 0 0',
       }}
     >
       {imageUrl && !imageError ? (
@@ -80,13 +68,13 @@ const MediaItemImage: React.FC<{
             height: '100%',
             objectFit: 'cover',
             opacity: imageLoaded ? 1 : 0,
-            transition: 'opacity 0.3s ease',
+            transition: 'transform 0.5s ease, opacity 0.3s ease',
           }}
-          onLoad={handleImageLoad}
-          onError={handleImageError}
+          onLoad={() => setImageLoaded(true)}
+          onError={() => setImageError(true)}
+          className="media-card-img"
         />
-      ) : null}
-      {(!imageUrl || imageError) && (
+      ) : (
         <div
           style={{
             position: 'absolute',
@@ -95,56 +83,63 @@ const MediaItemImage: React.FC<{
             right: 0,
             bottom: 0,
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            background: '#f0f0f0',
+            background: 'linear-gradient(135deg, #1f1f1f 0%, #141414 100%)',
+            gap: 12
           }}
         >
-          <PlayCircleOutlined style={{ fontSize: 36, color: '#ccc' }} />
+          <PlayCircleOutlined style={{ fontSize: 40, color: 'rgba(255,255,255,0.1)' }} />
+          <Text type="secondary" style={{ fontSize: 10 }}>暂无封面</Text>
         </div>
       )}
+      
+      {/* Subtitle Badge */}
       <div
         style={{
           position: 'absolute',
-          top: 6,
-          right: 6,
-          zIndex: 1,
-          background: 'rgba(0, 0, 0, 0.7)',
-          borderRadius: '50%',
-          padding: '2px',
+          top: 8,
+          right: 8,
+          zIndex: 2,
         }}
       >
-        {hasSubtitles ? (
-          <CheckCircleOutlined
-            style={{ fontSize: 20, color: '#52c41a' }}
-            title="已有字幕"
+        <Badge
+          count={hasSubtitles ? '已有字幕' : '无字幕'}
+          style={{
+            backgroundColor: hasSubtitles ? '#52c41a' : '#ff4d4f',
+            boxShadow: `0 0 10px ${hasSubtitles ? '#52c41a40' : '#ff4d4f40'}`,
+            fontSize: '10px',
+            border: 'none',
+          }}
+        />
+      </div>
+
+      {/* Hover Overlay */}
+      <div className="media-card-overlay">
+        <div className="overlay-content">
+          <Button 
+            type="primary" 
+            shape="circle" 
+            icon={<PlayCircleOutlined />} 
+            size="large" 
+            style={{ 
+              width: 50, 
+              height: 50, 
+              fontSize: 24,
+              boxShadow: '0 4px 15px rgba(22, 119, 255, 0.4)'
+            }} 
           />
-        ) : (
-          <CloseCircleOutlined
-            style={{ fontSize: 20, color: '#ff4d4f' }}
-            title="无字幕"
-          />
-        )}
+          <div style={{ marginTop: 12, color: 'white', fontSize: 12, fontWeight: 500 }}>
+            {type === 'Series' ? '展开剧集' : '生成字幕'}
+          </div>
+        </div>
       </div>
     </div>
   );
 };
 
-/**
- * Library 页面
- * 
- * 浏览和管理 Emby 媒体库
- * - 显示媒体库筛选器（媒体库、类型、搜索）
- * - 显示媒体项网格视图（缩略图、标题、字幕状态）
- * - 点击媒体项打开配置对话框
- * - 剧集显示为单个卡片，点击展开查看集数
- * - 电影等单个媒体项点击打开配置对话框
- * - 实现分页功能
- * 
- * 需求: 9.1, 9.2, 9.3, 9.4, 9.5, 15.1, 20.1
- */
 const LibraryPage: React.FC = () => {
-  // 状态管理
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [selectedLibrary, setSelectedLibrary] = useState<string | undefined>(undefined);
@@ -156,28 +151,24 @@ const LibraryPage: React.FC = () => {
   const [configValid, setConfigValid] = useState(true);
   const [configMessage, setConfigMessage] = useState<string>('');
 
-  // 分页状态
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(24);
   const [total, setTotal] = useState(0);
 
-  // 剧集详情对话框状态
   const [seriesModalVisible, setSeriesModalVisible] = useState(false);
   const [selectedSeries, setSelectedSeries] = useState<{ id: string; name: string } | null>(null);
-
-  // 单个媒体项配置对话框状态
   const [mediaConfigModalVisible, setMediaConfigModalVisible] = useState(false);
   const [selectedMediaItem, setSelectedMediaItem] = useState<MediaItem | null>(null);
 
-  // 获取媒体库列表
   const fetchLibraries = async () => {
     try {
       const data = await api.media.getLibraries();
       setLibraries(data);
+      if (data.length > 0 && !selectedLibrary) {
+        setSelectedLibrary(data[0].id);
+      }
       setEmbyConfigured(true);
     } catch (err: any) {
-      console.error('获取媒体库列表失败:', err);
-      // 检查是否是配置问题
       if (err.message && (err.message.includes('Emby') || err.message.includes('配置'))) {
         setEmbyConfigured(false);
       } else {
@@ -186,31 +177,21 @@ const LibraryPage: React.FC = () => {
     }
   };
 
-  // 验证系统配置
   const validateConfig = async () => {
     try {
       const result = await api.config.validateConfig();
       setConfigValid(result.is_valid);
       setConfigMessage(result.message);
     } catch (err: any) {
-      console.error('验证配置失败:', err);
-      // 如果验证失败，假设配置不完整
       setConfigValid(false);
       setConfigMessage('无法验证配置，请检查系统设置');
     }
   };
 
-  // 获取媒体项列表
   const fetchMediaItems = async () => {
-    // 如果 Emby 未配置或未选择媒体库，不加载媒体项
-    if (!embyConfigured || !selectedLibrary) {
-      setMediaItems([]);
-      setTotal(0);
-      return;
-    }
+    if (!embyConfigured || !selectedLibrary) return;
     
     setLoading(true);
-    setError(null);
     try {
       const response = await api.media.getMediaItems({
         library_id: selectedLibrary,
@@ -223,292 +204,165 @@ const LibraryPage: React.FC = () => {
       setTotal(response.total);
     } catch (err: any) {
       setError(err.message || '获取媒体项失败');
-      message.error('获取媒体项失败');
     } finally {
       setLoading(false);
     }
   };
 
-  // 初始加载媒体库列表
   useEffect(() => {
     fetchLibraries();
     validateConfig();
   }, []);
 
-  // 当筛选条件或分页改变时重新加载媒体项
   useEffect(() => {
     fetchMediaItems();
   }, [selectedLibrary, selectedType, searchText, currentPage, pageSize]);
 
-  // 处理搜索
-  const handleSearch = (value: string) => {
-    setSearchText(value);
-    setCurrentPage(1); // 重置到第一页
-  };
-
-  // 处理媒体库筛选
-  const handleLibraryChange = (value: string | undefined) => {
-    setSelectedLibrary(value);
-    setCurrentPage(1);
-  };
-
-  // 处理类型筛选
-  const handleTypeChange = (value: string | undefined) => {
-    setSelectedType(value);
-    setCurrentPage(1);
-  };
-
-  // 处理媒体项点击
   const handleItemClick = (item: MediaItem) => {
-    // 如果是剧集，打开剧集详情对话框
     if (item.type === 'Series') {
       setSelectedSeries({ id: item.id, name: item.name });
       setSeriesModalVisible(true);
     } else {
-      // 其他类型（电影、单集等）打开配置对话框
       setSelectedMediaItem(item);
       setMediaConfigModalVisible(true);
     }
   };
 
-  // 处理单个媒体项生成字幕
   const handleMediaItemGenerateSubtitle = async (task: TaskConfig) => {
-    // 检查配置是否完整
     if (!configValid) {
-      message.warning('配置不完整，无法生成字幕。请先完成系统配置。');
+      message.warning('配置不完整，无法生成字幕。');
       return;
     }
-    
     try {
-      await api.tasks.createTasks({
-        tasks: [task],
-      });
+      await api.tasks.createTasks({ tasks: [task] });
       message.success('成功创建字幕生成任务');
     } catch (err: any) {
       message.error(err.message || '创建任务失败');
     }
   };
 
-  // 处理剧集生成字幕（单独配置）
   const handleSeriesGenerateSubtitles = async (tasks: TaskConfig[]) => {
-    // 检查配置是否完整
     if (!configValid) {
-      message.warning('配置不完整，无法生成字幕。请先完成系统配置。');
+      message.warning('配置不完整，无法生成字幕。');
       return;
     }
-    
     try {
-      await api.tasks.createTasks({
-        tasks,
-      });
-      message.success(`成功创建 ${tasks.length} 个字幕生成任务`);
+      await api.tasks.createTasks({ tasks });
+      message.success(`成功创建 ${tasks.length} 个任务`);
     } catch (err: any) {
       message.error(err.message || '创建任务失败');
     }
   };
 
-  // 处理分页改变
-  const handlePageChange = (page: number, pageSize: number) => {
-    setCurrentPage(page);
-    setPageSize(pageSize);
-  };
-
-  // 媒体类型选项
-  const mediaTypes = [
-    { label: '全部', value: undefined },
-    { label: '电影', value: 'Movie' },
-    { label: '剧集', value: 'Series' },
-    { label: '单集', value: 'Episode' },
-  ];
-
   return (
-    <div>
-      <h1>Library</h1>
-
+    <div style={{ maxWidth: 1600, margin: '0 auto' }}>
       {!embyConfigured && (
         <Alert
           message="Emby 未配置"
-          description={
-            <div>
-              请先在设置页面配置 Emby 服务器信息后再使用媒体库功能。
-              <br />
-              <Button
-                type="link"
-                style={{ padding: 0, marginTop: 8 }}
-                onClick={() => window.location.href = '/settings'}
-              >
-                前往设置页面
-              </Button>
-            </div>
-          }
+          description={<Button type="link" onClick={() => window.location.href = '/settings'}>前往设置页面完成配置</Button>}
           type="warning"
           showIcon
-          style={{ marginBottom: 24 }}
+          style={{ marginBottom: 24, borderRadius: 12 }}
         />
       )}
 
-      {!configValid && embyConfigured && (
-        <Alert
-          message="配置不完整"
-          description={
-            <div>
-              {configMessage}
-              <br />
-              字幕生成功能不可用，请先完成相关配置。
-              <br />
-              <Button
-                type="link"
-                style={{ padding: 0, marginTop: 8 }}
-                onClick={() => window.location.href = '/settings'}
-              >
-                前往设置页面
-              </Button>
-            </div>
-          }
-          type="warning"
-          showIcon
-          style={{ marginBottom: 24 }}
-        />
-      )}
-
-      {error && (
-        <Alert
-          message="错误"
-          description={error}
-          type="error"
-          closable
-          onClose={() => setError(null)}
-          style={{ marginBottom: 24 }}
-        />
-      )}
-
-      {embyConfigured && (
-        <>
-          {/* 筛选器 */}
-          <Card style={{ marginBottom: 24 }}>
-            <Row gutter={[16, 16]}>
-              <Col xs={24} sm={12} md={8}>
-                <div style={{ marginBottom: 8, fontWeight: 'bold' }}>媒体库</div>
-                <Select
-                  style={{ width: '100%' }}
-                  placeholder="选择媒体库"
-                  allowClear
-                  value={selectedLibrary}
-                  onChange={handleLibraryChange}
-                >
-                  {libraries.map((lib) => (
-                    <Option key={lib.id} value={lib.id}>
-                      {lib.name}
-                    </Option>
-                  ))}
-                </Select>
-              </Col>
-              <Col xs={24} sm={12} md={8}>
-                <div style={{ marginBottom: 8, fontWeight: 'bold' }}>类型</div>
-                <Select
-                  style={{ width: '100%' }}
-                  placeholder="选择类型"
-                  value={selectedType}
-                  onChange={handleTypeChange}
-                >
-                  {mediaTypes.map((type) => (
-                    <Option key={type.value || 'all'} value={type.value}>
-                      {type.label}
-                    </Option>
-                  ))}
-                </Select>
-              </Col>
-              <Col xs={24} sm={24} md={8}>
-                <div style={{ marginBottom: 8, fontWeight: 'bold' }}>搜索</div>
-                <Search
-                  placeholder="搜索媒体项名称"
-                  allowClear
-                  enterButton={<SearchOutlined />}
-                  onSearch={handleSearch}
-                />
-              </Col>
-            </Row>
-          </Card>
-
-          {/* 媒体项网格 */}
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: '50px' }}>
-              <Spin size="large" tip="加载中..." />
-            </div>
-          ) : !selectedLibrary ? (
-            <Card>
-              <Empty description="请先选择一个媒体库" />
-            </Card>
-          ) : mediaItems.length === 0 ? (
-            <Card>
-              <Empty description="暂无媒体项" />
-            </Card>
-          ) : (
-            <>
-              <Row gutter={[12, 12]}>
-                {mediaItems.map((item) => (
-                  <Col key={item.id} xs={12} sm={8} md={6} lg={4} xl={3}>
-                    <Card
-                      hoverable
-                      size="small"
-                      style={{
-                        border: '1px solid #f0f0f0',
-                        cursor: 'pointer',
-                      }}
-                      styles={{ body: { padding: '8px' } }}
-                      onClick={() => handleItemClick(item)}
-                      cover={
-                        <MediaItemImage
-                          imageUrl={item.image_url}
-                          name={item.name}
-                          hasSubtitles={item.has_subtitles}
-                        />
-                      }
-                    >
-                      <Card.Meta
-                        title={
-                          <div
-                            style={{
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              fontSize: '13px',
-                            }}
-                            title={item.name}
-                          >
-                            {item.name}
-                          </div>
-                        }
-                        description={
-                          <div style={{ fontSize: 11, color: '#999' }}>
-                            {item.type === 'Series' ? '剧集 (点击查看)' : `${item.type} (点击配置)`}
-                          </div>
-                        }
-                      />
-                    </Card>
-                  </Col>
-                ))}
-              </Row>
-
-              {/* 分页 */}
-              <div style={{ marginTop: 24, textAlign: 'center' }}>
-                <Pagination
-                  current={currentPage}
-                  pageSize={pageSize}
-                  total={total}
-                  onChange={handlePageChange}
-                  showSizeChanger
-                  showQuickJumper
-                  showTotal={(total) => `共 ${total} 项`}
-                  pageSizeOptions={['10', '20', '50', '100']}
-                />
+      {/* Floating Filter Bar */}
+      <Card className="glass-card" style={{ marginBottom: 24, borderRadius: 16 }} bodyStyle={{ padding: '16px 24px' }}>
+        <Row gutter={[24, 16]} align="middle">
+          <Col xs={24} md={6}>
+            <Space size={12}>
+              <div style={{ background: '#1677ff', padding: 8, borderRadius: 8, color: 'white', display: 'flex' }}>
+                <AppstoreOutlined />
               </div>
-            </>
-          )}
+              <Title level={5} style={{ margin: 0 }}>媒体库浏览</Title>
+            </Space>
+          </Col>
+          <Col xs={24} sm={8} md={5}>
+            <Select
+              style={{ width: '100%' }}
+              placeholder="选择媒体库"
+              value={selectedLibrary}
+              onChange={(val) => { setSelectedLibrary(val); setCurrentPage(1); }}
+              suffixIcon={<FilterOutlined />}
+            >
+              {libraries.map((lib) => (
+                <Option key={lib.id} value={lib.id}>{lib.name}</Option>
+              ))}
+            </Select>
+          </Col>
+          <Col xs={24} sm={8} md={4}>
+            <Select
+              style={{ width: '100%' }}
+              placeholder="类型"
+              value={selectedType}
+              onChange={(val) => { setSelectedType(val); setCurrentPage(1); }}
+            >
+              <Option value={undefined}>全部类型</Option>
+              <Option value="Movie">电影</Option>
+              <Option value="Series">剧集</Option>
+              <Option value="Episode">单集</Option>
+            </Select>
+          </Col>
+          <Col xs={24} sm={8} md={9}>
+            <Search
+              placeholder="在当前库中搜索..."
+              allowClear
+              enterButton={<SearchOutlined />}
+              onSearch={(val) => { setSearchText(val); setCurrentPage(1); }}
+            />
+          </Col>
+        </Row>
+      </Card>
+
+      {/* Media Grid */}
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '100px' }}><Spin size="large" tip="正在同步媒体库..." /></div>
+      ) : !selectedLibrary ? (
+        <Empty description="请从上方选择一个媒体库开始浏览" style={{ marginTop: 100 }} />
+      ) : mediaItems.length === 0 ? (
+        <Empty description="该媒体库中没有找到符合条件的媒体项" style={{ marginTop: 100 }} />
+      ) : (
+        <>
+          <Row gutter={[20, 20]}>
+            {mediaItems.map((item) => (
+              <Col key={item.id} xs={12} sm={8} md={6} lg={4} xl={3}>
+                <div 
+                  className="media-card"
+                  onClick={() => handleItemClick(item)}
+                >
+                  <MediaItemImage
+                    imageUrl={item.image_url}
+                    name={item.name}
+                    hasSubtitles={item.has_subtitles}
+                    type={item.type}
+                  />
+                  <div className="media-card-info">
+                    <Text className="media-card-title" ellipsis={{ tooltip: item.name }}>{item.name}</Text>
+                    <div style={{ marginTop: 4 }}>
+                      <Tag color="rgba(255,255,255,0.08)" style={{ fontSize: 10, border: 'none', margin: 0, color: 'rgba(255,255,255,0.45)' }}>
+                        {item.type === 'Series' ? '剧集' : item.type === 'Movie' ? '电影' : '视频'}
+                      </Tag>
+                    </div>
+                  </div>
+                </div>
+              </Col>
+            ))}
+          </Row>
+
+          <div style={{ marginTop: 40, textAlign: 'center', paddingBottom: 40 }}>
+            <Pagination
+              current={currentPage}
+              pageSize={pageSize}
+              total={total}
+              onChange={(page, size) => { setCurrentPage(page); setPageSize(size); }}
+              showSizeChanger
+              showTotal={(total) => <Text type="secondary">共 {total} 个媒体项</Text>}
+              pageSizeOptions={['12', '24', '48', '96']}
+            />
+          </div>
         </>
       )}
 
-      {/* 剧集详情对话框 */}
       {selectedSeries && (
         <SeriesEpisodesModal
           visible={seriesModalVisible}
@@ -516,28 +370,74 @@ const LibraryPage: React.FC = () => {
           seriesName={selectedSeries.name}
           configValid={configValid}
           configMessage={configMessage}
-          onClose={() => {
-            setSeriesModalVisible(false);
-            setSelectedSeries(null);
-          }}
+          onClose={() => { setSeriesModalVisible(false); setSelectedSeries(null); }}
           onGenerateSubtitles={handleSeriesGenerateSubtitles}
         />
       )}
 
-      {/* 单个媒体项配置对话框 */}
       {selectedMediaItem && (
         <MediaConfigModal
           visible={mediaConfigModalVisible}
           mediaItem={selectedMediaItem}
           configValid={configValid}
           configMessage={configMessage}
-          onClose={() => {
-            setMediaConfigModalVisible(false);
-            setSelectedMediaItem(null);
-          }}
+          onClose={() => { setMediaConfigModalVisible(false); setSelectedMediaItem(null); }}
           onGenerateSubtitle={handleMediaItemGenerateSubtitle}
         />
       )}
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        .media-card {
+          background: #141414;
+          border-radius: 12px;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          cursor: pointer;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          height: 100%;
+          overflow: hidden;
+          position: relative;
+        }
+        .media-card:hover {
+          transform: translateY(-8px);
+          border-color: rgba(22, 119, 255, 0.3);
+          box-shadow: 0 12px 24px rgba(0, 0, 0, 0.5);
+        }
+        .media-card:hover .media-card-img {
+          transform: scale(1.1);
+        }
+        .media-card:hover .media-card-overlay {
+          opacity: 1;
+        }
+        .media-card-info {
+          padding: 12px;
+        }
+        .media-card-title {
+          font-size: 13px;
+          font-weight: 500;
+          display: block;
+          color: rgba(255, 255, 255, 0.85);
+        }
+        .media-card-overlay {
+          position: absolute;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0, 0, 0, 0.6);
+          backdrop-filter: blur(4px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          opacity: 0;
+          transition: opacity 0.3s ease;
+          z-index: 1;
+        }
+        .overlay-content {
+          text-align: center;
+          transform: translateY(20px);
+          transition: transform 0.3s ease;
+        }
+        .media-card:hover .overlay-content {
+          transform: translateY(0);
+        }
+      `}} />
     </div>
   );
 };

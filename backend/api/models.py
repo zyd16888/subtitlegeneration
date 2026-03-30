@@ -19,6 +19,8 @@ def _get_model_manager() -> ModelManager:
 
 
 class ModelInfo(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     id: str
     name: str
     type: str  # online | offline
@@ -30,6 +32,8 @@ class ModelInfo(BaseModel):
 
 
 class ModelDownloadProgressResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     model_id: str
     progress: int
     status: str
@@ -118,6 +122,28 @@ async def activate_model(model_id: str, db: Session = Depends(get_db)):
         config, {"asr_model_id", "asr_model_path", "asr_engine"}
     )
     return {"message": f"已启用模型 {model_id}", "model_path": str(model_path)}
+
+
+@router.get("/storage-info")
+async def get_storage_info():
+    """诊断端点：查看模型存储路径和目录内容"""
+    manager = _get_model_manager()
+    models_dir = manager.models_dir
+
+    contents = []
+    if models_dir.exists():
+        for item in sorted(models_dir.iterdir()):
+            if item.is_dir():
+                sub_files = [f.name for f in item.iterdir()][:20]
+                contents.append({"name": item.name, "type": "dir", "files": sub_files})
+            else:
+                contents.append({"name": item.name, "type": "file", "size": item.stat().st_size})
+
+    return {
+        "models_dir": str(models_dir),
+        "exists": models_dir.exists(),
+        "contents": contents,
+    }
 
 
 @router.get("/languages", response_model=List[LanguageInfo])

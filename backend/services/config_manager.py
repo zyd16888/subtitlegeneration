@@ -10,6 +10,8 @@ import json
 
 class SystemConfigData(BaseModel):
     """系统配置数据模型"""
+    model_config = {"protected_namespaces": ()}
+
     # Emby 配置
     emby_url: Optional[str] = None
     emby_api_key: Optional[str] = None

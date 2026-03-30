@@ -15,10 +15,11 @@ import {
   Descriptions,
   Steps,
   Alert,
+  Typography,
 } from 'antd';
 import {
-  CheckCircleOutlined,
-  CloseCircleOutlined,
+  CheckCircleFilled,
+  CloseCircleFilled,
   SyncOutlined,
   ClockCircleOutlined,
   ReloadOutlined,
@@ -26,25 +27,16 @@ import {
   ExclamationCircleOutlined,
   EyeOutlined,
   LoadingOutlined,
+  FilterOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { api } from '../services/api';
 import type { Task, TaskStatus } from '../types/api';
 
 const { Option } = Select;
+const { Text, Title } = Typography;
 
-/**
- * Tasks 页面
- * 
- * 查看和管理字幕生成任务
- * - 使用 Ant Design Table 组件显示任务列表
- * - 显示任务状态、进度、创建时间、完成时间
- * - 实现状态筛选功能
- * - 支持取消和重试任务
- * - 自动刷新任务列表
- * 
- * 需求: 8.1
- */
 const Tasks: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
@@ -55,7 +47,6 @@ const Tasks: React.FC = () => {
   const [detailsVisible, setDetailsVisible] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
-  // 获取任务列表
   const fetchTasks = async () => {
     setLoading(true);
     try {
@@ -73,20 +64,17 @@ const Tasks: React.FC = () => {
     }
   };
 
-  // 初始加载和自动刷新
   useEffect(() => {
     fetchTasks();
-    const interval = setInterval(fetchTasks, 5000); // 每 5 秒刷新
+    const interval = setInterval(fetchTasks, 5000);
     return () => clearInterval(interval);
   }, [selectedStatus, currentPage, pageSize]);
 
-  // 处理状态筛选
   const handleStatusChange = (value: TaskStatus | undefined) => {
     setSelectedStatus(value);
-    setCurrentPage(1); // 重置到第一页
+    setCurrentPage(1);
   };
 
-  // 处理取消任务
   const handleCancelTask = (taskId: string, mediaTitle?: string) => {
     Modal.confirm({
       title: '确认取消任务',
@@ -95,7 +83,7 @@ const Tasks: React.FC = () => {
         <div>
           <p>确定要取消以下任务吗？</p>
           {mediaTitle && <p style={{ fontWeight: 'bold' }}>{mediaTitle}</p>}
-          <p style={{ color: '#999', fontSize: '12px' }}>取消后任务将停止处理，无法恢复。</p>
+          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px' }}>取消后任务将停止处理，无法恢复。</p>
         </div>
       ),
       okText: '确认取消',
@@ -113,7 +101,6 @@ const Tasks: React.FC = () => {
     });
   };
 
-  // 处理重试任务
   const handleRetryTask = (taskId: string, mediaTitle?: string) => {
     Modal.confirm({
       title: '确认重试任务',
@@ -122,7 +109,7 @@ const Tasks: React.FC = () => {
         <div>
           <p>确定要重试以下任务吗？</p>
           {mediaTitle && <p style={{ fontWeight: 'bold' }}>{mediaTitle}</p>}
-          <p style={{ color: '#999', fontSize: '12px' }}>将创建新的任务并重新开始处理。</p>
+          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '12px' }}>将创建新的任务并重新开始处理。</p>
         </div>
       ),
       okText: '确认重试',
@@ -139,25 +126,6 @@ const Tasks: React.FC = () => {
     });
   };
 
-  // 处理分页改变
-  const handlePageChange = (page: number, pageSize: number) => {
-    setCurrentPage(page);
-    setPageSize(pageSize);
-  };
-
-  // 显示任务详情
-  const showTaskDetails = (task: Task) => {
-    setSelectedTask(task);
-    setDetailsVisible(true);
-  };
-
-  // 关闭任务详情
-  const closeTaskDetails = () => {
-    setDetailsVisible(false);
-    setSelectedTask(null);
-  };
-
-  // 根据进度推断任务阶段
   const getTaskStages = (task: Task) => {
     const stages = [
       { name: '音频提取', range: [0, 20], key: 'audio' },
@@ -169,13 +137,8 @@ const Tasks: React.FC = () => {
 
     return stages.map((stage) => {
       let status: 'wait' | 'process' | 'finish' | 'error' = 'wait';
-      
       if (task.status === 'failed' || task.status === 'cancelled') {
-        if (task.progress >= stage.range[0]) {
-          status = 'error';
-        } else {
-          status = 'wait';
-        }
+        status = task.progress >= stage.range[0] ? 'error' : 'wait';
       } else if (task.status === 'completed') {
         status = 'finish';
       } else if (task.progress >= stage.range[1]) {
@@ -183,339 +146,216 @@ const Tasks: React.FC = () => {
       } else if (task.progress >= stage.range[0]) {
         status = 'process';
       }
-
-      return {
-        ...stage,
-        status,
-        progress: Math.min(100, Math.max(0, ((task.progress - stage.range[0]) / (stage.range[1] - stage.range[0])) * 100)),
-      };
+      return { ...stage, status, progress: Math.min(100, Math.max(0, ((task.progress - stage.range[0]) / (stage.range[1] - stage.range[0])) * 100)) };
     });
   };
 
-  // 任务状态标签
   const getStatusTag = (status: TaskStatus) => {
-    const statusConfig = {
+    const configs = {
       pending: { color: 'default', icon: <ClockCircleOutlined />, text: '待处理' },
       processing: { color: 'processing', icon: <SyncOutlined spin />, text: '处理中' },
-      completed: { color: 'success', icon: <CheckCircleOutlined />, text: '已完成' },
-      failed: { color: 'error', icon: <CloseCircleOutlined />, text: '失败' },
-      cancelled: { color: 'default', icon: <CloseCircleOutlined />, text: '已取消' },
+      completed: { color: 'success', icon: <CheckCircleFilled />, text: '已完成' },
+      failed: { color: 'error', icon: <CloseCircleFilled />, text: '失败' },
+      cancelled: { color: 'default', icon: <CloseCircleFilled />, text: '已取消' },
     };
-    const config = statusConfig[status];
-    return (
-      <Tag color={config.color} icon={config.icon}>
-        {config.text}
-      </Tag>
-    );
+    const config = configs[status];
+    return <Tag color={config.color} icon={config.icon} style={{ borderRadius: 6 }}>{config.text}</Tag>;
   };
 
-  // 表格列定义
   const columns: ColumnsType<Task> = [
     {
-      title: '媒体项',
+      title: '媒体项目',
       dataIndex: 'media_item_title',
       key: 'media_item_title',
       ellipsis: true,
-      render: (title: string) => (
-        <Tooltip title={title}>
-          {title || '未知'}
-        </Tooltip>
-      ),
+      render: (title: string) => <Text strong style={{ color: 'rgba(255,255,255,0.85)' }}>{title || '未知媒体'}</Text>,
     },
     {
-      title: '状态',
+      title: '当前状态',
       dataIndex: 'status',
       key: 'status',
       width: 120,
       render: (status: TaskStatus) => getStatusTag(status),
     },
     {
-      title: '进度',
+      title: '实时进度',
       dataIndex: 'progress',
       key: 'progress',
-      width: 150,
-      render: (progress: number, record: Task) => {
-        if (record.status === 'completed') {
-          return <Progress percent={100} size="small" status="success" />;
-        } else if (record.status === 'failed' || record.status === 'cancelled') {
-          return <Progress percent={progress} size="small" status="exception" />;
-        } else if (record.status === 'processing') {
-          return <Progress percent={progress} size="small" status="active" />;
-        } else {
-          return <Progress percent={0} size="small" />;
-        }
-      },
+      width: 180,
+      render: (progress: number, record: Task) => (
+        <Progress 
+          percent={progress} 
+          size="small" 
+          status={record.status === 'failed' ? 'exception' : (record.status === 'completed' ? 'success' : 'active')} 
+          strokeColor={record.status === 'completed' ? '#52c41a' : { '0%': '#1677ff', '100%': '#722ed1' }}
+        />
+      ),
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 180,
-      render: (time: string) => new Date(time).toLocaleString('zh-CN'),
-    },
-    {
-      title: '完成时间',
-      dataIndex: 'completed_at',
-      key: 'completed_at',
-      width: 180,
-      render: (time: string) => time ? new Date(time).toLocaleString('zh-CN') : '-',
+      width: 160,
+      render: (time: string) => <Text type="secondary" style={{ fontSize: 12 }}>{new Date(time).toLocaleString('zh-CN', { hour12: false })}</Text>,
     },
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: 160,
+      align: 'right',
       render: (_, record: Task) => (
-        <Space size="small">
-          <Button
-            type="link"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => showTaskDetails(record)}
-          >
-            详情
-          </Button>
+        <Space size="middle">
+          <Tooltip title="查看详情">
+            <Button type="text" icon={<EyeOutlined />} onClick={() => { setSelectedTask(record); setDetailsVisible(true); }} />
+          </Tooltip>
           {record.status === 'processing' && (
-            <Button
-              type="link"
-              size="small"
-              icon={<StopOutlined />}
-              onClick={() => handleCancelTask(record.id, record.media_item_title)}
-            >
-              取消
-            </Button>
+            <Tooltip title="取消任务">
+              <Button type="text" danger icon={<StopOutlined />} onClick={() => handleCancelTask(record.id, record.media_item_title)} />
+            </Tooltip>
           )}
           {record.status === 'failed' && (
-            <Button
-              type="link"
-              size="small"
-              icon={<ReloadOutlined />}
-              onClick={() => handleRetryTask(record.id, record.media_item_title)}
-            >
-              重试
-            </Button>
+            <Tooltip title="重试任务">
+              <Button type="text" style={{ color: '#1677ff' }} icon={<ReloadOutlined />} onClick={() => handleRetryTask(record.id, record.media_item_title)} />
+            </Tooltip>
           )}
         </Space>
       ),
     },
   ];
 
-  // 状态筛选选项
-  const statusOptions = [
-    { label: '全部', value: undefined },
-    { label: '待处理', value: 'pending' as TaskStatus },
-    { label: '处理中', value: 'processing' as TaskStatus },
-    { label: '已完成', value: 'completed' as TaskStatus },
-    { label: '失败', value: 'failed' as TaskStatus },
-    { label: '已取消', value: 'cancelled' as TaskStatus },
-  ];
-
   return (
-    <div>
-      <h1>Tasks</h1>
+    <div style={{ maxWidth: 1400, margin: '0 auto' }}>
+      {/* Header / Filter Bar */}
+      <Card className="glass-card" style={{ marginBottom: 24, borderRadius: 16 }} bodyStyle={{ padding: '16px 24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+          <Space size={12}>
+            <div style={{ background: '#1677ff', padding: 8, borderRadius: 8, color: 'white', display: 'flex' }}>
+              <HistoryOutlined />
+            </div>
+            <Title level={5} style={{ margin: 0 }}>任务队列管理</Title>
+          </Space>
 
-      {/* 筛选器 */}
-      <Card style={{ marginBottom: 24 }}>
-        <Space>
-          <span style={{ fontWeight: 'bold' }}>状态筛选:</span>
-          <Select
-            style={{ width: 150 }}
-            value={selectedStatus}
-            onChange={handleStatusChange}
-          >
-            {statusOptions.map((option) => (
-              <Option key={option.value || 'all'} value={option.value}>
-                {option.label}
-              </Option>
-            ))}
-          </Select>
-          <Button icon={<ReloadOutlined />} onClick={fetchTasks}>
-            刷新
-          </Button>
-        </Space>
+          <Space size="middle">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <FilterOutlined style={{ color: 'rgba(255,255,255,0.45)' }} />
+              <Select
+                style={{ width: 140 }}
+                placeholder="筛选状态"
+                value={selectedStatus}
+                onChange={handleStatusChange}
+                allowClear
+              >
+                <Option value="pending">待处理</Option>
+                <Option value="processing">进行中</Option>
+                <Option value="completed">已完成</Option>
+                <Option value="failed">失败</Option>
+                <Option value="cancelled">已取消</Option>
+              </Select>
+            </div>
+            <Button icon={<ReloadOutlined />} onClick={fetchTasks}>刷新列表</Button>
+          </Space>
+        </div>
       </Card>
 
-      {/* 任务列表表格 */}
-      <Card>
+      {/* Task List Table */}
+      <Card className="glass-card" bodyStyle={{ padding: 0 }} bordered={false}>
         <Table
           columns={columns}
           dataSource={tasks}
           rowKey="id"
           loading={loading}
           pagination={false}
+          className="custom-table"
           expandable={{
-            expandedRowRender: (record: Task) => (
-              record.error_message ? (
-                <div style={{ padding: '8px 0' }}>
-                  <strong>错误信息:</strong>
-                  <div style={{ color: '#ff4d4f', marginTop: 4 }}>
-                    {record.error_message}
-                  </div>
-                </div>
-              ) : null
+            expandedRowRender: (record) => record.error_message && (
+              <div style={{ padding: '16px 24px', background: 'rgba(255, 77, 79, 0.05)', borderLeft: '4px solid #ff4d4f' }}>
+                <Text type="danger" strong>错误详情：</Text>
+                <div style={{ marginTop: 8, color: 'rgba(255,255,255,0.65)', fontFamily: 'monospace' }}>{record.error_message}</div>
+              </div>
             ),
-            rowExpandable: (record: Task) => !!record.error_message,
+            rowExpandable: (record) => !!record.error_message,
           }}
         />
 
-        {/* 分页 */}
-        <div style={{ marginTop: 16, textAlign: 'center' }}>
+        <div style={{ padding: '24px', textAlign: 'center' }}>
           <Pagination
             current={currentPage}
             pageSize={pageSize}
             total={total}
-            onChange={handlePageChange}
+            onChange={(p, s) => { setCurrentPage(p); setPageSize(s); }}
             showSizeChanger
-            showQuickJumper
-            showTotal={(total) => `共 ${total} 个任务`}
-            pageSizeOptions={['10', '20', '50', '100']}
+            showTotal={(total) => <Text type="secondary">共 {total} 个生成任务</Text>}
           />
         </div>
       </Card>
 
-      {/* 任务详情抽屉 */}
       <Drawer
-        title="任务详情"
+        title={<Space><EyeOutlined /> 任务详细信息</Space>}
         placement="right"
-        width={720}
-        onClose={closeTaskDetails}
+        width={640}
+        onClose={() => setDetailsVisible(false)}
         open={detailsVisible}
+        headerStyle={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
+        bodyStyle={{ padding: '24px' }}
       >
         {selectedTask && (
-          <div>
-            {/* 错误信息提示 */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
             {selectedTask.error_message && (
-              <Alert
-                message="任务失败"
-                description={selectedTask.error_message}
-                type="error"
-                showIcon
-                style={{ marginBottom: 24 }}
-              />
+              <Alert message="任务处理异常" description={selectedTask.error_message} type="error" showIcon style={{ borderRadius: 12 }} />
             )}
 
-            {/* 基本信息 */}
-            <Descriptions title="基本信息" bordered column={1} style={{ marginBottom: 24 }}>
-              <Descriptions.Item label="任务 ID">{selectedTask.id}</Descriptions.Item>
-              <Descriptions.Item label="媒体项">
-                {selectedTask.media_item_title || '未知'}
+            <Descriptions title="基本概览" bordered column={1} size="small" className="custom-descriptions">
+              <Descriptions.Item label="媒体标题">{selectedTask.media_item_title}</Descriptions.Item>
+              <Descriptions.Item label="当前状态">{getStatusTag(selectedTask.status)}</Descriptions.Item>
+              <Descriptions.Item label="当前总进度">
+                <Progress percent={selectedTask.progress} size="small" strokeColor={{ '0%': '#1677ff', '100%': '#722ed1' }} />
               </Descriptions.Item>
-              <Descriptions.Item label="媒体项 ID">
-                {selectedTask.media_item_id}
-              </Descriptions.Item>
-              {selectedTask.video_path && (
-                <Descriptions.Item label="视频路径">
-                  <Tooltip title={selectedTask.video_path}>
-                    <div style={{ 
-                      maxWidth: '100%', 
-                      overflow: 'hidden', 
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap' 
-                    }}>
-                      {selectedTask.video_path}
-                    </div>
-                  </Tooltip>
-                </Descriptions.Item>
-              )}
-              <Descriptions.Item label="状态">
-                {getStatusTag(selectedTask.status)}
-              </Descriptions.Item>
-              <Descriptions.Item label="进度">
-                <Progress 
-                  percent={selectedTask.progress} 
-                  status={
-                    selectedTask.status === 'completed' ? 'success' :
-                    selectedTask.status === 'failed' || selectedTask.status === 'cancelled' ? 'exception' :
-                    selectedTask.status === 'processing' ? 'active' : 'normal'
-                  }
-                />
-              </Descriptions.Item>
-              <Descriptions.Item label="创建时间">
-                {new Date(selectedTask.created_at).toLocaleString('zh-CN')}
-              </Descriptions.Item>
-              {selectedTask.completed_at && (
-                <Descriptions.Item label="完成时间">
-                  {new Date(selectedTask.completed_at).toLocaleString('zh-CN')}
-                </Descriptions.Item>
-              )}
+              <Descriptions.Item label="任务 ID"><Text copyable style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{selectedTask.id}</Text></Descriptions.Item>
             </Descriptions>
 
-            {/* 处理阶段 */}
-            <div style={{ marginBottom: 24 }}>
-              <h3 style={{ marginBottom: 16 }}>处理阶段</h3>
+            <div>
+              <Title level={5} style={{ marginBottom: 20 }}>处理流程分析</Title>
               <Steps
                 direction="vertical"
+                size="small"
                 current={getTaskStages(selectedTask).findIndex(s => s.status === 'process')}
-                status={
-                  selectedTask.status === 'failed' || selectedTask.status === 'cancelled' ? 'error' :
-                  selectedTask.status === 'completed' ? 'finish' : 'process'
-                }
-              >
-                {getTaskStages(selectedTask).map((stage) => (
-                  <Steps.Step
-                    key={stage.key}
-                    title={stage.name}
-                    status={stage.status}
-                    icon={
-                      stage.status === 'process' ? <LoadingOutlined /> :
-                      stage.status === 'finish' ? <CheckCircleOutlined /> :
-                      stage.status === 'error' ? <CloseCircleOutlined /> :
-                      undefined
-                    }
-                    description={
-                      stage.status === 'process' ? (
-                        <Progress 
-                          percent={Math.round(stage.progress)} 
-                          size="small" 
-                          status="active"
-                        />
-                      ) : stage.status === 'finish' ? (
-                        <span style={{ color: '#52c41a' }}>已完成</span>
-                      ) : stage.status === 'error' ? (
-                        <span style={{ color: '#ff4d4f' }}>失败</span>
-                      ) : (
-                        <span style={{ color: '#999' }}>等待中</span>
-                      )
-                    }
-                  />
-                ))}
-              </Steps>
-            </div>
-
-            {/* 操作按钮 */}
-            <div style={{ textAlign: 'right' }}>
-              <Space>
-                {selectedTask.status === 'processing' && (
-                  <Button
-                    danger
-                    icon={<StopOutlined />}
-                    onClick={() => {
-                      handleCancelTask(selectedTask.id, selectedTask.media_item_title);
-                      closeTaskDetails();
-                    }}
-                  >
-                    取消任务
-                  </Button>
-                )}
-                {selectedTask.status === 'failed' && (
-                  <Button
-                    type="primary"
-                    icon={<ReloadOutlined />}
-                    onClick={() => {
-                      handleRetryTask(selectedTask.id, selectedTask.media_item_title);
-                      closeTaskDetails();
-                    }}
-                  >
-                    重试任务
-                  </Button>
-                )}
-                <Button onClick={closeTaskDetails}>关闭</Button>
-              </Space>
+                items={getTaskStages(selectedTask).map(stage => ({
+                  title: stage.name,
+                  status: stage.status,
+                  icon: stage.status === 'process' ? <LoadingOutlined /> : (stage.status === 'finish' ? <CheckCircleFilled style={{ color: '#52c41a' }} /> : (stage.status === 'error' ? <CloseCircleFilled style={{ color: '#ff4d4f' }} /> : undefined)),
+                  description: stage.status === 'process' ? <Progress percent={Math.round(stage.progress)} size="small" /> : null
+                }))}
+              />
             </div>
           </div>
         )}
       </Drawer>
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        .custom-table .ant-table { background: transparent !important; }
+        .custom-table .ant-table-thead > tr > th { 
+          background: rgba(255,255,255,0.02) !important; 
+          border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+          color: rgba(255,255,255,0.45) !important;
+        }
+        .custom-table .ant-table-tbody > tr > td { 
+          border-bottom: 1px solid rgba(255,255,255,0.03) !important; 
+        }
+        .custom-table .ant-table-tbody > tr:hover > td {
+          background: rgba(255,255,255,0.02) !important;
+        }
+        .custom-descriptions .ant-descriptions-item-label {
+          background: rgba(255,255,255,0.02) !important;
+          color: rgba(255,255,255,0.45) !important;
+          width: 120px;
+        }
+        .custom-descriptions .ant-descriptions-item-content {
+          color: rgba(255,255,255,0.85) !important;
+        }
+      `}} />
     </div>
   );
 };
 
 export default Tasks;
+
