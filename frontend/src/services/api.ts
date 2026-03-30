@@ -294,6 +294,14 @@ class ApiClient {
     },
 
     /**
+     * 从 GitHub 刷新模型列表
+     */
+    refreshModels: async (): Promise<ASRModel[]> => {
+      const response = await this.client.post<ASRModel[]>('/api/models/refresh');
+      return response.data;
+    },
+
+    /**
      * 获取支持的语言列表
      */
     listLanguages: async (): Promise<LanguageInfo[]> => {

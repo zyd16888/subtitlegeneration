@@ -132,6 +132,7 @@ export interface ASRModel {
   size: string;
   installed: boolean;
   active: boolean;
+  download_count?: number;
 }
 
 /**

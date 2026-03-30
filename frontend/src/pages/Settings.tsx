@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Card,
   Form,
@@ -60,7 +60,10 @@ const Settings: React.FC = () => {
 
   const [models, setModels] = useState<ASRModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [refreshingModels, setRefreshingModels] = useState(false);
   const [downloadingModels, setDownloadingModels] = useState<Record<string, ModelDownloadProgress>>({});
+  const [modelSearch, setModelSearch] = useState('');
+  const [modelLangFilter, setModelLangFilter] = useState<string | undefined>(undefined);
   const pollTimerRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const [languages, setLanguages] = useState<LanguageInfo[]>([]);
 
@@ -96,6 +99,19 @@ const Settings: React.FC = () => {
       setLanguages(data);
     } catch { }
   }, []);
+
+  const handleRefreshModels = async () => {
+    setRefreshingModels(true);
+    try {
+      const data = await api.models.refreshModels();
+      setModels(data);
+      message.success('模型列表已从 GitHub 刷新');
+    } catch (err: any) {
+      message.error(err.message || '刷新失败，请检查网络连接');
+    } finally {
+      setRefreshingModels(false);
+    }
+  };
 
   useEffect(() => {
     loadConfig();
@@ -207,6 +223,25 @@ const Settings: React.FC = () => {
     } catch (err: any) { message.error(err.message || '测试失败'); } finally { setTestingTranslation(false); }
   };
 
+  const filteredModels = useMemo(() => {
+    let list = models;
+    if (modelSearch) {
+      const kw = modelSearch.toLowerCase();
+      list = list.filter(m => m.id.toLowerCase().includes(kw) || m.name.toLowerCase().includes(kw));
+    }
+    if (modelLangFilter) {
+      list = list.filter(m => m.languages.includes(modelLangFilter));
+    }
+    return list;
+  }, [models, modelSearch, modelLangFilter]);
+
+  // 从实际模型数据中提取所有出现的语言，用于过滤下拉
+  const availableLangs = useMemo(() => {
+    const langSet = new Set<string>();
+    models.forEach(m => m.languages.forEach(l => langSet.add(l)));
+    return Array.from(langSet).sort();
+  }, [models]);
+
   const modelColumns = [
     { title: '模型名称', dataIndex: 'name', key: 'name', render: (text: string) => <Text strong style={{ color: 'rgba(255,255,255,0.85)' }}>{text}</Text> },
     { title: '类型', dataIndex: 'type', key: 'type', width: 90, render: (t: string) => <Tag color={t === 'online' ? 'blue' : 'green'} style={{ borderRadius: 4 }}>{t === 'online' ? '流式' : '离线'}</Tag> },
@@ -260,12 +295,25 @@ const Settings: React.FC = () => {
 
               {/* Model Management */}
               <Card className="glass-card" title={<Space><CloudServerOutlined />ASR 模型库</Space>} extra={
-                <Button type="text" icon={<ReloadOutlined />} onClick={loadModels} loading={modelsLoading} />
+                <Space>
+                  <Button type="text" size="small" icon={<ReloadOutlined />} onClick={handleRefreshModels} loading={refreshingModels}>从 GitHub 刷新</Button>
+                  <Button type="text" icon={<ReloadOutlined />} onClick={loadModels} loading={modelsLoading} />
+                </Space>
               } bodyStyle={{ padding: 0 }}>
-                <div style={{ padding: '12px 24px' }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>选择适合您硬件的语音识别模型。Whisper 系列模型推荐使用离线安装以获得最佳效果。</Text>
+                <div style={{ padding: '12px 24px 0' }}>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>模型列表从 GitHub 动态获取，点击"从 GitHub 刷新"获取最新模型。已安装优先显示，按热度排序。</Text>
+                  <Row gutter={12}>
+                    <Col flex="auto">
+                      <Input placeholder="搜索模型名称..." allowClear value={modelSearch} onChange={e => setModelSearch(e.target.value)} size="small" />
+                    </Col>
+                    <Col flex="160px">
+                      <Select placeholder="按语言筛选" allowClear value={modelLangFilter} onChange={v => setModelLangFilter(v)} size="small" style={{ width: '100%' }}>
+                        {availableLangs.map(l => <Option key={l} value={l}>{LANG_LABELS[l] || l}</Option>)}
+                      </Select>
+                    </Col>
+                  </Row>
                 </div>
-                <Table dataSource={models} columns={modelColumns} rowKey="id" loading={modelsLoading} pagination={false} size="middle" className="custom-table" />
+                <Table dataSource={filteredModels} columns={modelColumns} rowKey="id" loading={modelsLoading} pagination={{ pageSize: 10, showSizeChanger: false, size: 'small' }} size="middle" className="custom-table" />
               </Card>
 
               {/* ASR Configuration */}

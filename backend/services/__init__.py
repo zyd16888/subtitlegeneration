@@ -5,7 +5,7 @@ from .config_manager import ConfigManager, SystemConfigData, ValidationResult
 from .emby_connector import EmbyConnector, Library, MediaItem
 from .audio_extractor import AudioExtractor
 from .asr_engine import ASREngine, SherpaOnnxEngine, SherpaOnnxOnlineEngine, SherpaOnnxOfflineEngine, CloudASREngine, Segment
-from .model_manager import ModelManager, SUPPORTED_LANGUAGES, MODEL_REGISTRY
+from .model_manager import ModelManager, ModelRegistry, SUPPORTED_LANGUAGES
 from .translation_service import (
     TranslationService,
     OpenAITranslator,
@@ -30,7 +30,7 @@ __all__ = [
     "CloudASREngine",
     "ModelManager",
     "SUPPORTED_LANGUAGES",
-    "MODEL_REGISTRY",
+    "ModelRegistry",
     "Segment",
     "TranslationService",
     "OpenAITranslator",

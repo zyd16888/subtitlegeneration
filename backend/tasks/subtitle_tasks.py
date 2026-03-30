@@ -28,7 +28,7 @@ from services.translation_service import (
 from services.subtitle_generator import SubtitleGenerator, SubtitleSegment
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
-from services.model_manager import ModelManager, MODEL_REGISTRY
+from services.model_manager import ModelManager
 from config.settings import settings
 from models.base import SessionLocal
 
@@ -56,17 +56,19 @@ def _get_asr_engine(config) -> ASREngine:
 
     if config.asr_engine == "sherpa-onnx":
         # 优先使用 model_id
-        if config.asr_model_id and config.asr_model_id in MODEL_REGISTRY:
-            meta = MODEL_REGISTRY[config.asr_model_id]
+        if config.asr_model_id:
             manager = ModelManager(models_dir=settings.model_storage_dir)
+            meta = manager.get_model_meta(config.asr_model_id)
+            if not meta:
+                raise ValueError(f"模型 {config.asr_model_id} 元数据不存在，请重新下载")
             model_path = manager.get_model_path(config.asr_model_id)
             if not model_path:
                 raise ValueError(f"模型 {config.asr_model_id} 未安装")
 
             model_type = meta.get("model_type", "transducer")
-            file_map = meta["files"]
+            file_map = meta.get("files", {})
 
-            if meta["type"] == "online":
+            if meta.get("type") == "online":
                 return SherpaOnnxOnlineEngine(str(model_path), file_map=file_map)
             else:
                 return SherpaOnnxOfflineEngine(str(model_path), model_type=model_type, file_map=file_map)

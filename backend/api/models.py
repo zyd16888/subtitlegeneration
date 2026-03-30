@@ -29,6 +29,7 @@ class ModelInfo(BaseModel):
     size: str
     installed: bool
     active: bool
+    download_count: int = 0
 
 
 class ModelDownloadProgressResponse(BaseModel):
@@ -49,6 +50,17 @@ class LanguageInfo(BaseModel):
 async def list_models(db: Session = Depends(get_db)):
     """列出所有可用模型（含安装状态和激活状态）"""
     manager = _get_model_manager()
+    config_manager = ConfigManager(db)
+    config = await config_manager.get_config()
+    models = manager.list_models(active_model_id=config.asr_model_id)
+    return models
+
+
+@router.post("/refresh", response_model=List[ModelInfo])
+async def refresh_models(db: Session = Depends(get_db)):
+    """从 GitHub 刷新模型列表"""
+    manager = _get_model_manager()
+    manager.registry.refresh()
     config_manager = ConfigManager(db)
     config = await config_manager.get_config()
     models = manager.list_models(active_model_id=config.asr_model_id)

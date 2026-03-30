@@ -1,19 +1,22 @@
 """
 ASR 模型管理服务
 
-提供模型注册表、下载、进度跟踪和跨平台路径管理。
+提供动态模型注册表（从 GitHub API 获取）、下载、进度跟踪和跨平台路径管理。
 """
 
+import json
 import logging
-import os
-import platform
+import re
 import shutil
 import tarfile
 import threading
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -37,216 +40,43 @@ SUPPORTED_LANGUAGES = {
     "yue": "粤语",
 }
 
+# Whisper 多语言列表
+_WHISPER_LANGUAGES = ["ja", "en", "zh", "ko", "fr", "de", "es", "ru", "pt", "it", "th", "vi", "ar"]
 
-# ── 模型注册表 ──────────────────────────────────────────────────────────────
+# 语言推断映射（模型名称片段 → 语言代码列表）
+_LANGUAGE_PATTERNS: List[Tuple[str, List[str]]] = [
+    ("bilingual-zh-en", ["zh", "en"]),
+    ("multi-zh-hans", ["zh"]),
+    ("-zh-en-", ["zh", "en"]),
+    ("-zh-", ["zh"]),
+    ("-en-", ["en"]),
+    ("-ja-", ["ja"]),
+    ("reazonspeech", ["ja"]),
+    ("-korean-", ["ko"]),
+    ("-fr-", ["fr"]),
+    ("-de-", ["de"]),
+    ("-es-", ["es"]),
+    ("-ru-", ["ru"]),
+    ("-pt-", ["pt"]),
+    ("-it-", ["it"]),
+    ("-thai-", ["th"]),
+    ("-vi-", ["vi"]),
+    ("-ar-", ["ar"]),
+    ("-cantonese-", ["yue"]),
+    ("gigaspeech", ["en"]),
+]
 
-MODEL_REGISTRY: Dict[str, dict] = {
-    # ── Online (Streaming) 模型 ──
-    "streaming-zipformer-bilingual-zh-en": {
-        "name": "中英双语流式模型",
-        "type": "online",
-        "languages": ["zh", "en"],
-        "size": "~300MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2",
-        "archive_dir": "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-99-avg-1.onnx",
-            "decoder": "decoder-epoch-99-avg-1.onnx",
-            "joiner": "joiner-epoch-99-avg-1.onnx",
-        },
-    },
-    "streaming-zipformer-en": {
-        "name": "English Streaming",
-        "type": "online",
-        "languages": ["en"],
-        "size": "~300MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2",
-        "archive_dir": "sherpa-onnx-streaming-zipformer-en-2023-06-26",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-99-avg-1-chunk-16-left-128.onnx",
-            "decoder": "decoder-epoch-99-avg-1-chunk-16-left-128.onnx",
-            "joiner": "joiner-epoch-99-avg-1-chunk-16-left-128.onnx",
-        },
-    },
-    "streaming-zipformer-korean": {
-        "name": "한국어 Streaming",
-        "type": "online",
-        "languages": ["ko"],
-        "size": "~300MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-korean-2024-06-16.tar.bz2",
-        "archive_dir": "sherpa-onnx-streaming-zipformer-korean-2024-06-16",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-99-avg-1.onnx",
-            "decoder": "decoder-epoch-99-avg-1.onnx",
-            "joiner": "joiner-epoch-99-avg-1.onnx",
-        },
-    },
-    "streaming-zipformer-fr": {
-        "name": "Français Streaming",
-        "type": "online",
-        "languages": ["fr"],
-        "size": "~300MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-fr-2023-04-14.tar.bz2",
-        "archive_dir": "sherpa-onnx-streaming-zipformer-fr-2023-04-14",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-29-avg-9-with-averaged-model.onnx",
-            "decoder": "decoder-epoch-29-avg-9-with-averaged-model.onnx",
-            "joiner": "joiner-epoch-29-avg-9-with-averaged-model.onnx",
-        },
-    },
-    # ── Offline (Non-streaming) 模型 ──
-    "zipformer-ja-reazonspeech": {
-        "name": "日本語 Offline (ReazonSpeech)",
-        "type": "offline",
-        "model_type": "transducer",
-        "languages": ["ja"],
-        "size": "~500MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2",
-        "archive_dir": "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-99-avg-1.onnx",
-            "decoder": "decoder-epoch-99-avg-1.onnx",
-            "joiner": "joiner-epoch-99-avg-1.onnx",
-        },
-    },
-    "zipformer-zh-en": {
-        "name": "中英双语 Offline",
-        "type": "offline",
-        "model_type": "transducer",
-        "languages": ["zh", "en"],
-        "size": "~500MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-zh-en-2023-11-22.tar.bz2",
-        "archive_dir": "sherpa-onnx-zipformer-zh-en-2023-11-22",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-34-avg-19.onnx",
-            "decoder": "decoder-epoch-34-avg-19.onnx",
-            "joiner": "joiner-epoch-34-avg-19.onnx",
-        },
-    },
-    "zipformer-korean": {
-        "name": "한국어 Offline",
-        "type": "offline",
-        "model_type": "transducer",
-        "languages": ["ko"],
-        "size": "~500MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-korean-2024-06-24.tar.bz2",
-        "archive_dir": "sherpa-onnx-zipformer-korean-2024-06-24",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-99-avg-1.onnx",
-            "decoder": "decoder-epoch-99-avg-1.onnx",
-            "joiner": "joiner-epoch-99-avg-1.onnx",
-        },
-    },
-    "zipformer-thai": {
-        "name": "ไทย Offline",
-        "type": "offline",
-        "model_type": "transducer",
-        "languages": ["th"],
-        "size": "~500MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-thai-2024-06-20.tar.bz2",
-        "archive_dir": "sherpa-onnx-zipformer-thai-2024-06-20",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-12-avg-5.onnx",
-            "decoder": "decoder-epoch-12-avg-5.onnx",
-            "joiner": "joiner-epoch-12-avg-5.onnx",
-        },
-    },
-    "zipformer-ru": {
-        "name": "Русский Offline",
-        "type": "offline",
-        "model_type": "transducer",
-        "languages": ["ru"],
-        "size": "~500MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-ru-2024-09-18.tar.bz2",
-        "archive_dir": "sherpa-onnx-zipformer-ru-2024-09-18",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-99-avg-1.onnx",
-            "decoder": "decoder-epoch-99-avg-1.onnx",
-            "joiner": "joiner-epoch-99-avg-1.onnx",
-        },
-    },
-    "zipformer-gigaspeech-en": {
-        "name": "English Offline (GigaSpeech)",
-        "type": "offline",
-        "model_type": "transducer",
-        "languages": ["en"],
-        "size": "~500MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-gigaspeech-2023-12-12.tar.bz2",
-        "archive_dir": "sherpa-onnx-zipformer-gigaspeech-2023-12-12",
-        "files": {
-            "tokens": "tokens.txt",
-            "encoder": "encoder-epoch-30-avg-1.onnx",
-            "decoder": "decoder-epoch-30-avg-1.onnx",
-            "joiner": "joiner-epoch-30-avg-1.onnx",
-        },
-    },
-    # ── Whisper 模型 (Offline, 多语言) ──
-    "whisper-tiny": {
-        "name": "Whisper Tiny (多语言)",
-        "type": "offline",
-        "model_type": "whisper",
-        "languages": ["ja", "en", "zh", "ko", "fr", "de", "es", "ru", "pt", "it", "th", "vi", "ar"],
-        "size": "~120MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2",
-        "archive_dir": "sherpa-onnx-whisper-tiny",
-        "files": {
-            "tokens": "tiny-tokens.txt",
-            "encoder": "tiny-encoder.onnx",
-            "decoder": "tiny-decoder.onnx",
-        },
-    },
-    "whisper-base": {
-        "name": "Whisper Base (多语言)",
-        "type": "offline",
-        "model_type": "whisper",
-        "languages": ["ja", "en", "zh", "ko", "fr", "de", "es", "ru", "pt", "it", "th", "vi", "ar"],
-        "size": "~290MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-base.tar.bz2",
-        "archive_dir": "sherpa-onnx-whisper-base",
-        "files": {
-            "tokens": "base-tokens.txt",
-            "encoder": "base-encoder.onnx",
-            "decoder": "base-decoder.onnx",
-        },
-    },
-    "whisper-small": {
-        "name": "Whisper Small (多语言, 推荐)",
-        "type": "offline",
-        "model_type": "whisper",
-        "languages": ["ja", "en", "zh", "ko", "fr", "de", "es", "ru", "pt", "it", "th", "vi", "ar"],
-        "size": "~950MB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-small.tar.bz2",
-        "archive_dir": "sherpa-onnx-whisper-small",
-        "files": {
-            "tokens": "small-tokens.txt",
-            "encoder": "small-encoder.onnx",
-            "decoder": "small-decoder.onnx",
-        },
-    },
-    "whisper-medium": {
-        "name": "Whisper Medium (多语言, 高精度)",
-        "type": "offline",
-        "model_type": "whisper",
-        "languages": ["ja", "en", "zh", "ko", "fr", "de", "es", "ru", "pt", "it", "th", "vi", "ar"],
-        "size": "~3GB",
-        "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-medium.tar.bz2",
-        "archive_dir": "sherpa-onnx-whisper-medium",
-        "files": {
-            "tokens": "medium-tokens.txt",
-            "encoder": "medium-encoder.onnx",
-            "decoder": "medium-decoder.onnx",
-        },
-    },
-}
+# 不兼容的模型关键词（当前引擎不支持）
+_INCOMPATIBLE_KEYWORDS = [
+    "paraformer", "sensevoice", "nemo", "tdnn", "wenet", "telespeech",
+    "moonshine",
+]
+
+# 非 ASR 资产关键词
+_NON_ASR_KEYWORDS = [
+    "native-lib", "speaker", "tts", "punctuation", "keyword", "vad",
+    "kws-", "audio-tagging", "fire-red-asr",
+]
 
 
 # ── 下载状态 ────────────────────────────────────────────────────────────────
@@ -267,6 +97,201 @@ class DownloadProgress:
     error: Optional[str] = None
 
 
+# ── ModelRegistry ─────────────────────────────────────────────────────────
+
+class ModelRegistry:
+    """动态模型注册表，从 GitHub API 获取并缓存到本地 JSON"""
+
+    CACHE_FILE = "model_cache.json"
+    CACHE_TTL = 3600 * 6  # 6 小时
+    GITHUB_API_URL = (
+        "https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/tags/asr-models"
+    )
+
+    def __init__(self, models_dir: Path):
+        self.models_dir = models_dir
+        self.cache_path = models_dir / self.CACHE_FILE
+        self._lock = threading.Lock()
+
+    def get_models(self, force_refresh: bool = False) -> Dict[str, dict]:
+        """获取模型列表（优先读缓存，过期或强制刷新则从 GitHub 拉取）"""
+        if not force_refresh:
+            cached = self._read_cache()
+            if cached is not None:
+                return cached
+
+        try:
+            models = self._fetch_from_github()
+            self._write_cache(models)
+            return models
+        except Exception as e:
+            logger.error(f"从 GitHub 获取模型列表失败: {e}")
+            # 回退到过期缓存
+            cached = self._read_cache(ignore_ttl=True)
+            if cached is not None:
+                logger.info("使用过期缓存作为回退")
+                return cached
+            return {}
+
+    def refresh(self) -> Dict[str, dict]:
+        """强制从 GitHub 刷新模型列表"""
+        return self.get_models(force_refresh=True)
+
+    # ── GitHub API ──
+
+    def _fetch_from_github(self) -> Dict[str, dict]:
+        """从 GitHub Releases API 获取并解析模型列表"""
+        logger.info("正在从 GitHub 获取模型列表...")
+        resp = httpx.get(
+            self.GITHUB_API_URL,
+            headers={"Accept": "application/vnd.github.v3+json"},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        release = resp.json()
+        assets = release.get("assets", [])
+
+        models: Dict[str, dict] = {}
+        for asset in assets:
+            parsed = self._parse_asset(asset)
+            if parsed:
+                model_id = parsed.pop("id")
+                models[model_id] = parsed
+
+        logger.info(f"从 GitHub 获取到 {len(models)} 个兼容模型")
+        return models
+
+    def _parse_asset(self, asset: dict) -> Optional[dict]:
+        """从 GitHub asset 解析模型元数据，不兼容的返回 None"""
+        name: str = asset.get("name", "")
+
+        # 只处理 tar.bz2
+        if not name.endswith(".tar.bz2"):
+            return None
+
+        # 必须以 sherpa-onnx- 开头
+        if not name.startswith("sherpa-onnx-"):
+            return None
+
+        name_lower = name.lower()
+
+        # 排除非 ASR 资产
+        for kw in _NON_ASR_KEYWORDS:
+            if kw in name_lower:
+                return None
+
+        # 排除不兼容模型
+        for kw in _INCOMPATIBLE_KEYWORDS:
+            if kw in name_lower:
+                return None
+
+        # 去掉前缀 "sherpa-onnx-" 和后缀 ".tar.bz2"
+        stem = name[len("sherpa-onnx-"):-len(".tar.bz2")]
+        # archive_dir 就是去掉 .tar.bz2 的完整文件名
+        archive_dir = name[:-len(".tar.bz2")]
+
+        engine_type, model_type = self._infer_engine_and_model_type(stem)
+        languages = self._infer_languages(stem, model_type)
+        size_bytes = asset.get("size", 0)
+        size_str = self._format_size(size_bytes)
+
+        # 生成 model_id: 去掉日期后缀来得到简洁 ID
+        model_id = self._make_model_id(stem)
+
+        return {
+            "id": model_id,
+            "name": self._make_display_name(stem, model_type, languages),
+            "type": engine_type,
+            "model_type": model_type,
+            "languages": languages,
+            "size": size_str,
+            "url": asset.get("browser_download_url", ""),
+            "archive_dir": archive_dir,
+            "download_count": asset.get("download_count", 0),
+        }
+
+    # ── 名称推断 ──
+
+    @staticmethod
+    def _infer_engine_and_model_type(stem: str) -> Tuple[str, str]:
+        """从 stem 推断 (engine_type, model_type)"""
+        s = stem.lower()
+        if s.startswith("streaming-"):
+            return ("online", "transducer")
+        if "whisper" in s:
+            return ("offline", "whisper")
+        return ("offline", "transducer")
+
+    @staticmethod
+    def _infer_languages(stem: str, model_type: str) -> List[str]:
+        """从 stem 推断语言列表"""
+        s = stem.lower()
+        # Whisper 系列默认多语言
+        if model_type == "whisper":
+            return list(_WHISPER_LANGUAGES)
+
+        for pattern, langs in _LANGUAGE_PATTERNS:
+            if pattern in s:
+                return langs
+
+        return ["unknown"]
+
+    @staticmethod
+    def _make_model_id(stem: str) -> str:
+        """从 stem 生成简洁的 model_id"""
+        # 去掉日期后缀 如 -2023-02-20, -2024-08-01
+        cleaned = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", stem)
+        return cleaned
+
+    @staticmethod
+    def _make_display_name(stem: str, model_type: str, languages: List[str]) -> str:
+        """生成用于展示的模型名称"""
+        parts = stem.split("-")
+        # 首字母大写处理
+        name = " ".join(p.capitalize() for p in parts if not re.match(r"^\d{4}$", p))
+        # 限制长度
+        if len(name) > 60:
+            name = name[:57] + "..."
+        return name
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        """将字节数转为可读字符串"""
+        if size_bytes <= 0:
+            return "unknown"
+        if size_bytes < 1024 * 1024:
+            return f"~{size_bytes // 1024}KB"
+        if size_bytes < 1024 * 1024 * 1024:
+            return f"~{size_bytes // (1024 * 1024)}MB"
+        return f"~{size_bytes / (1024 * 1024 * 1024):.1f}GB"
+
+    # ── 缓存 ──
+
+    def _read_cache(self, ignore_ttl: bool = False) -> Optional[Dict[str, dict]]:
+        """读取缓存，过期返回 None"""
+        with self._lock:
+            if not self.cache_path.exists():
+                return None
+            try:
+                data = json.loads(self.cache_path.read_text(encoding="utf-8"))
+                cached_at = data.get("cached_at", 0)
+                if not ignore_ttl and (time.time() - cached_at) > self.CACHE_TTL:
+                    return None
+                return data.get("models", {})
+            except (json.JSONDecodeError, KeyError):
+                return None
+
+    def _write_cache(self, models: Dict[str, dict]):
+        """写入缓存"""
+        with self._lock:
+            self.models_dir.mkdir(parents=True, exist_ok=True)
+            data = {"cached_at": time.time(), "models": models}
+            self.cache_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+
 # ── ModelManager ────────────────────────────────────────────────────────────
 
 # 全局下载进度表
@@ -277,41 +302,57 @@ _download_lock = threading.Lock()
 class ModelManager:
     """ASR 模型管理器：注册表查询、下载、删除、路径管理"""
 
+    MODEL_META_FILE = "model_meta.json"
+
     def __init__(self, models_dir: Optional[str] = None):
         self.models_dir = Path(models_dir) if models_dir else self._default_models_dir()
         self.models_dir.mkdir(parents=True, exist_ok=True)
+        self.registry = ModelRegistry(self.models_dir)
 
     # ── 跨平台默认目录 ──
 
     @staticmethod
     def _default_models_dir() -> Path:
-        # 默认放在 backend 同级的 models_data 目录，Docker 挂载方便
-        backend_dir = Path(__file__).resolve().parent.parent  # backend/
+        backend_dir = Path(__file__).resolve().parent.parent
         return backend_dir / "models_data"
 
     # ── 查询 ──
 
     def list_models(self, active_model_id: Optional[str] = None) -> List[dict]:
         """返回所有注册模型及其安装状态"""
+        registry_models = self.registry.get_models()
         result = []
-        for model_id, meta in MODEL_REGISTRY.items():
+        for model_id, meta in registry_models.items():
             installed = self._is_installed(model_id)
             result.append({
                 "id": model_id,
-                "name": meta["name"],
-                "type": meta["type"],
+                "name": meta.get("name", model_id),
+                "type": meta.get("type", "offline"),
                 "model_type": meta.get("model_type", "transducer"),
-                "languages": meta["languages"],
-                "size": meta["size"],
+                "languages": meta.get("languages", []),
+                "size": meta.get("size", "unknown"),
                 "installed": installed,
                 "active": model_id == active_model_id,
+                "download_count": meta.get("download_count", 0),
             })
+        # 排序：已安装优先，然后按下载量降序
+        result.sort(key=lambda m: (not m["installed"], -m.get("download_count", 0)))
         return result
+
+    def get_model_meta(self, model_id: str) -> Optional[dict]:
+        """获取模型元数据（优先从已安装的 model_meta.json 读取）"""
+        meta_path = self.models_dir / model_id / self.MODEL_META_FILE
+        if meta_path.exists():
+            try:
+                return json.loads(meta_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        # 回退到注册表
+        registry_models = self.registry.get_models()
+        return registry_models.get(model_id)
 
     def get_model_path(self, model_id: str) -> Optional[Path]:
         """返回已安装模型的目录路径"""
-        if model_id not in MODEL_REGISTRY:
-            return None
         model_dir = self.models_dir / model_id
         if model_dir.exists():
             return model_dir
@@ -322,7 +363,9 @@ class ModelManager:
         model_dir = self.get_model_path(model_id)
         if not model_dir:
             return None
-        meta = MODEL_REGISTRY[model_id]
+        meta = self.get_model_meta(model_id)
+        if not meta or "files" not in meta:
+            return None
         paths = {}
         for key, filename in meta["files"].items():
             full_path = model_dir / filename
@@ -331,24 +374,99 @@ class ModelManager:
         return paths if paths else None
 
     def _is_installed(self, model_id: str) -> bool:
-        """检查模型是否已完整安装"""
+        """检查模型是否已完整安装（有 model_meta.json 且文件齐全）"""
         model_dir = self.models_dir / model_id
         if not model_dir.exists():
             return False
-        meta = MODEL_REGISTRY.get(model_id)
-        if not meta:
+        meta_path = model_dir / self.MODEL_META_FILE
+        if not meta_path.exists():
+            # 旧模型兼容：尝试自动生成 meta
+            return self._try_generate_meta(model_id)
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            files = meta.get("files", {})
+            for filename in files.values():
+                if not (model_dir / filename).exists():
+                    return False
+            return bool(files)
+        except (json.JSONDecodeError, OSError):
             return False
-        for filename in meta["files"].values():
-            if not (model_dir / filename).exists():
-                return False
-        return True
+
+    def _try_generate_meta(self, model_id: str) -> bool:
+        """为旧版安装的模型自动生成 model_meta.json"""
+        model_dir = self.models_dir / model_id
+        file_map = self._auto_detect_files(model_dir)
+        if not file_map:
+            return False
+
+        # 从注册表获取额外信息
+        registry_models = self.registry.get_models()
+        reg_meta = registry_models.get(model_id, {})
+
+        # 推断模型类型
+        if "whisper" in model_id.lower():
+            engine_type, model_type = "offline", "whisper"
+        elif model_id.startswith("streaming-"):
+            engine_type, model_type = "online", "transducer"
+        else:
+            engine_type, model_type = "offline", "transducer"
+
+        meta = {
+            "type": reg_meta.get("type", engine_type),
+            "model_type": reg_meta.get("model_type", model_type),
+            "languages": reg_meta.get("languages", ["unknown"]),
+            "files": file_map,
+        }
+        try:
+            meta_path = model_dir / self.MODEL_META_FILE
+            meta_path.write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            logger.info(f"为旧模型 {model_id} 自动生成 model_meta.json")
+            return True
+        except OSError:
+            return False
+
+    # ── 文件自动检测 ──
+
+    @staticmethod
+    def _auto_detect_files(model_dir: Path) -> Dict[str, str]:
+        """扫描模型目录，自动匹配 encoder/decoder/joiner/tokens 文件"""
+        file_map: Dict[str, str] = {}
+
+        onnx_files = list(model_dir.glob("*.onnx"))
+        txt_files = list(model_dir.glob("*.txt"))
+
+        for f in onnx_files:
+            name_lower = f.name.lower()
+            if "encoder" in name_lower and "encoder" not in file_map:
+                file_map["encoder"] = f.name
+            elif "decoder" in name_lower and "decoder" not in file_map:
+                file_map["decoder"] = f.name
+            elif "joiner" in name_lower and "joiner" not in file_map:
+                file_map["joiner"] = f.name
+
+        for f in txt_files:
+            name_lower = f.name.lower()
+            if "tokens" in name_lower and "tokens" not in file_map:
+                file_map["tokens"] = f.name
+
+        # 最少需要 encoder + decoder + tokens
+        if all(k in file_map for k in ("encoder", "decoder", "tokens")):
+            return file_map
+        return {}
 
     # ── 下载 ──
 
     def start_download(self, model_id: str) -> DownloadProgress:
         """启动后台下载线程"""
-        if model_id not in MODEL_REGISTRY:
-            return DownloadProgress(model_id=model_id, status=DownloadStatus.FAILED, error="未知模型")
+        registry_models = self.registry.get_models()
+        if model_id not in registry_models:
+            return DownloadProgress(
+                model_id=model_id,
+                status=DownloadStatus.FAILED,
+                error="未知模型，请先刷新模型列表",
+            )
 
         with _download_lock:
             existing = _download_progress.get(model_id)
@@ -360,7 +478,7 @@ class ModelManager:
 
         thread = threading.Thread(
             target=self._download_worker,
-            args=(model_id,),
+            args=(model_id, registry_models[model_id]),
             daemon=True,
         )
         thread.start()
@@ -374,16 +492,11 @@ class ModelManager:
                 DownloadProgress(model_id=model_id, status=DownloadStatus.IDLE),
             )
 
-    def _download_worker(self, model_id: str):
-        """后台下载 + 解压"""
-        import httpx
-
-        meta = MODEL_REGISTRY[model_id]
+    def _download_worker(self, model_id: str, meta: dict):
+        """后台下载 + 解压 + 自动检测文件 + 写入 meta"""
         url = meta["url"]
-        archive_dir_name = meta["archive_dir"]
         target_dir = self.models_dir / model_id
         tmp_file = self.models_dir / f"{model_id}.tmp.tar.bz2"
-        # 解压到独立临时目录，避免和已有文件混淆
         extract_tmp = self.models_dir / f"_extract_{model_id}"
 
         try:
@@ -419,33 +532,38 @@ class ModelManager:
             with tarfile.open(tmp_file, "r:bz2") as tar:
                 tar.extractall(path=extract_tmp)
 
-            # 找到解压后的实际模型目录
-            # 可能情况：
-            #   1) extract_tmp/archive_dir_name/tokens.txt  (标准结构)
-            #   2) extract_tmp/其他目录名/tokens.txt        (目录名不同)
-            #   3) extract_tmp/tokens.txt                    (无顶层目录)
-            model_files = meta["files"]
-            source_dir = self._find_model_dir(extract_tmp, model_files)
+            # 找到包含模型文件的目录
+            source_dir = self._find_model_dir(extract_tmp)
 
             if source_dir is None:
-                # 列出解压内容帮助调试
                 contents = list(extract_tmp.rglob("*"))[:30]
                 content_list = "\n".join(str(p.relative_to(extract_tmp)) for p in contents)
                 raise RuntimeError(
-                    f"解压后找不到模型文件。期望文件: {list(model_files.values())}\n"
+                    f"解压后找不到模型文件（需要 *encoder*.onnx + *decoder*.onnx + *tokens*.txt）\n"
                     f"解压内容:\n{content_list}"
                 )
 
-            # 移动到目标目录（用 shutil.move 兼容跨卷）
+            # 移动到目标目录
             logger.info(f"模型 {model_id}: 从 {source_dir} 移动到 {target_dir}")
             shutil.move(str(source_dir), str(target_dir))
 
-            # 验证安装
-            if not self._is_installed(model_id):
-                installed_files = list(target_dir.iterdir()) if target_dir.exists() else []
-                raise RuntimeError(
-                    f"模型文件验证失败。目标目录内容: {[f.name for f in installed_files]}"
-                )
+            # 自动检测文件并写入 meta
+            file_map = self._auto_detect_files(target_dir)
+            if not file_map:
+                raise RuntimeError("模型文件自动检测失败：缺少必要的 encoder/decoder/tokens 文件")
+
+            model_meta = {
+                "type": meta.get("type", "offline"),
+                "model_type": meta.get("model_type", "transducer"),
+                "languages": meta.get("languages", []),
+                "files": file_map,
+                "name": meta.get("name", model_id),
+                "size": meta.get("size", "unknown"),
+            }
+            meta_path = target_dir / self.MODEL_META_FILE
+            meta_path.write_text(
+                json.dumps(model_meta, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
             self._set_progress(model_id, 100, DownloadStatus.COMPLETED)
             logger.info(f"模型 {model_id} 安装完成: {target_dir}")
@@ -456,42 +574,31 @@ class ModelManager:
             if target_dir.exists():
                 shutil.rmtree(target_dir, ignore_errors=True)
         finally:
-            # 清理临时文件
             if tmp_file.exists():
                 tmp_file.unlink(missing_ok=True)
             if extract_tmp.exists():
                 shutil.rmtree(extract_tmp, ignore_errors=True)
 
-    def _find_model_dir(self, extract_root: Path, model_files: Dict[str, str]) -> Optional[Path]:
-        """
-        在解压目录中搜索包含所有模型文件的目录。
+    def _find_model_dir(self, extract_root: Path) -> Optional[Path]:
+        """在解压目录中搜索包含模型文件（encoder+decoder+tokens）的目录"""
 
-        搜索策略：
-        1. 直接在 extract_root 下查找
-        2. 在 extract_root 的一级子目录中查找
-        3. 在 extract_root 的二级子目录中查找
-        """
-        required_files = set(model_files.values())
-
-        # 检查某个目录是否包含所有需要的文件
-        def has_all_files(d: Path) -> bool:
-            existing = {f.name for f in d.iterdir() if f.is_file()}
-            return required_files.issubset(existing)
+        def has_model_files(d: Path) -> bool:
+            return bool(self._auto_detect_files(d))
 
         # 策略1: 直接在解压根目录
-        if has_all_files(extract_root):
+        if has_model_files(extract_root):
             return extract_root
 
         # 策略2: 一级子目录
         for child in extract_root.iterdir():
-            if child.is_dir() and has_all_files(child):
+            if child.is_dir() and has_model_files(child):
                 return child
 
         # 策略3: 二级子目录
         for child in extract_root.iterdir():
             if child.is_dir():
                 for grandchild in child.iterdir():
-                    if grandchild.is_dir() and has_all_files(grandchild):
+                    if grandchild.is_dir() and has_model_files(grandchild):
                         return grandchild
 
         return None
