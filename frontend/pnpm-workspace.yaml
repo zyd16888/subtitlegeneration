@@ -1,0 +1,5 @@
+# pnpm workspace 配置
+# 当前项目是单仓库，此文件为可选配置
+
+packages:
+  - '.'

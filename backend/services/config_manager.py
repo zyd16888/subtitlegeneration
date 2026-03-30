@@ -1,0 +1,272 @@
+"""
+配置管理服务
+"""
+from typing import Optional, Dict, Any
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, HttpUrl, field_validator
+from models.config import SystemConfig
+import json
+
+
+class SystemConfigData(BaseModel):
+    """系统配置数据模型"""
+    # Emby 配置
+    emby_url: Optional[str] = None
+    emby_api_key: Optional[str] = None
+    
+    # ASR 配置
+    asr_engine: str = "sherpa-onnx"  # sherpa-onnx 或 cloud
+    asr_model_path: Optional[str] = None
+    asr_model_id: Optional[str] = None
+    cloud_asr_url: Optional[str] = None
+    cloud_asr_api_key: Optional[str] = None
+
+    # 语言配置
+    source_language: str = "ja"
+    target_language: str = "zh"
+
+    # 翻译服务配置
+    translation_service: str = "openai"  # openai, deepseek, local
+    openai_api_key: Optional[str] = None
+    openai_model: str = "gpt-4"
+    deepseek_api_key: Optional[str] = None
+    local_llm_url: Optional[str] = None
+    
+    # 任务配置
+    max_concurrent_tasks: int = 2
+    temp_dir: str = "/tmp/subtitle_service"
+    
+    @field_validator('emby_url', 'cloud_asr_url', 'local_llm_url')
+    @classmethod
+    def validate_url(cls, v: Optional[str]) -> Optional[str]:
+        """验证 URL 格式"""
+        if v is None or v == "":
+            return v
+        # 简单的 URL 格式验证
+        if not (v.startswith('http://') or v.startswith('https://')):
+            raise ValueError('URL 必须以 http:// 或 https:// 开头')
+        return v
+    
+    @field_validator('asr_engine')
+    @classmethod
+    def validate_asr_engine(cls, v: str) -> str:
+        """验证 ASR 引擎类型"""
+        if v not in ['sherpa-onnx', 'cloud']:
+            raise ValueError('ASR 引擎必须是 sherpa-onnx 或 cloud')
+        return v
+    
+    @field_validator('translation_service')
+    @classmethod
+    def validate_translation_service(cls, v: str) -> str:
+        """验证翻译服务类型"""
+        if v not in ['openai', 'deepseek', 'local']:
+            raise ValueError('翻译服务必须是 openai, deepseek 或 local')
+        return v
+
+
+class ValidationResult(BaseModel):
+    """配置验证结果"""
+    valid: bool
+    errors: list[str] = []
+
+
+class ConfigManager:
+    """
+    配置管理器
+    
+    负责系统配置的读取、更新和验证
+    """
+    
+    def __init__(self, db: Session):
+        """初始化配置管理器"""
+        self.db = db
+    
+    async def get_config(self) -> SystemConfigData:
+        """
+        获取系统配置
+        
+        从数据库读取所有配置项，组装成 SystemConfigData 对象
+        """
+        config_dict = {}
+        
+        # 从数据库读取所有配置
+        configs = self.db.query(SystemConfig).all()
+        for config in configs:
+            # 尝试解析 JSON 值
+            try:
+                config_dict[config.key] = json.loads(config.value) if config.value else None
+            except (json.JSONDecodeError, TypeError):
+                config_dict[config.key] = config.value
+        
+        # 创建配置对象，使用默认值填充缺失的配置
+        return SystemConfigData(**config_dict)
+    
+    async def update_config(self, config: SystemConfigData) -> SystemConfigData:
+        """
+        更新系统配置
+        
+        将配置对象保存到数据库
+        """
+        # 验证配置
+        validation_result = await self.validate_config(config)
+        if not validation_result.valid:
+            raise ValueError(f"配置验证失败: {', '.join(validation_result.errors)}")
+        
+        # 将配置对象转换为字典
+        config_dict = config.model_dump()
+        
+        # 保存到数据库
+        for key, value in config_dict.items():
+            # 查找现有配置
+            db_config = self.db.query(SystemConfig).filter(SystemConfig.key == key).first()
+            
+            # 将值转换为 JSON 字符串（如果不是字符串）
+            if value is not None and not isinstance(value, str):
+                value_str = json.dumps(value)
+            else:
+                value_str = value
+            
+            if db_config:
+                # 更新现有配置
+                db_config.value = value_str
+            else:
+                # 创建新配置
+                db_config = SystemConfig(key=key, value=value_str)
+                self.db.add(db_config)
+        
+        self.db.commit()
+        
+        return config
+    
+    async def partial_update_config(self, config: SystemConfigData, updated_keys: set) -> SystemConfigData:
+        """
+        部分更新系统配置（只验证和更新指定的字段）
+        
+        Args:
+            config: 完整的配置对象
+            updated_keys: 需要更新的字段名集合
+        
+        Returns:
+            更新后的配置对象
+        """
+        # 部分验证配置
+        validation_result = await self.validate_partial_config(config, updated_keys)
+        if not validation_result.valid:
+            raise ValueError(f"配置验证失败: {', '.join(validation_result.errors)}")
+        
+        # 将配置对象转换为字典
+        config_dict = config.model_dump()
+        
+        # 只保存更新的字段到数据库
+        for key in updated_keys:
+            if key in config_dict:
+                value = config_dict[key]
+                
+                # 查找现有配置
+                db_config = self.db.query(SystemConfig).filter(SystemConfig.key == key).first()
+                
+                # 将值转换为 JSON 字符串（如果不是字符串）
+                if value is not None and not isinstance(value, str):
+                    value_str = json.dumps(value)
+                else:
+                    value_str = value
+                
+                if db_config:
+                    # 更新现有配置
+                    db_config.value = value_str
+                else:
+                    # 创建新配置
+                    db_config = SystemConfig(key=key, value=value_str)
+                    self.db.add(db_config)
+        
+        self.db.commit()
+        
+        return config
+    
+    async def validate_partial_config(self, config: SystemConfigData, updated_keys: set) -> ValidationResult:
+        """
+        部分验证配置参数（只验证更新的字段）
+        
+        Args:
+            config: 完整的配置对象
+            updated_keys: 需要验证的字段名集合
+        
+        Returns:
+            验证结果
+        """
+        errors = []
+        
+        # 验证 Emby 配置（只在相关字段更新时验证）
+        if 'emby_url' in updated_keys or 'emby_api_key' in updated_keys:
+            if config.emby_url and not config.emby_api_key:
+                errors.append("Emby URL 已配置但缺少 API Key")
+            if config.emby_api_key and not config.emby_url:
+                errors.append("Emby API Key 已配置但缺少 URL")
+        
+        # 验证 ASR 配置（只在相关字段更新时验证）
+        if 'asr_engine' in updated_keys or 'asr_model_path' in updated_keys or 'cloud_asr_url' in updated_keys or 'cloud_asr_api_key' in updated_keys:
+            if config.asr_engine == "sherpa-onnx" and not config.asr_model_path:
+                errors.append("使用 sherpa-onnx 引擎时必须配置模型路径")
+            if config.asr_engine == "cloud":
+                if not config.cloud_asr_url:
+                    errors.append("使用云端 ASR 时必须配置 API URL")
+                if not config.cloud_asr_api_key:
+                    errors.append("使用云端 ASR 时必须配置 API Key")
+        
+        # 验证翻译服务配置（只在相关字段更新时验证）
+        translation_keys = {'translation_service', 'openai_api_key', 'openai_model', 'deepseek_api_key', 'local_llm_url'}
+        if translation_keys & updated_keys:  # 如果有交集
+            if config.translation_service == "openai" and not config.openai_api_key:
+                errors.append("使用 OpenAI 翻译时必须配置 API Key")
+            if config.translation_service == "deepseek" and not config.deepseek_api_key:
+                errors.append("使用 DeepSeek 翻译时必须配置 API Key")
+            if config.translation_service == "local" and not config.local_llm_url:
+                errors.append("使用本地 LLM 翻译时必须配置 API URL")
+        
+        # 验证任务配置（只在相关字段更新时验证）
+        if 'max_concurrent_tasks' in updated_keys:
+            if config.max_concurrent_tasks < 1:
+                errors.append("最大并发任务数必须大于 0")
+            if config.max_concurrent_tasks > 10:
+                errors.append("最大并发任务数不应超过 10")
+        
+        return ValidationResult(valid=len(errors) == 0, errors=errors)
+    
+    async def validate_config(self, config: SystemConfigData) -> ValidationResult:
+        """
+        验证配置参数的有效性
+        
+        检查必填字段、URL 格式、API Key 等
+        """
+        errors = []
+        
+        # 验证 Emby 配置
+        if config.emby_url and not config.emby_api_key:
+            errors.append("Emby URL 已配置但缺少 API Key")
+        if config.emby_api_key and not config.emby_url:
+            errors.append("Emby API Key 已配置但缺少 URL")
+        
+        # 验证 ASR 配置
+        if config.asr_engine == "sherpa-onnx" and not config.asr_model_path:
+            errors.append("使用 sherpa-onnx 引擎时必须配置模型路径")
+        if config.asr_engine == "cloud":
+            if not config.cloud_asr_url:
+                errors.append("使用云端 ASR 时必须配置 API URL")
+            if not config.cloud_asr_api_key:
+                errors.append("使用云端 ASR 时必须配置 API Key")
+        
+        # 验证翻译服务配置
+        if config.translation_service == "openai" and not config.openai_api_key:
+            errors.append("使用 OpenAI 翻译时必须配置 API Key")
+        if config.translation_service == "deepseek" and not config.deepseek_api_key:
+            errors.append("使用 DeepSeek 翻译时必须配置 API Key")
+        if config.translation_service == "local" and not config.local_llm_url:
+            errors.append("使用本地 LLM 翻译时必须配置 API URL")
+        
+        # 验证任务配置
+        if config.max_concurrent_tasks < 1:
+            errors.append("最大并发任务数必须大于 0")
+        if config.max_concurrent_tasks > 10:
+            errors.append("最大并发任务数不应超过 10")
+        
+        return ValidationResult(valid=len(errors) == 0, errors=errors)

@@ -1,0 +1,33 @@
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Async Task Queue
+celery==5.3.6
+redis==5.0.1
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+
+# HTTP Client
+httpx==0.26.0
+
+# Audio Processing
+ffmpeg-python==0.2.0
+
+# ASR Engine
+sherpa-onnx==1.10.45
+
+# Translation Services
+openai==1.10.0
+
+# Utilities
+python-dotenv==1.0.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
