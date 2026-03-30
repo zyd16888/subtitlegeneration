@@ -94,10 +94,11 @@ const MediaItemImage: React.FC<{
         <Badge
           count={hasSubtitles ? '已有字幕' : '无字幕'}
           style={{
-            backgroundColor: hasSubtitles ? '#52c41a' : '#ff4d4f',
-            boxShadow: `0 0 10px ${hasSubtitles ? '#52c41a40' : '#ff4d4f40'}`,
+            background: hasSubtitles ? 'rgba(16, 185, 129, 0.2)' : 'rgba(244, 63, 94, 0.2)',
+            color: hasSubtitles ? 'var(--accent-emerald)' : 'var(--accent-rose)',
+            border: hasSubtitles ? '1px solid var(--accent-emerald)' : '1px solid var(--accent-rose)',
+            boxShadow: 'none',
             fontSize: '10px',
-            border: 'none',
           }}
         />
       </div>
@@ -253,7 +254,7 @@ const LibraryPage: React.FC = () => {
         />
       )}
 
-      <Card className="glass-card" style={{ marginBottom: 24, borderRadius: 16 }} bodyStyle={{ padding: '16px 24px' }}>
+      <div className="glass-card animate-fade-in-up delay-1" style={{ marginBottom: 24, borderRadius: 16, padding: '16px 24px' }}>
         <Row gutter={[24, 16]} align="middle">
           <Col xs={24} md={6}>
             <Space size={12}>
@@ -298,7 +299,7 @@ const LibraryPage: React.FC = () => {
             />
           </Col>
         </Row>
-      </Card>
+      </div>
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '100px' }}><Spin size="large" tip="正在同步媒体库..." /></div>
@@ -421,6 +422,70 @@ const LibraryPage: React.FC = () => {
         }
         .media-card:hover .overlay-content {
           transform: translateY(0);
+        }
+        
+        /* Fix input focus double border */
+        .ant-input:hover {
+          border-color: rgba(0, 212, 255, 0.4) !important;
+        }
+        
+        .ant-input:focus,
+        .ant-input-focused {
+          border-color: var(--accent-cyan) !important;
+          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          outline: none !important;
+        }
+        
+        /* Fix Input with allowClear (affix wrapper) double border */
+        .ant-input-affix-wrapper {
+          padding: 0 !important;
+          border: none !important;
+          background: transparent !important;
+        }
+        
+        .ant-input-affix-wrapper:hover,
+        .ant-input-affix-wrapper:focus,
+        .ant-input-affix-wrapper-focused {
+          border: none !important;
+          box-shadow: none !important;
+        }
+        
+        .ant-input-affix-wrapper .ant-input {
+          border: 1px solid var(--glass-border) !important;
+          background: rgba(0,0,0,0.2) !important;
+        }
+        
+        .ant-input-affix-wrapper:hover .ant-input {
+          border-color: rgba(0, 212, 255, 0.4) !important;
+        }
+        
+        .ant-input-affix-wrapper-focused .ant-input,
+        .ant-input-affix-wrapper .ant-input:focus {
+          border-color: var(--accent-cyan) !important;
+          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+        }
+        
+        /* Fix Search component double border */
+        .ant-input-search .ant-input-group .ant-input-affix-wrapper {
+          border-right: none !important;
+        }
+        
+        .ant-input-search .ant-input-group .ant-input-affix-wrapper .ant-input {
+          border-right: none !important;
+        }
+        
+        .ant-input-search-button {
+          border: 1px solid var(--glass-border) !important;
+          border-left: none !important;
+          background: rgba(0,0,0,0.2) !important;
+        }
+        
+        .ant-input-search:hover .ant-input-search-button {
+          border-color: rgba(0, 212, 255, 0.4) !important;
+        }
+        
+        .ant-input-search-focused .ant-input-search-button {
+          border-color: var(--accent-cyan) !important;
         }
       `}} />
     </div>

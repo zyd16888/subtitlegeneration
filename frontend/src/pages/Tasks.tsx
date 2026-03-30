@@ -153,9 +153,9 @@ const Tasks: React.FC = () => {
   const getStatusTag = (status: TaskStatus) => {
     const configs = {
       pending: { color: 'default', icon: <ClockCircleOutlined />, text: '待处理' },
-      processing: { color: 'processing', icon: <SyncOutlined spin />, text: '处理中' },
-      completed: { color: 'success', icon: <CheckCircleFilled />, text: '已完成' },
-      failed: { color: 'error', icon: <CloseCircleFilled />, text: '失败' },
+      processing: { color: 'processing', icon: <SyncOutlined spin style={{ color: 'var(--accent-amber)' }} />, text: '处理中' },
+      completed: { color: 'success', icon: <CheckCircleFilled style={{ color: 'var(--accent-emerald)' }} />, text: '已完成' },
+      failed: { color: 'error', icon: <CloseCircleFilled style={{ color: 'var(--accent-rose)' }} />, text: '失败' },
       cancelled: { color: 'default', icon: <CloseCircleFilled />, text: '已取消' },
     };
     const config = configs[status];
@@ -187,7 +187,7 @@ const Tasks: React.FC = () => {
           percent={progress}
           size="small"
           status={record.status === 'failed' ? 'exception' : (record.status === 'completed' ? 'success' : 'active')}
-          strokeColor={record.status === 'completed' ? '#52c41a' : { '0%': '#1677ff', '100%': '#722ed1' }}
+          strokeColor={record.status === 'completed' ? 'var(--accent-emerald)' : { '0%': 'var(--accent-cyan)', '100%': '#007bb5' }}
         />
       ),
     },
@@ -225,7 +225,7 @@ const Tasks: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto' }}>
-      <Card className="glass-card" style={{ marginBottom: 24, borderRadius: 16 }} bodyStyle={{ padding: '16px 24px' }}>
+      <div className="glass-card animate-fade-in-up delay-1" style={{ marginBottom: 24, borderRadius: 16, padding: '16px 24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
           <Space size={12}>
             <div style={{ background: '#1677ff', padding: 8, borderRadius: 8, color: 'white', display: 'flex' }}>
@@ -254,9 +254,9 @@ const Tasks: React.FC = () => {
             <Button icon={<ReloadOutlined />} onClick={fetchTasks}>刷新列表</Button>
           </Space>
         </div>
-      </Card>
+      </div>
 
-      <Card className="glass-card" bodyStyle={{ padding: 0 }} bordered={false}>
+      <div className="glass-card animate-fade-in-up delay-2" style={{ padding: 0, borderRadius: 16, overflow: 'hidden' }}>
         <Table
           columns={columns}
           dataSource={tasks}
@@ -285,7 +285,7 @@ const Tasks: React.FC = () => {
             showTotal={(total) => <Text type="secondary">共 {total} 个生成任务</Text>}
           />
         </div>
-      </Card>
+      </div>
 
       <Drawer
         title={<Space><EyeOutlined /> 任务详细信息</Space>}

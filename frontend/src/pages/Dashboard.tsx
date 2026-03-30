@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Progress, Alert, Spin, Typography, Space } from 'antd';
+import React, { useState, useEffect, useRef } from 'react';
+import { Row, Col, Typography, Space, Progress, Spin, Tag, Empty } from 'antd';
 import {
   CheckCircleFilled,
   CloseCircleFilled,
@@ -8,90 +8,175 @@ import {
   ApiOutlined,
   TranslationOutlined,
   AudioOutlined,
-  ArrowUpOutlined,
   HistoryOutlined,
   ThunderboltFilled,
 } from '@ant-design/icons';
-import type { ColumnsType } from 'antd/es/table';
 import { api } from '../services/api';
 import type { Statistics, Task, TaskStatus } from '../types/api';
 
 const { Text } = Typography;
+
+// Custom hook for rolling numbers
+const useRollingNumber = (endValue: number, duration: number = 800) => {
+  const [value, setValue] = useState(0);
+  const startTime = useRef<number | null>(null);
+  const startValue = useRef(0);
+
+  useEffect(() => {
+    startValue.current = value;
+    startTime.current = null;
+    let animationFrame: number;
+
+    const animate = (timestamp: number) => {
+      if (!startTime.current) startTime.current = timestamp;
+      const progress = timestamp - startTime.current;
+      const percentage = Math.min(progress / duration, 1);
+      
+      // Easing function (easeOutExpo)
+      const easePercentage = percentage === 1 ? 1 : 1 - Math.pow(2, -10 * percentage);
+      
+      setValue(Math.floor(startValue.current + (endValue - startValue.current) * easePercentage));
+
+      if (percentage < 1) {
+        animationFrame = requestAnimationFrame(animate);
+      } else {
+        setValue(endValue);
+      }
+    };
+
+    animationFrame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [endValue, duration]);
+
+  return value;
+};
 
 const StatCard: React.FC<{
   title: string;
   value: number;
   icon: React.ReactNode;
   color: string;
-  loading?: boolean;
-}> = ({ title, value, icon, color, loading }) => (
-  <Card className="glass-card" bordered={false} style={{ height: '100%' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-      <Statistic
-        title={<Text type="secondary" style={{ fontSize: 14 }}>{title}</Text>}
-        value={value}
-        valueStyle={{ color: 'var(--text-primary)', fontSize: 28, fontWeight: 'bold' }}
-        loading={loading}
-      />
-      <div style={{
-        padding: 12,
-        borderRadius: 12,
-        background: `${color}20`,
-        color: color,
-        fontSize: 24,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}>
-        {icon}
+  delayClass: string;
+}> = ({ title, value, icon, color, delayClass }) => {
+  const animatedValue = useRollingNumber(value);
+  
+  return (
+    <div className={`glass-card animate-fade-in-up ${delayClass}`} style={{ height: '100%', padding: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 8, fontWeight: 500 }}>
+            {title}
+          </div>
+          <div className="number-font" style={{ color: 'var(--text-primary)', fontSize: 32, fontWeight: 700 }}>
+            {animatedValue.toLocaleString()}
+          </div>
+        </div>
+        <div style={{
+          width: 48,
+          height: 48,
+          borderRadius: 12,
+          background: `${color}15`,
+          color: color,
+          fontSize: 24,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: `0 0 16px ${color}20 inset`
+        }}>
+          {icon}
+        </div>
+      </div>
+      <div style={{ marginTop: 20, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span className="status-dot success" />
+        <span style={{ 
+          color: 'var(--accent-emerald)', 
+          fontSize: 12, 
+          fontWeight: 500,
+          animation: 'pulseGlowGreen 2s infinite',
+          opacity: 0.8 
+        }}>
+          实时更新中
+        </span>
       </div>
     </div>
-    <div style={{ marginTop: 12 }}>
-      <Text type="secondary" style={{ fontSize: 12 }}>
-        <ArrowUpOutlined /> <Text style={{ color: '#52c41a', fontWeight: '500' }}>实时更新中</Text>
-      </Text>
-    </div>
-  </Card>
-);
+  );
+};
 
 const StatusNode: React.FC<{
   icon: React.ReactNode;
   label: string;
   status: boolean;
   message: string;
-}> = ({ icon, label, status, message }) => (
-  <div style={{
-    display: 'flex',
-    alignItems: 'center',
-    gap: 16,
-    padding: '16px',
-    borderRadius: 12,
-    background: 'var(--bg-spotlight)',
-    border: '1px solid var(--border-color-subtle)',
-    marginBottom: 12,
-    transition: 'background 0.3s, border-color 0.3s',
-  }}>
+  isLast?: boolean;
+}> = ({ icon, label, status, message, isLast }) => (
+  <div style={{ position: 'relative' }}>
     <div style={{
-      fontSize: 24,
-      color: status ? '#52c41a' : '#ff4d4f',
-      background: status ? '#52c41a10' : '#ff4d4f10',
-      padding: 10,
-      borderRadius: 10,
       display: 'flex',
-    }}>
-      {icon}
+      alignItems: 'center',
+      gap: 16,
+      padding: '16px',
+      borderRadius: 'var(--radius-inner)',
+      background: 'rgba(255,255,255,0.02)',
+      border: '1px solid var(--glass-border)',
+      marginBottom: isLast ? 0 : 24,
+      transition: 'all var(--trans-base)',
+      position: 'relative',
+      zIndex: 2,
+    }}
+    className="hover:border-var(--accent-cyan)"
+    >
+      <div style={{
+        fontSize: 24,
+        color: status ? 'var(--accent-emerald)' : 'var(--accent-rose)',
+        background: status ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)',
+        padding: 12,
+        borderRadius: 10,
+        display: 'flex',
+        boxShadow: status ? '0 0 12px rgba(16, 185, 129, 0.2)' : '0 0 12px rgba(244, 63, 94, 0.2)',
+      }}>
+        {icon}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{label}</div>
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>{message}</div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        {status ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(16, 185, 129, 0.1)', padding: '4px 10px', borderRadius: 20, border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+            <span className="status-dot success" style={{ margin: 0, width: 6, height: 6 }} />
+            <span style={{ color: 'var(--accent-emerald)', fontSize: 12, fontWeight: 500 }}>在线</span>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(244, 63, 94, 0.1)', padding: '4px 10px', borderRadius: 20, border: '1px solid rgba(244, 63, 94, 0.2)' }}>
+            <span className="status-dot error" style={{ margin: 0, width: 6, height: 6 }} />
+            <span style={{ color: 'var(--accent-rose)', fontSize: 12, fontWeight: 500 }}>离线</span>
+          </div>
+        )}
+      </div>
     </div>
-    <div style={{ flex: 1 }}>
-      <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{label}</div>
-      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{message}</div>
-    </div>
-    <div style={{ display: 'flex', alignItems: 'center' }}>
-      {status ? (
-        <Tag color="success" icon={<CheckCircleFilled />} style={{ borderRadius: 10 }}>在线</Tag>
-      ) : (
-        <Tag color="error" icon={<CloseCircleFilled />} style={{ borderRadius: 10 }}>离线</Tag>
-      )}
-    </div>
+    
+    {!isLast && (
+      <div style={{
+        position: 'absolute',
+        left: 36,
+        top: 64,
+        width: 2,
+        height: 24,
+        background: 'var(--glass-border)',
+        zIndex: 1,
+      }}>
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '50%',
+          background: status ? 'linear-gradient(180deg, transparent, var(--accent-emerald))' : 'linear-gradient(180deg, transparent, var(--accent-rose))',
+          animation: 'dataFlow 1.5s linear infinite',
+          opacity: 0.6,
+        }} />
+      </div>
+    )}
   </div>
 );
 
@@ -99,19 +184,15 @@ const Dashboard: React.FC = () => {
   const [statistics, setStatistics] = useState<Statistics | null>(null);
   const [processingTasks, setProcessingTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
-      const [statsData, processingData] = await Promise.all([
-        api.stats.getStatistics(),
-        api.tasks.getTasks({ status: 'processing' as TaskStatus, limit: 10 })
-      ]);
+      const statsData = await api.stats.getStatistics();
+      const processingData = await api.tasks.getTasks({ status: 'processing' as TaskStatus, limit: 10 });
       setStatistics(statsData);
       setProcessingTasks(processingData.items);
-      setError(null);
     } catch (err: any) {
-      setError(err.message || '获取数据失败');
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -119,7 +200,7 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
+    const interval = setInterval(loadData, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -132,120 +213,127 @@ const Dashboard: React.FC = () => {
       cancelled: { color: 'default', text: '已取消', icon: <CloseCircleFilled /> },
     };
     const config = configs[status];
-    return <Tag color={config.color} icon={config.icon} style={{ borderRadius: 6 }}>{config.text}</Tag>;
+    return <Tag color={config.color} icon={config.icon} style={{ borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.05)' }}>{config.text}</Tag>;
   };
 
-  const recentTaskColumns: ColumnsType<any> = [
-    {
-      title: '媒体项',
-      dataIndex: 'media_item_title',
-      key: 'media_item_title',
-      ellipsis: true,
-      render: (text) => <Text strong style={{ color: 'var(--text-primary)' }}>{text}</Text>
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 110,
-      render: (status: TaskStatus) => getStatusTag(status),
-    },
-    {
-      title: '完成时间',
-      dataIndex: 'completed_at',
-      key: 'completed_at',
-      width: 160,
-      render: (time: string) => <Text type="secondary" style={{ fontSize: 12 }}>{time ? new Date(time).toLocaleString('zh-CN', { hour12: false }).split(' ')[1] : '-'}</Text>,
-    },
-  ];
-
   if (loading && !statistics) {
-    return <div style={{ textAlign: 'center', padding: '100px' }}><Spin size="large" tip="正在初始化控制面板..." /></div>;
+    return (
+      <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
+        <Spin size="large" />
+        <Text style={{ color: 'var(--text-secondary)' }}>正在初始化神经中枢...</Text>
+      </div>
+    );
   }
 
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto' }}>
-      {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 24, borderRadius: 12 }} />}
-
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      <Row gutter={[20, 20]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={12} lg={6}>
-          <StatCard title="任务总数" value={statistics?.task_statistics.total || 0} icon={<HistoryOutlined />} color="#1677ff" />
+          <StatCard delayClass="delay-1" title="任务总数" value={statistics?.task_statistics.total || 0} icon={<HistoryOutlined />} color="var(--accent-cyan)" />
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <StatCard title="成功生成" value={statistics?.task_statistics.completed || 0} icon={<CheckCircleFilled />} color="#52c41a" />
+          <StatCard delayClass="delay-2" title="成功生成" value={statistics?.task_statistics.completed || 0} icon={<CheckCircleFilled />} color="var(--accent-emerald)" />
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <StatCard title="正在处理" value={statistics?.task_statistics.processing || 0} icon={<SyncOutlined />} color="#faad14" />
+          <StatCard delayClass="delay-3" title="正在处理" value={statistics?.task_statistics.processing || 0} icon={<SyncOutlined />} color="var(--accent-amber)" />
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <StatCard title="异常任务" value={statistics?.task_statistics.failed || 0} icon={<ThunderboltFilled />} color="#ff4d4f" />
+          <StatCard delayClass="delay-4" title="异常任务" value={statistics?.task_statistics.failed || 0} icon={<ThunderboltFilled />} color="var(--accent-rose)" />
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]}>
+      <Row gutter={[20, 20]}>
         <Col xs={24} lg={10}>
-          <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <Card className="glass-card" title={<Space><ApiOutlined />系统连接状态</Space>} bordered={false}>
+          <Space direction="vertical" size={20} style={{ width: '100%' }}>
+            <div className="glass-card animate-fade-in-up delay-4" style={{ padding: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <ApiOutlined style={{ color: 'var(--accent-cyan)' }} /> 节点连接拓扑
+              </div>
               <StatusNode
                 icon={<ApiOutlined />}
-                label="Emby 服务器"
+                label="Emby 服务器节点"
                 status={statistics?.system_status.emby_connected || false}
-                message={statistics?.system_status.emby_message || '等待连接...'}
+                message={statistics?.system_status.emby_message || '持续同步数据流'}
               />
               <StatusNode
                 icon={<AudioOutlined />}
-                label="ASR 识别引擎"
+                label="ASR 推理引擎"
                 status={statistics?.system_status.asr_configured || false}
-                message={statistics?.system_status.asr_message || '引擎就绪'}
+                message={statistics?.system_status.asr_message || '模型已加载并就绪'}
               />
               <StatusNode
                 icon={<TranslationOutlined />}
-                label="翻译服务"
+                label="神经翻译服务"
                 status={statistics?.system_status.translation_configured || false}
-                message={statistics?.system_status.translation_message || '服务正常'}
+                message={statistics?.system_status.translation_message || 'API通道活跃'}
+                isLast
               />
-            </Card>
+            </div>
 
             {processingTasks.length > 0 && (
-              <Card className="glass-card" title={<Space><SyncOutlined spin />实时处理进度</Space>} bordered={false}>
+              <div className="glass-card animate-fade-in-up delay-5" style={{ padding: 20 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <SyncOutlined spin style={{ color: 'var(--accent-amber)' }} /> 实时任务流
+                </div>
                 {processingTasks.map(task => (
-                  <div key={task.id} style={{ marginBottom: 16 }}>
+                  <div key={task.id} style={{ marginBottom: 16, background: 'rgba(255,255,255,0.02)', padding: 12, borderRadius: 8, border: '1px solid var(--glass-border)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <Text ellipsis style={{ maxWidth: '70%', fontSize: 13 }}>{task.media_item_title}</Text>
-                      <Text type="secondary" style={{ fontSize: 12 }}>{task.progress}%</Text>
+                      <Text ellipsis style={{ maxWidth: '80%', fontSize: 13, color: 'var(--text-primary)' }}>{task.media_item_title}</Text>
+                      <Text className="number-font" style={{ fontSize: 12, color: 'var(--accent-cyan)' }}>{task.progress}%</Text>
                     </div>
                     <Progress
                       percent={task.progress}
                       size="small"
-                      strokeColor={{ '0%': '#1677ff', '100%': '#722ed1' }}
-                      trailColor="var(--progress-trail)"
+                      strokeColor={{ '0%': 'var(--accent-cyan)', '100%': '#007bb5' }}
+                      trailColor="rgba(255,255,255,0.05)"
                       showInfo={false}
+                      status="active"
                     />
                   </div>
                 ))}
-              </Card>
+              </div>
             )}
           </Space>
         </Col>
 
         <Col xs={24} lg={14}>
-          <Card
-            className="glass-card"
-            title={<Space><HistoryOutlined />最近活动历史</Space>}
-            bordered={false}
-            bodyStyle={{ padding: 0 }}
-          >
-            <Table
-              columns={recentTaskColumns}
-              dataSource={statistics?.recent_tasks || []}
-              rowKey="id"
-              pagination={false}
-              size="middle"
-              className="custom-table"
-              style={{ background: 'transparent' }}
-              locale={{ emptyText: <div style={{ padding: 40 }}><Text type="secondary">暂无最近活动记录</Text></div> }}
-            />
-          </Card>
+          <div className="glass-card animate-fade-in-up delay-5" style={{ height: '100%', padding: 20 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <HistoryOutlined style={{ color: 'var(--accent-cyan)' }} /> 活动审计日志
+            </div>
+            
+            {(!statistics?.recent_tasks || statistics.recent_tasks.length === 0) ? (
+              <Empty 
+                image={Empty.PRESENTED_IMAGE_SIMPLE} 
+                description={<span style={{ color: 'var(--text-weak)' }}>暂无活动数据流</span>}
+                style={{ margin: '60px 0' }}
+              />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {statistics.recent_tasks.map((task: any, index: number) => (
+                  <div key={task.id} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between',
+                    padding: '12px 16px',
+                    background: 'rgba(255,255,255,0.01)',
+                    border: '1px solid var(--glass-border)',
+                    borderRadius: 8,
+                    transition: 'all var(--trans-fast)',
+                    animation: `fadeInUp 0.4s var(--ease-spring) ${index * 0.1}s both`
+                  }} className="hover:bg-opacity-5">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1, minWidth: 0 }}>
+                      {getStatusTag(task.status)}
+                      <Text ellipsis style={{ color: 'var(--text-primary)', fontSize: 14 }}>{task.media_item_title}</Text>
+                    </div>
+                    <div className="number-font" style={{ color: 'var(--text-secondary)', fontSize: 13, paddingLeft: 16 }}>
+                      {task.completed_at ? new Date(task.completed_at).toLocaleString('zh-CN', { hour12: false }).split(' ')[1] : '-'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </Col>
       </Row>
     </div>

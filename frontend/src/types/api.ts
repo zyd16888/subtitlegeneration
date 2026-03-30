@@ -109,11 +109,21 @@ export interface SystemConfig {
   target_language: string;
 
   // 翻译服务配置
-  translation_service: 'openai' | 'deepseek' | 'local';
+  translation_service: 'openai' | 'deepseek' | 'local' | 'google' | 'microsoft' | 'baidu' | 'deepl';
   openai_api_key?: string;
   openai_model: string;
   deepseek_api_key?: string;
   local_llm_url?: string;
+  google_translate_mode?: string;
+  google_api_key?: string;
+  microsoft_translate_mode?: string;
+  microsoft_api_key?: string;
+  microsoft_region?: string;
+  baidu_app_id?: string;
+  baidu_secret_key?: string;
+  deepl_mode?: string;
+  deepl_api_key?: string;
+  deeplx_url?: string;
 
   // 任务配置
   max_concurrent_tasks: number;
@@ -173,10 +183,17 @@ export interface TestEmbyRequest {
  * 测试翻译服务请求
  */
 export interface TestTranslationRequest {
-  translation_service: 'openai' | 'deepseek' | 'local';
+  translation_service: 'openai' | 'deepseek' | 'local' | 'google' | 'microsoft' | 'baidu' | 'deepl';
   api_key?: string;
   api_url?: string;
   model?: string;
+  google_translate_mode?: string;
+  microsoft_translate_mode?: string;
+  microsoft_region?: string;
+  baidu_app_id?: string;
+  baidu_secret_key?: string;
+  deepl_mode?: string;
+  deeplx_url?: string;
 }
 
 /**

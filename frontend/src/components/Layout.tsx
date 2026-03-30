@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Layout as AntLayout, Menu, theme, Button, Tooltip } from 'antd';
+import { Layout as AntLayout, Menu, Button } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   DashboardOutlined,
@@ -8,10 +8,7 @@ import {
   SettingOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  SunOutlined,
-  MoonOutlined,
 } from '@ant-design/icons';
-import { useTheme } from '../contexts/ThemeContext';
 
 const { Header, Sider, Content } = AntLayout;
 
@@ -19,10 +16,6 @@ const Layout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { isDark, toggleTheme } = useTheme();
-  const {
-    token: { borderRadiusLG },
-  } = theme.useToken();
 
   const menuItems = [
     { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
@@ -41,47 +34,48 @@ const Layout: React.FC = () => {
         trigger={null}
         collapsible
         collapsed={collapsed}
-        width={240}
+        width={260}
         style={{
-          overflow: 'auto',
+          overflow: 'hidden',
           height: 'calc(100vh - 32px)',
           position: 'fixed',
           left: 16,
           top: 16,
           bottom: 16,
-          borderRadius: borderRadiusLG,
+          borderRadius: 'var(--radius-card)',
           background: 'var(--glass-bg)',
-          backdropFilter: 'blur(16px)',
+          backdropFilter: 'blur(20px)',
           border: '1px solid var(--glass-border)',
           zIndex: 100,
           boxShadow: 'var(--glass-shadow)',
-          transition: 'background 0.3s, border-color 0.3s, box-shadow 0.3s',
+          transition: 'all var(--trans-base)',
         }}
       >
         <div
           style={{
-            height: 64,
+            height: 72,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '0 16px',
-            borderBottom: '1px solid var(--border-color-subtle)',
+            padding: '0 20px',
+            borderBottom: '1px solid var(--glass-border)',
           }}
         >
           <div
             style={{
-              width: 32,
-              height: 32,
-              background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)',
-              borderRadius: 8,
+              width: 36,
+              height: 36,
+              background: 'linear-gradient(135deg, var(--accent-cyan) 0%, #007bb5 100%)',
+              borderRadius: '10px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: 'white',
               fontWeight: 'bold',
-              fontSize: 18,
+              fontSize: 20,
               marginRight: collapsed ? 0 : 12,
               flexShrink: 0,
+              boxShadow: '0 0 16px rgba(0, 212, 255, 0.4)',
             }}
           >
             E
@@ -89,29 +83,35 @@ const Layout: React.FC = () => {
           {!collapsed && (
             <div style={{
               color: 'var(--text-primary)',
-              fontSize: 16,
+              fontSize: 18,
               fontWeight: 600,
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
+              letterSpacing: '0.5px'
             }}>
-              Emby Subtitle
+              Emby AI
             </div>
           )}
         </div>
+        
         <Menu
-          theme={isDark ? 'dark' : 'light'}
+          theme="dark"
           mode="inline"
           selectedKeys={[location.pathname]}
-          items={menuItems}
+          items={menuItems.map(item => ({
+            ...item,
+            className: location.pathname === item.key ? 'nav-item-active' : ''
+          }))}
           onClick={handleMenuClick}
           style={{
             background: 'transparent',
-            padding: '8px',
+            padding: '16px 8px',
             border: 'none',
           }}
         />
-        <div style={{ position: 'absolute', bottom: 16, width: '100%', padding: '0 8px' }}>
+        
+        <div style={{ position: 'absolute', bottom: 16, width: '100%', padding: '0 16px' }}>
           <Button
             type="text"
             icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
@@ -119,64 +119,47 @@ const Layout: React.FC = () => {
             style={{
               width: '100%',
               color: 'var(--text-secondary)',
-              height: 40,
+              height: 44,
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px solid var(--glass-border)',
             }}
           />
         </div>
       </Sider>
+      
       <AntLayout style={{
-        marginLeft: collapsed ? 80 + 32 : 240 + 32,
-        transition: 'all 0.2s',
+        marginLeft: collapsed ? 80 + 32 : 260 + 32,
+        transition: 'all var(--trans-base)',
         background: 'transparent',
         padding: '16px 16px 16px 0',
       }}>
         <Header
+          className="glass-card"
           style={{
             padding: '0 24px',
-            background: 'var(--glass-bg-light)',
-            backdropFilter: 'blur(16px)',
-            borderRadius: borderRadiusLG,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            border: '1px solid var(--glass-border)',
-            marginBottom: 16,
-            height: 64,
-            transition: 'background 0.3s, border-color 0.3s',
+            marginBottom: 20,
+            height: 72,
           }}
         >
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 500, color: 'var(--text-primary)' }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: 'var(--text-primary)' }}>
             {menuItems.find(item => item.key === location.pathname)?.label || 'Dashboard'}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-              Emby AI 中文字幕生成服务
+            <div className="status-dot active"></div>
+            <span style={{ color: 'var(--accent-cyan)', fontSize: 13, fontWeight: 500, letterSpacing: '0.5px' }}>
+              System Online
             </span>
-            <Tooltip title={isDark ? '切换到亮色模式' : '切换到暗色模式'}>
-              <Button
-                type="text"
-                icon={isDark ? <SunOutlined /> : <MoonOutlined />}
-                onClick={toggleTheme}
-                style={{
-                  color: 'var(--text-secondary)',
-                  fontSize: 18,
-                  width: 36,
-                  height: 36,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              />
-            </Tooltip>
           </div>
         </Header>
-        <Content
-          style={{
-            minHeight: 280,
-            transition: 'all 0.2s',
-          }}
-        >
-          <Outlet />
+        
+        <Content style={{ position: 'relative' }}>
+          {/* Use key to remount and trigger animation on route change */}
+          <div key={location.pathname} className="animate-fade-in-up" style={{ height: '100%' }}>
+            <Outlet />
+          </div>
         </Content>
       </AntLayout>
     </AntLayout>

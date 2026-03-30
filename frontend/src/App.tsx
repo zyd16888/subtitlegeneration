@@ -1,7 +1,6 @@
 import { ConfigProvider, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import Dashboard from './pages/Dashboard';
@@ -10,24 +9,24 @@ import Tasks from './pages/Tasks';
 import Settings from './pages/Settings';
 
 const ThemedApp = () => {
-  const { isDark } = useTheme();
-
   return (
     <ConfigProvider
       locale={zhCN}
       theme={{
-        algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        algorithm: theme.darkAlgorithm,
         token: {
-          colorPrimary: '#1677ff',
-          colorBgBase: isDark ? '#000000' : '#f0f2f5',
-          colorBgContainer: isDark ? '#141414' : '#ffffff',
-          colorBgElevated: isDark ? '#1f1f1f' : '#ffffff',
-          borderRadius: 8,
+          colorPrimary: '#00d4ff',
+          colorBgBase: 'transparent',
+          colorBgContainer: 'transparent',
+          colorBgElevated: '#111827',
+          borderRadius: 10,
           wireframe: false,
+          colorText: '#f1f5f9',
+          colorTextSecondary: '#94a3b8',
         },
         components: {
           Card: {
-            colorBgContainer: isDark ? '#141414' : '#ffffff',
+            colorBgContainer: 'transparent',
           },
           Layout: {
             bodyBg: 'transparent',
@@ -54,9 +53,7 @@ const ThemedApp = () => {
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider>
-        <ThemedApp />
-      </ThemeProvider>
+      <ThemedApp />
     </ErrorBoundary>
   );
 }

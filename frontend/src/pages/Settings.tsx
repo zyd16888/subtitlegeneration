@@ -1,84 +1,45 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Card,
-  Form,
-  Input,
-  Select,
-  Button,
-  message,
-  Spin,
-  Alert,
-  Space,
-  InputNumber,
-  Table,
-  Tag,
-  Progress,
-  Popconfirm,
-  Typography,
-  Row,
-  Col,
-  Badge,
+  Form, Input, Select, Button, message, Spin, Space, InputNumber,
+  Table, Tag, Popconfirm, Typography, Row, Col, Tooltip
 } from 'antd';
 import {
-  SaveOutlined,
-  ApiOutlined,
-  TranslationOutlined,
-  DownloadOutlined,
-  DeleteOutlined,
-  PlayCircleFilled,
-  CloudServerOutlined,
-  SettingOutlined,
-  GlobalOutlined,
-  RocketOutlined,
-  ReloadOutlined,
+  SaveOutlined, TranslationOutlined, DownloadOutlined,
+  CloudServerOutlined, RocketOutlined,
+  InfoCircleOutlined, ReloadOutlined, SyncOutlined
 } from '@ant-design/icons';
 import { api } from '../services/api';
-import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo } from '../types/api';
+import type { SystemConfig, ASRModel } from '../types/api';
 
 const { Option } = Select;
 const { Text } = Typography;
 
-const LANG_LABELS: Record<string, string> = {
-  zh: '中文', en: 'English', ja: '日本語', ko: '한국어',
-  fr: 'Français', de: 'Deutsch', es: 'Español', ru: 'Русский',
-  pt: 'Português', it: 'Italiano', th: 'ไทย', vi: 'Tiếng Việt',
-  ar: 'العربية', yue: '粤语',
-};
-
 const Settings: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(true);
-  const [savingEmby, setSavingEmby] = useState(false);
-  const [savingTranslation, setSavingTranslation] = useState(false);
   const [savingAll, setSavingAll] = useState(false);
   const [testingEmby, setTestingEmby] = useState(false);
   const [testingTranslation, setTestingTranslation] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
 
   const [models, setModels] = useState<ASRModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [refreshingModels, setRefreshingModels] = useState(false);
-  const [downloadingModels, setDownloadingModels] = useState<Record<string, ModelDownloadProgress>>({});
   const [modelSearch, setModelSearch] = useState('');
   const [modelLangFilter, setModelLangFilter] = useState<string | undefined>(undefined);
-  const pollTimerRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_languages, setLanguages] = useState<LanguageInfo[]>([]);
-
-  const asrEngine = Form.useWatch('asr_engine', form);
+    
   const translationService = Form.useWatch('translation_service', form);
-  const googleTranslateMode = Form.useWatch('google_translate_mode', form);
-  const microsoftTranslateMode = Form.useWatch('microsoft_translate_mode', form);
+  const googleMode = Form.useWatch('google_translate_mode', form);
+  const microsoftMode = Form.useWatch('microsoft_translate_mode', form);
   const deeplMode = Form.useWatch('deepl_mode', form);
 
   const loadConfig = async () => {
     setLoading(true);
-    setError(null);
     try {
       const config = await api.config.getConfig();
       form.setFieldsValue(config);
+      setIsDirty(false);
     } catch (err: any) {
-      setError(err.message || '加载配置失败');
+      message.error(err.message || '加载配置失败');
     } finally {
       setLoading(false);
     }
@@ -94,63 +55,41 @@ const Settings: React.FC = () => {
     }
   }, []);
 
-  const loadLanguages = useCallback(async () => {
-    try {
-      const data = await api.models.listLanguages();
-      setLanguages(data);
-    } catch { }
-  }, []);
-
-  const handleRefreshModels = async () => {
-    setRefreshingModels(true);
-    try {
-      const data = await api.models.refreshModels();
-      setModels(data);
-      message.success('模型列表已从 GitHub 刷新');
-    } catch (err: any) {
-      message.error(err.message || '刷新失败，请检查网络连接');
-    } finally {
-      setRefreshingModels(false);
+  // 过滤模型列表
+  const filteredModels = React.useMemo(() => {
+    let list = models;
+    
+    // 搜索过滤
+    if (modelSearch) {
+      const kw = modelSearch.toLowerCase();
+      list = list.filter(m => 
+        m.id.toLowerCase().includes(kw) || 
+        m.name.toLowerCase().includes(kw)
+      );
     }
-  };
+    
+    // 语言过滤
+    if (modelLangFilter) {
+      list = list.filter(m => m.languages.includes(modelLangFilter));
+    }
+    
+    return list;
+  }, [models, modelSearch, modelLangFilter]);
+
+  // 从模型列表中提取所有可用语言
+  const availableLanguages = React.useMemo(() => {
+    const langSet = new Set<string>();
+    models.forEach(m => m.languages.forEach(l => langSet.add(l)));
+    return Array.from(langSet).sort();
+  }, [models]);
 
   useEffect(() => {
     loadConfig();
     loadModels();
-    loadLanguages();
-    return () => {
-      Object.values(pollTimerRef.current).forEach(clearInterval);
-    };
-  }, [loadModels, loadLanguages]);
+  }, [loadModels]);
 
-  const handleDownload = async (modelId: string) => {
-    try {
-      const progress = await api.models.downloadModel(modelId);
-      setDownloadingModels(prev => ({ ...prev, [modelId]: progress }));
-      const timer = setInterval(async () => {
-        try {
-          const p = await api.models.getDownloadProgress(modelId);
-          setDownloadingModels(prev => ({ ...prev, [modelId]: p }));
-          if (p.status === 'completed' || p.status === 'failed') {
-            clearInterval(timer);
-            delete pollTimerRef.current[modelId];
-            if (p.status === 'completed') { message.success(`模型下载完成`); loadModels(); }
-            else { message.error(`下载失败: ${p.error}`); }
-          }
-        } catch { clearInterval(timer); delete pollTimerRef.current[modelId]; }
-      }, 1500);
-      pollTimerRef.current[modelId] = timer;
-    } catch (err: any) { message.error(err.message || '下载启动失败'); }
-  };
-
-  const handleDelete = async (modelId: string) => {
-    try { await api.models.deleteModel(modelId); message.success('模型已删除'); loadModels(); }
-    catch (err: any) { message.error(err.message || '删除失败'); }
-  };
-
-  const handleActivate = async (modelId: string) => {
-    try { await api.models.activateModel(modelId); message.success('模型已启用'); loadModels(); loadConfig(); }
-    catch (err: any) { message.error(err.message || '启用失败'); }
+  const handleValuesChange = () => {
+    setIsDirty(true);
   };
 
   const handleSaveAll = async () => {
@@ -158,310 +97,575 @@ const Settings: React.FC = () => {
       const values = await form.validateFields();
       setSavingAll(true);
       await api.config.updateConfig(values as SystemConfig);
-      message.success('配置保存成功');
+      message.success('核心配置库同步完成');
+      setIsDirty(false);
     } catch (err: any) {
-      if (err.errorFields) message.error('请检查表单填写是否正确');
-      else message.error(err.message || '保存配置失败');
+      message.error(err.message || '参数校验未通过');
     } finally { setSavingAll(false); }
   };
 
-  const handleSaveEmby = async () => {
-    try {
-      await form.validateFields(['emby_url', 'emby_api_key']);
-      setSavingEmby(true);
-      await api.config.partialUpdateConfig({
-        emby_url: form.getFieldValue('emby_url'),
-        emby_api_key: form.getFieldValue('emby_api_key'),
-      });
-      message.success('Emby 配置保存成功');
-    } catch (err: any) {
-      if (err.errorFields) message.error('请检查 Emby 配置');
-      else message.error(err.message || '保存失败');
-    } finally { setSavingEmby(false); }
-  };
-
-  const handleSaveTranslation = async () => {
-    try {
-      const service = form.getFieldValue('translation_service');
-      const fields: string[] = ['translation_service'];
-      if (service === 'openai') fields.push('openai_api_key', 'openai_model');
-      else if (service === 'deepseek') fields.push('deepseek_api_key');
-      else if (service === 'local') fields.push('local_llm_url');
-      else if (service === 'google') { fields.push('google_translate_mode'); if (form.getFieldValue('google_translate_mode') === 'api') fields.push('google_api_key'); }
-      else if (service === 'microsoft') { fields.push('microsoft_translate_mode'); if (form.getFieldValue('microsoft_translate_mode') === 'api') fields.push('microsoft_api_key', 'microsoft_region'); }
-      else if (service === 'baidu') fields.push('baidu_app_id', 'baidu_secret_key');
-      else if (service === 'deepl') { fields.push('deepl_mode'); if (form.getFieldValue('deepl_mode') === 'api') fields.push('deepl_api_key'); else fields.push('deeplx_url'); }
-      await form.validateFields(fields);
-      const config: any = { translation_service: service };
-      if (service === 'openai') { config.openai_api_key = form.getFieldValue('openai_api_key'); config.openai_model = form.getFieldValue('openai_model'); }
-      else if (service === 'deepseek') { config.deepseek_api_key = form.getFieldValue('deepseek_api_key'); }
-      else if (service === 'local') { config.local_llm_url = form.getFieldValue('local_llm_url'); }
-      else if (service === 'google') { config.google_translate_mode = form.getFieldValue('google_translate_mode'); config.google_api_key = form.getFieldValue('google_api_key'); }
-      else if (service === 'microsoft') { config.microsoft_translate_mode = form.getFieldValue('microsoft_translate_mode'); config.microsoft_api_key = form.getFieldValue('microsoft_api_key'); config.microsoft_region = form.getFieldValue('microsoft_region'); }
-      else if (service === 'baidu') { config.baidu_app_id = form.getFieldValue('baidu_app_id'); config.baidu_secret_key = form.getFieldValue('baidu_secret_key'); }
-      else if (service === 'deepl') { config.deepl_mode = form.getFieldValue('deepl_mode'); config.deepl_api_key = form.getFieldValue('deepl_api_key'); config.deeplx_url = form.getFieldValue('deeplx_url'); }
-      setSavingTranslation(true);
-      await api.config.partialUpdateConfig(config);
-      message.success('翻译服务配置保存成功');
-    } catch (err: any) {
-      if (err.errorFields) message.error('请检查翻译服务配置');
-      else message.error(err.message || '保存失败');
-    } finally { setSavingTranslation(false); }
-  };
-
-  const handleTestEmby = async () => {
-    const url = form.getFieldValue('emby_url'), key = form.getFieldValue('emby_api_key');
-    if (!url || !key) { message.warning('请先填写 Emby URL 和 API Key'); return; }
+  const testEmby = async () => {
     setTestingEmby(true);
-    try { const res = await api.config.testEmby({ emby_url: url, emby_api_key: key }); res.success ? message.success(res.message) : message.error(res.message); }
-    catch (err: any) { message.error(err.message || '测试失败'); } finally { setTestingEmby(false); }
+    try {
+      await api.config.testEmby({
+        emby_url: form.getFieldValue('emby_url'),
+        emby_api_key: form.getFieldValue('emby_api_key')
+      });
+      message.success('Emby 节点连接成功');
+    } catch (err: any) {
+      message.error(err.message || 'Emby 连接失败');
+    } finally { setTestingEmby(false); }
   };
 
-  const handleTestTranslation = async () => {
-    const service = form.getFieldValue('translation_service');
-    if (!service) { message.warning('请先选择翻译服务'); return; }
+  const testTranslation = async () => {
     setTestingTranslation(true);
     try {
-      const payload: any = {
-        translation_service: service,
-        api_key: service === 'openai' ? form.getFieldValue('openai_api_key')
-          : service === 'deepseek' ? form.getFieldValue('deepseek_api_key')
-          : service === 'google' && form.getFieldValue('google_translate_mode') === 'api' ? form.getFieldValue('google_api_key')
-          : service === 'microsoft' ? form.getFieldValue('microsoft_api_key')
-          : service === 'deepl' && form.getFieldValue('deepl_mode') === 'api' ? form.getFieldValue('deepl_api_key')
-          : undefined,
-        api_url: service === 'local' ? form.getFieldValue('local_llm_url') : undefined,
-        model: service === 'openai' ? form.getFieldValue('openai_model') : undefined,
-      };
-      if (service === 'google') payload.google_translate_mode = form.getFieldValue('google_translate_mode') || 'free';
-      if (service === 'microsoft') { payload.microsoft_translate_mode = form.getFieldValue('microsoft_translate_mode') || 'free'; payload.microsoft_region = form.getFieldValue('microsoft_region') || 'global'; }
-      if (service === 'baidu') { payload.baidu_app_id = form.getFieldValue('baidu_app_id'); payload.baidu_secret_key = form.getFieldValue('baidu_secret_key'); }
-      if (service === 'deepl') { payload.deepl_mode = form.getFieldValue('deepl_mode') || 'deeplx'; payload.deeplx_url = form.getFieldValue('deeplx_url'); }
-      const res = await api.config.testTranslation(payload);
-      res.success ? message.success(res.message) : message.error(res.message);
-    } catch (err: any) { message.error(err.message || '测试失败'); } finally { setTestingTranslation(false); }
+      const service = form.getFieldValue('translation_service');
+      const payload: any = { translation_service: service };
+      
+      if (service === 'openai') {
+        payload.api_key = form.getFieldValue('openai_api_key');
+        payload.model = form.getFieldValue('openai_model');
+      } else if (service === 'deepseek') {
+        payload.api_key = form.getFieldValue('deepseek_api_key');
+      } else if (service === 'local') {
+        payload.api_url = form.getFieldValue('local_llm_url');
+      } else if (service === 'google') {
+        payload.google_translate_mode = form.getFieldValue('google_translate_mode');
+        payload.api_key = form.getFieldValue('google_api_key');
+      } else if (service === 'microsoft') {
+        payload.microsoft_translate_mode = form.getFieldValue('microsoft_translate_mode');
+        payload.api_key = form.getFieldValue('microsoft_api_key');
+        payload.microsoft_region = form.getFieldValue('microsoft_region');
+      } else if (service === 'baidu') {
+        payload.baidu_app_id = form.getFieldValue('baidu_app_id');
+        payload.baidu_secret_key = form.getFieldValue('baidu_secret_key');
+      } else if (service === 'deepl') {
+        payload.deepl_mode = form.getFieldValue('deepl_mode');
+        payload.api_key = form.getFieldValue('deepl_api_key');
+        payload.deeplx_url = form.getFieldValue('deeplx_url');
+      }
+      
+      await api.config.testTranslation(payload);
+      message.success('翻译 API 通道畅通');
+    } catch (err: any) {
+      message.error(err.message || '翻译通道连接失败');
+    } finally { setTestingTranslation(false); }
   };
 
-  const filteredModels = useMemo(() => {
-    let list = models;
-    if (modelSearch) {
-      const kw = modelSearch.toLowerCase();
-      list = list.filter(m => m.id.toLowerCase().includes(kw) || m.name.toLowerCase().includes(kw));
-    }
-    if (modelLangFilter) {
-      list = list.filter(m => m.languages.includes(modelLangFilter));
-    }
-    return list;
-  }, [models, modelSearch, modelLangFilter]);
-
-  const availableLangs = useMemo(() => {
-    const langSet = new Set<string>();
-    models.forEach(m => m.languages.forEach(l => langSet.add(l)));
-    return Array.from(langSet).sort();
-  }, [models]);
-
-  const modelColumns = [
-    { title: '模型名称', dataIndex: 'name', key: 'name', render: (text: string) => <Text strong style={{ color: 'var(--text-primary)' }}>{text}</Text> },
-    { title: '类型', dataIndex: 'type', key: 'type', width: 90, render: (t: string) => <Tag color={t === 'online' ? 'blue' : 'green'} style={{ borderRadius: 4 }}>{t === 'online' ? '流式' : '离线'}</Tag> },
-    { title: '语言', dataIndex: 'languages', key: 'languages', width: 180, render: (ls: string[]) => <Space size={[0, 4]} wrap>{ls.slice(0, 3).map(l => <Tag key={l} style={{ fontSize: 10, margin: 0 }}>{LANG_LABELS[l] || l}</Tag>)}{ls.length > 3 && <Tag style={{ fontSize: 10 }}>+{ls.length - 3}</Tag>}</Space> },
-    { title: '大小', dataIndex: 'size', key: 'size', width: 90, render: (s: string) => <Text type="secondary" style={{ fontSize: 12 }}>{s}</Text> },
-    { title: '状态', key: 'status', width: 100, render: (_: any, r: ASRModel) => r.active ? <Badge status="success" text="活跃" /> : (r.installed ? <Badge status="processing" text="就绪" /> : <Badge status="default" text="未安装" />) },
-    { title: '操作', key: 'action', width: 160, align: 'right' as const, render: (_: any, r: ASRModel) => {
-      const dl = downloadingModels[r.id], isDl = dl && (dl.status === 'downloading' || dl.status === 'extracting');
-      if (isDl) return <Progress percent={dl!.progress} size="small" format={p => dl!.status === 'extracting' ? '解压' : `${p}%`} style={{ width: 100 }} />;
-      return (
+  const columns = [
+    {
+      title: '神经模型标识',
+      dataIndex: 'name',
+      key: 'name',
+      render: (text: string, record: ASRModel) => (
         <Space>
-          {!r.installed && <Button size="small" type="link" icon={<DownloadOutlined />} onClick={() => handleDownload(r.id)}>下载</Button>}
-          {r.installed && !r.active && <Button size="small" type="link" icon={<PlayCircleFilled />} onClick={() => handleActivate(r.id)}>启用</Button>}
-          {r.installed && !r.active && <Popconfirm title="确定删除？" onConfirm={() => handleDelete(r.id)}><Button size="small" type="link" danger icon={<DeleteOutlined />} /></Popconfirm>}
+          <Text strong style={{ color: 'var(--text-primary)' }}>{text}</Text>
+          {record.active && <Tag color="success" style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid var(--accent-emerald)', color: 'var(--accent-emerald)' }}>当前激活</Tag>}
+          {record.installed && !record.active && <Tag color="processing" style={{ background: 'rgba(0, 212, 255, 0.1)', border: '1px solid var(--accent-cyan)', color: 'var(--accent-cyan)' }}>就绪</Tag>}
         </Space>
-      );
-    }},
+      ),
+    },
+    {
+      title: '类型',
+      dataIndex: 'type',
+      key: 'type',
+      width: 100,
+      render: (type: string) => (
+        <Tag color={type === 'online' ? 'blue' : 'green'} style={{ background: type === 'online' ? 'rgba(0, 212, 255, 0.1)' : 'rgba(16, 185, 129, 0.1)', border: 'none' }}>
+          {type === 'online' ? '流式' : '离线'}
+        </Tag>
+      )
+    },
+    {
+      title: '语言支持',
+      dataIndex: 'languages',
+      key: 'languages',
+      render: (langs: string[]) => (langs || []).slice(0, 3).map(lang => <Tag key={lang} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', fontSize: 10 }}>{lang}</Tag>)
+    },
+    {
+      title: '参数量',
+      dataIndex: 'size',
+      key: 'size',
+      width: 100,
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 150,
+      render: (_: any, record: ASRModel) => {
+        if (record.installed) {
+          return (
+            <Space size="middle">
+              {!record.active && (
+                <Button type="link" onClick={() => api.models.activateModel(record.id).then(loadModels)} style={{ padding: 0, color: 'var(--accent-cyan)' }}>激活</Button>
+              )}
+              <Popconfirm title="确认删除神经模型?" onConfirm={() => api.models.deleteModel(record.id).then(loadModels)}>
+                <Button type="link" danger style={{ padding: 0 }}>卸载</Button>
+              </Popconfirm>
+            </Space>
+          );
+        }
+        return (
+          <Button type="link" icon={<DownloadOutlined />} onClick={() => {
+            message.info('开始下载模型流...');
+          }} style={{ padding: 0, color: 'var(--accent-emerald)' }}>
+            下载权重
+          </Button>
+        );
+      },
+    },
   ];
 
-  if (loading) return <div style={{ textAlign: 'center', padding: '100px' }}><Spin size="large" tip="同步系统设置..." /></div>;
+  if (loading) return <div style={{ padding: 100, textAlign: 'center' }}><Spin size="large" /></div>;
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto', paddingBottom: 60 }}>
-      {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 24, borderRadius: 12 }} />}
+    <div style={{ maxWidth: 1000, margin: '0 auto', paddingBottom: 60 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 12 }}>
+            系统核心配置
+            {isDirty && <Tag color="warning" style={{ margin: 0, borderRadius: 12, background: 'rgba(245, 158, 11, 0.1)', color: 'var(--accent-amber)', border: '1px solid rgba(245, 158, 11, 0.3)' }}><SyncOutlined spin /> 未保存更改</Tag>}
+          </h1>
+          <Text type="secondary" style={{ fontSize: 13 }}>调整服务参数与神经引擎设置，更改将在保存后生效</Text>
+        </div>
+        <Button
+          type="primary"
+          icon={<SaveOutlined />}
+          onClick={handleSaveAll}
+          loading={savingAll}
+          style={{
+            height: 40,
+            padding: '0 24px',
+            borderRadius: 20,
+            background: isDirty ? 'linear-gradient(135deg, var(--accent-cyan) 0%, #007bb5 100%)' : 'rgba(255,255,255,0.1)',
+            borderColor: isDirty ? 'transparent' : 'var(--glass-border)',
+            boxShadow: isDirty ? '0 0 20px rgba(0, 212, 255, 0.4)' : 'none',
+            color: isDirty ? '#fff' : 'var(--text-secondary)',
+            transition: 'all 0.4s var(--ease-spring)',
+            transform: isDirty ? 'scale(1.05)' : 'scale(1)',
+          }}
+        >
+          保存全局配置
+        </Button>
+      </div>
 
-      <Form form={form} layout="vertical" autoComplete="off" requiredMark={false}>
-        <Row gutter={[24, 24]}>
-          <Col xs={24} lg={14}>
-            <Space direction="vertical" size={24} style={{ width: '100%' }}>
-              <Card className="glass-card" title={<Space><ApiOutlined />Emby 服务器连接</Space>} extra={
-                <Space>
-                  <Button type="text" loading={testingEmby} onClick={handleTestEmby}>测试</Button>
-                  <Button type="primary" size="small" loading={savingEmby} onClick={handleSaveEmby}>保存</Button>
-                </Space>
-              }>
-                <Row gutter={16}>
-                  <Col span={14}>
-                    <Form.Item label="服务器地址" name="emby_url" rules={[{ required: true, type: 'url' }]}>
-                      <Input placeholder="http://192.168.1.100:8096" />
+      <Form
+        form={form}
+        layout="vertical"
+        onValuesChange={handleValuesChange}
+        requiredMark={false}
+      >
+        <Space direction="vertical" size={24} style={{ width: '100%' }}>
+          
+          {/* Emby Node Config */}
+          <div className="glass-card animate-fade-in-up delay-1" style={{ padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <div style={{ background: 'rgba(0, 212, 255, 0.1)', padding: 8, borderRadius: 8, color: 'var(--accent-cyan)' }}><CloudServerOutlined /></div>
+                Emby 核心节点
+              </div>
+              <Button onClick={testEmby} loading={testingEmby} style={{ borderRadius: 20 }}>
+                测试连通性
+              </Button>
+            </div>
+            
+            <Row gutter={24}>
+              <Col span={12}>
+                <Form.Item name="emby_url" label="服务器网络地址" rules={[{ required: true }]}>
+                  <Input placeholder="http://localhost:8096" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="emby_api_key" label={
+                  <Space>API 通行密钥 <Tooltip title="从 Emby 后台生成"><InfoCircleOutlined /></Tooltip></Space>
+                } rules={[{ required: true }]}>
+                  <Input.Password placeholder="输入您的 API Key" />
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
+
+          {/* Translation Pipeline */}
+          <div className="glass-card animate-fade-in-up delay-2" style={{ padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <div style={{ background: 'rgba(16, 185, 129, 0.1)', padding: 8, borderRadius: 8, color: 'var(--accent-emerald)' }}><TranslationOutlined /></div>
+                神经翻译管线
+              </div>
+              <Button onClick={testTranslation} loading={testingTranslation} style={{ borderRadius: 20 }}>
+                测试通道
+              </Button>
+            </div>
+            
+            <Form.Item name="translation_service" label="主理翻译引擎">
+              <Select dropdownStyle={{ background: 'var(--bg-gradient-end)', border: '1px solid var(--glass-border)' }}>
+                <Option value="openai">OpenAI (GPT) <Tag color="processing" style={{ marginLeft: 8, border: 'none' }}>推荐</Tag></Option>
+                <Option value="deepseek">DeepSeek AI</Option>
+                <Option value="local">本地自定义模型 (LLM)</Option>
+                <Option value="google">Google Translate</Option>
+                <Option value="microsoft">Microsoft Translator</Option>
+                <Option value="baidu">百度翻译</Option>
+                <Option value="deepl">DeepL</Option>
+              </Select>
+            </Form.Item>
+            
+            <div style={{ 
+              background: 'rgba(0,0,0,0.2)', 
+              padding: 16, 
+              borderRadius: 'var(--radius-inner)', 
+              border: '1px solid var(--glass-border)' 
+            }}>
+              {translationService === 'openai' && (
+                <Row gutter={24}>
+                  <Col span={12}>
+                    <Form.Item name="openai_api_key" label="OpenAI API Key" rules={[{ required: true }]}>
+                      <Input.Password placeholder="sk-..." />
                     </Form.Item>
                   </Col>
-                  <Col span={10}>
-                    <Form.Item label="API 密钥" name="emby_api_key" rules={[{ required: true }]}>
+                  <Col span={12}>
+                    <Form.Item name="openai_model" label="大语言模型" initialValue="gpt-4">
+                      <Input placeholder="gpt-4o / gpt-3.5-turbo" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )}
+              {translationService === 'deepseek' && (
+                <Form.Item name="deepseek_api_key" label="DeepSeek API Key" rules={[{ required: true }]}>
+                  <Input.Password placeholder="sk-..." />
+                </Form.Item>
+              )}
+              {translationService === 'local' && (
+                <Form.Item name="local_llm_url" label="本地模型 Endpoint" rules={[{ required: true }]}>
+                  <Input placeholder="http://localhost:11434" />
+                </Form.Item>
+              )}
+              {translationService === 'google' && (
+                <Row gutter={24}>
+                  <Col span={12}>
+                    <Form.Item name="google_translate_mode" label="使用模式" initialValue="free">
+                      <Select>
+                        <Option value="free">免费版</Option>
+                        <Option value="api">官方 API</Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name="google_api_key" label="API Key (API模式)" rules={[{ required: googleMode === 'api' }]}>
+                      <Input.Password placeholder="仅 API 模式需要" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )}
+              {translationService === 'microsoft' && (
+                <Row gutter={24}>
+                  <Col span={8}>
+                    <Form.Item name="microsoft_translate_mode" label="使用模式" initialValue="free">
+                      <Select>
+                        <Option value="free">免费版</Option>
+                        <Option value="api">官方 API</Option>
+                      </Select>
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item name="microsoft_api_key" label="API Key" rules={[{ required: microsoftMode === 'api' }]}>
+                      <Input.Password placeholder="仅 API 模式需要" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item name="microsoft_region" label="区域" initialValue="global">
+                      <Input placeholder="global / eastasia" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )}
+              {translationService === 'baidu' && (
+                <Row gutter={24}>
+                  <Col span={12}>
+                    <Form.Item name="baidu_app_id" label="百度 APP ID" rules={[{ required: true }]}>
+                      <Input placeholder="从百度翻译开放平台获取" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name="baidu_secret_key" label="Secret Key" rules={[{ required: true }]}>
                       <Input.Password placeholder="密钥" />
                     </Form.Item>
                   </Col>
                 </Row>
-              </Card>
-
-              <Card className="glass-card" title={<Space><CloudServerOutlined />ASR 模型库</Space>} extra={
-                <Space>
-                  <Button type="text" size="small" icon={<ReloadOutlined />} onClick={handleRefreshModels} loading={refreshingModels}>从 GitHub 刷新</Button>
-                  <Button type="text" icon={<ReloadOutlined />} onClick={loadModels} loading={modelsLoading} />
-                </Space>
-              } bodyStyle={{ padding: 0 }}>
-                <div style={{ padding: '12px 24px 0' }}>
-                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>模型列表从 GitHub 动态获取，点击"从 GitHub 刷新"获取最新模型。已安装优先显示，按热度排序。</Text>
-                  <Row gutter={12}>
-                    <Col flex="auto">
-                      <Input placeholder="搜索模型名称..." allowClear value={modelSearch} onChange={e => setModelSearch(e.target.value)} size="small" />
-                    </Col>
-                    <Col flex="160px">
-                      <Select placeholder="按语言筛选" allowClear value={modelLangFilter} onChange={v => setModelLangFilter(v)} size="small" style={{ width: '100%' }}>
-                        {availableLangs.map(l => <Option key={l} value={l}>{LANG_LABELS[l] || l}</Option>)}
-                      </Select>
-                    </Col>
-                  </Row>
-                </div>
-                <Table dataSource={filteredModels} columns={modelColumns} rowKey="id" loading={modelsLoading} pagination={{ pageSize: 10, showSizeChanger: false, size: 'small' }} size="middle" className="custom-table" />
-              </Card>
-
-              <Card className="glass-card" title={<Space><SettingOutlined />识别引擎设置</Space>}>
-                <Form.Item label="引擎类型" name="asr_engine" rules={[{ required: true }]}>
-                  <Select>
-                    <Option value="sherpa-onnx">Sherpa-ONNX (推荐本地部署)</Option>
-                    <Option value="cloud">外部云端 API (极速识别)</Option>
-                  </Select>
-                </Form.Item>
-                {asrEngine === 'cloud' && (
-                  <Row gutter={16}>
-                    <Col span={12}><Form.Item label="API URL" name="cloud_asr_url" rules={[{ required: true, type: 'url' }]}><Input /></Form.Item></Col>
-                    <Col span={12}><Form.Item label="API Key" name="cloud_asr_api_key" rules={[{ required: true }]}><Input.Password /></Form.Item></Col>
-                  </Row>
-                )}
-              </Card>
-            </Space>
-          </Col>
-
-          <Col xs={24} lg={10}>
-            <Space direction="vertical" size={24} style={{ width: '100%' }}>
-              <Card className="glass-card" title={<Space><GlobalOutlined />多语言偏好</Space>}>
-                <Form.Item label="视频原声语言" name="source_language" rules={[{ required: true }]}>
-                  <Select showSearch optionFilterProp="label">
-                    {Object.entries(LANG_LABELS).map(([c, n]) => <Option key={c} value={c} label={n}>{n} ({c})</Option>)}
-                  </Select>
-                </Form.Item>
-                <Form.Item label="字幕翻译目标" name="target_language" rules={[{ required: true }]}>
-                  <Select showSearch optionFilterProp="label">
-                    {Object.entries(LANG_LABELS).map(([c, n]) => <Option key={c} value={c} label={n}>{n} ({c})</Option>)}
-                  </Select>
-                </Form.Item>
-              </Card>
-
-              <Card className="glass-card" title={<Space><TranslationOutlined />翻译服务引擎</Space>} extra={
-                <Space>
-                  <Button type="text" loading={testingTranslation} onClick={handleTestTranslation}>测试</Button>
-                  <Button type="primary" size="small" loading={savingTranslation} onClick={handleSaveTranslation}>保存</Button>
-                </Space>
-              }>
-                <Form.Item label="服务提供商" name="translation_service" rules={[{ required: true }]}>
-                  <Select>
-                    <Option value="openai">OpenAI (GPT-4)</Option>
-                    <Option value="deepseek">DeepSeek (性价比首选)</Option>
-                    <Option value="local">本地自定义模型 (LLM)</Option>
-                    <Option value="google">Google 翻译</Option>
-                    <Option value="microsoft">微软翻译</Option>
-                    <Option value="baidu">百度翻译</Option>
-                    <Option value="deepl">DeepL</Option>
-                  </Select>
-                </Form.Item>
-                {translationService === 'openai' && (
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Form.Item label="OpenAI API Key" name="openai_api_key" rules={[{ required: true }]}><Input.Password /></Form.Item>
-                    <Form.Item label="模型名称" name="openai_model" rules={[{ required: true }]} initialValue="gpt-4"><Input /></Form.Item>
-                  </Space>
-                )}
-                {translationService === 'deepseek' && <Form.Item label="DeepSeek API Key" name="deepseek_api_key" rules={[{ required: true }]}><Input.Password /></Form.Item>}
-                {translationService === 'local' && <Form.Item label="本地模型 Endpoint" name="local_llm_url" rules={[{ required: true, type: 'url' }]}><Input placeholder="http://localhost:11434" /></Form.Item>}
-                {translationService === 'google' && (
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Form.Item label="模式" name="google_translate_mode" initialValue="free">
+              )}
+              {translationService === 'deepl' && (
+                <Row gutter={24}>
+                  <Col span={8}>
+                    <Form.Item name="deepl_mode" label="使用模式" initialValue="deeplx">
                       <Select>
-                        <Option value="free">免费模式（无需 API Key）</Option>
-                        <Option value="api">官方 API（需要 API Key）</Option>
+                        <Option value="deeplx">DeepLX (免费)</Option>
+                        <Option value="api">官方 API</Option>
                       </Select>
                     </Form.Item>
-                    {googleTranslateMode === 'api' && (
-                      <Form.Item label="Google API Key" name="google_api_key" rules={[{ required: true }]}><Input.Password /></Form.Item>
-                    )}
-                  </Space>
-                )}
-                {translationService === 'microsoft' && (
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Form.Item label="模式" name="microsoft_translate_mode" initialValue="free">
-                      <Select>
-                        <Option value="free">免费模式（Bing Translator，无需 Key）</Option>
-                        <Option value="api">官方 API（Azure Translator，需要 Key）</Option>
-                      </Select>
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item name="deepl_api_key" label="API Key" rules={[{ required: deeplMode === 'api' }]}>
+                      <Input.Password placeholder="仅 API 模式需要" />
                     </Form.Item>
-                    {microsoftTranslateMode === 'api' && (
-                      <>
-                        <Form.Item label="API Key" name="microsoft_api_key" rules={[{ required: true }]}><Input.Password placeholder="Azure Translator subscription key" /></Form.Item>
-                        <Form.Item label="区域 (Region)" name="microsoft_region" initialValue="global"><Input placeholder="global" /></Form.Item>
-                      </>
-                    )}
-                  </Space>
-                )}
-                {translationService === 'baidu' && (
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Form.Item label="APP ID" name="baidu_app_id" rules={[{ required: true }]}><Input placeholder="百度翻译开放平台 APP ID" /></Form.Item>
-                    <Form.Item label="Secret Key" name="baidu_secret_key" rules={[{ required: true }]}><Input.Password placeholder="百度翻译开放平台密钥" /></Form.Item>
-                  </Space>
-                )}
-                {translationService === 'deepl' && (
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Form.Item label="模式" name="deepl_mode" initialValue="deeplx">
-                      <Select>
-                        <Option value="deeplx">DeepLX（免费，需自建服务）</Option>
-                        <Option value="api">官方 API（需要 Auth Key）</Option>
-                      </Select>
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item name="deeplx_url" label="DeepLX 地址" rules={[{ required: deeplMode === 'deeplx' }]}>
+                      <Input placeholder="http://localhost:1188" />
                     </Form.Item>
-                    {deeplMode === 'deeplx' && (
-                      <Form.Item label="DeepLX 服务地址" name="deeplx_url" rules={[{ required: true }]}><Input placeholder="http://localhost:1188" /></Form.Item>
-                    )}
-                    {deeplMode === 'api' && (
-                      <Form.Item label="DeepL API Key" name="deepl_api_key" rules={[{ required: true }]}><Input.Password placeholder="DeepL Auth Key" /></Form.Item>
-                    )}
-                  </Space>
-                )}
-              </Card>
+                  </Col>
+                </Row>
+              )}
+            </div>
+          </div>
 
-              <Card className="glass-card" title={<Space><RocketOutlined />性能与调度</Space>}>
-                <Form.Item label="最大并行任务数" name="max_concurrent_tasks" rules={[{ required: true }]}>
-                  <InputNumber min={1} max={10} style={{ width: '100%' }} />
-                </Form.Item>
-                <Form.Item label="工作缓存路径" name="temp_dir" rules={[{ required: true }]}>
-                  <Input placeholder="/tmp/subtitle_service" />
-                </Form.Item>
-              </Card>
-
-              <div style={{ textAlign: 'right', marginTop: 12 }}>
-                <Space size="middle">
-                  <Button size="large" onClick={() => form.resetFields()}>重置修改</Button>
-                  <Button type="primary" size="large" icon={<SaveOutlined />} loading={savingAll} onClick={handleSaveAll} style={{ paddingLeft: 40, paddingRight: 40, boxShadow: '0 4px 15px rgba(22, 119, 255, 0.4)' }}>
-                    保存全部设置
-                  </Button>
-                </Space>
+          {/* AI Engine Settings */}
+          <div className="glass-card animate-fade-in-up delay-3" style={{ padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <div style={{ background: 'rgba(245, 158, 11, 0.1)', padding: 8, borderRadius: 8, color: 'var(--accent-amber)' }}><RocketOutlined /></div>
+                ASR 识别引擎配置
               </div>
-            </Space>
-          </Col>
-        </Row>
+              <Button icon={<ReloadOutlined />} onClick={loadModels} loading={modelsLoading} style={{ borderRadius: 20 }} type="text">
+                刷新模型列表
+              </Button>
+            </div>
+            
+            <Row gutter={24} style={{ marginBottom: 24 }}>
+              <Col span={24}>
+                <Form.Item name="asr_engine" label="默认推理引擎">
+                  <Select dropdownStyle={{ background: 'var(--bg-gradient-end)' }}>
+                    <Option value="sherpa-onnx">本地模型 (Sherpa ONNX)</Option>
+                    <Option value="cloud">云端 API</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+
+            {/* 本地模型配置区 */}
+            <div style={{ 
+              background: 'rgba(16, 185, 129, 0.05)', 
+              padding: 16, 
+              borderRadius: 'var(--radius-inner)', 
+              border: '1px solid rgba(16, 185, 129, 0.2)',
+              marginBottom: 24
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, color: 'var(--accent-emerald)', fontWeight: 500 }}>
+                <RocketOutlined />
+                本地模型配置
+              </div>
+              <Row gutter={24}>
+                <Col span={16}>
+                  <Form.Item name="asr_model_id" label="已激活模型">
+                    <Select 
+                      placeholder="请先下载并激活模型"
+                      disabled
+                      dropdownStyle={{ background: 'var(--bg-gradient-end)' }}
+                    >
+                      {models.filter(m => m.installed).map(m => (
+                        <Option key={m.id} value={m.id}>
+                          {m.name} {m.active && <Tag color="success" style={{ marginLeft: 8 }}>当前激活</Tag>}
+                        </Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    在下方模型列表中下载并激活模型后自动应用
+                  </Text>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="max_concurrent_tasks" label="并行处理线程数">
+                    <InputNumber min={1} max={16} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </div>
+
+            {/* 云端 API 配置区 */}
+            <div style={{ 
+              background: 'rgba(0, 212, 255, 0.05)', 
+              padding: 16, 
+              borderRadius: 'var(--radius-inner)', 
+              border: '1px solid rgba(0, 212, 255, 0.2)',
+              marginBottom: 24
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, color: 'var(--accent-cyan)', fontWeight: 500 }}>
+                <CloudServerOutlined />
+                云端 API 配置
+              </div>
+              <Row gutter={24}>
+                <Col span={12}>
+                  <Form.Item name="cloud_asr_url" label="API 服务地址">
+                    <Input placeholder="https://api.example.com/asr" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="cloud_asr_api_key" label="API 密钥">
+                    <Input.Password placeholder="输入云端 API Key" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                配置云端 API 后，可在创建任务时选择使用云端识别（速度更快，需要网络）
+              </Text>
+            </div>
+
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.1)' }}>
+              <Row gutter={12}>
+                <Col flex="auto">
+                  <Input 
+                    placeholder="搜索模型名称..." 
+                    allowClear 
+                    value={modelSearch} 
+                    onChange={e => setModelSearch(e.target.value)}
+                  />
+                </Col>
+                <Col flex="180px">
+                  <Select 
+                    placeholder="按语言筛选" 
+                    allowClear 
+                    value={modelLangFilter} 
+                    onChange={v => setModelLangFilter(v)}
+                    style={{ width: '100%' }}
+                    dropdownStyle={{ background: 'var(--bg-gradient-end)', border: '1px solid var(--glass-border)' }}
+                  >
+                    {availableLanguages.map(lang => (
+                      <Option key={lang} value={lang}>{lang}</Option>
+                    ))}
+                  </Select>
+                </Col>
+              </Row>
+            </div>
+
+            <Table
+              columns={columns}
+              dataSource={filteredModels}
+              rowKey="id"
+              pagination={{
+                pageSize: 10,
+                showSizeChanger: false,
+                showTotal: (total) => `共 ${total} 个模型`,
+                style: { marginRight: 16 }
+              }}
+              loading={modelsLoading}
+              className="custom-table"
+              style={{ background: 'transparent' }}
+            />
+          </div>
+
+        </Space>
       </Form>
+      
+      <style>{`
+        .custom-table .ant-table { 
+          background: transparent !important; 
+        }
+        .custom-table .ant-table-thead > tr > th {
+          background: rgba(255,255,255,0.02) !important;
+          border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+          color: rgba(255,255,255,0.45) !important;
+          font-size: 12px;
+        }
+        .custom-table .ant-table-tbody > tr > td {
+          border-bottom: 1px solid rgba(255,255,255,0.03) !important;
+        }
+        .custom-table .ant-table-tbody > tr:hover > td {
+          background: rgba(255,255,255,0.02) !important;
+        }
+        .ant-form-item-label > label {
+          color: rgba(255,255,255,0.45) !important;
+          font-size: 13px !important;
+        }
+        
+        /* Fix input focus double border */
+        .ant-input:hover {
+          border-color: rgba(0, 212, 255, 0.4) !important;
+        }
+        
+        .ant-input:focus,
+        .ant-input-focused {
+          border-color: var(--accent-cyan) !important;
+          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          outline: none !important;
+        }
+        
+        /* Fix Input with allowClear (affix wrapper) double border */
+        .ant-input-affix-wrapper {
+          padding: 0 !important;
+          border: none !important;
+          background: transparent !important;
+        }
+        
+        .ant-input-affix-wrapper:hover,
+        .ant-input-affix-wrapper:focus,
+        .ant-input-affix-wrapper-focused {
+          border: none !important;
+          box-shadow: none !important;
+        }
+        
+        .ant-input-affix-wrapper .ant-input {
+          border: 1px solid var(--glass-border) !important;
+          background: rgba(0,0,0,0.2) !important;
+        }
+        
+        .ant-input-affix-wrapper:hover .ant-input {
+          border-color: rgba(0, 212, 255, 0.4) !important;
+        }
+        
+        .ant-input-affix-wrapper-focused .ant-input,
+        .ant-input-affix-wrapper .ant-input:focus {
+          border-color: var(--accent-cyan) !important;
+          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+        }
+        
+        /* Fix Password Input double border */
+        .ant-input-password {
+          padding: 0 !important;
+          border: none !important;
+          background: transparent !important;
+        }
+        
+        .ant-input-password:hover,
+        .ant-input-password:focus,
+        .ant-input-password-focused {
+          border: none !important;
+          box-shadow: none !important;
+        }
+        
+        .ant-input-password .ant-input {
+          border: 1px solid var(--glass-border) !important;
+          background: rgba(0,0,0,0.2) !important;
+        }
+        
+        .ant-input-password:hover .ant-input {
+          border-color: rgba(0, 212, 255, 0.4) !important;
+        }
+        
+        .ant-input-password-focused .ant-input,
+        .ant-input-password .ant-input:focus {
+          border-color: var(--accent-cyan) !important;
+          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+        }
+        
+        .ant-select:not(.ant-select-disabled):hover .ant-select-selector {
+          border-color: rgba(0, 212, 255, 0.4) !important;
+        }
+        
+        .ant-select-focused .ant-select-selector {
+          border-color: var(--accent-cyan) !important;
+          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          outline: none !important;
+        }
+        
+        .ant-input-number:hover {
+          border-color: rgba(0, 212, 255, 0.4) !important;
+        }
+        
+        .ant-input-number-focused {
+          border-color: var(--accent-cyan) !important;
+          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          outline: none !important;
+        }
+      `}</style>
     </div>
   );
 };
