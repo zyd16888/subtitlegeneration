@@ -1,15 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Form, Input, Select, Button, message, Spin, Space, InputNumber,
-  Table, Tag, Popconfirm, Typography, Row, Col, Tooltip
+  Table, Tag, Popconfirm, Typography, Row, Col, Tooltip, Progress
 } from 'antd';
 import {
   SaveOutlined, TranslationOutlined, DownloadOutlined,
   CloudServerOutlined, RocketOutlined,
-  InfoCircleOutlined, ReloadOutlined, SyncOutlined
+  InfoCircleOutlined, ReloadOutlined, SyncOutlined,
+  LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined
 } from '@ant-design/icons';
 import { api } from '../services/api';
-import type { SystemConfig, ASRModel } from '../types/api';
+import type { SystemConfig, ASRModel, ModelDownloadProgress } from '../types/api';
 
 const { Option } = Select;
 const { Text } = Typography;
@@ -26,7 +27,9 @@ const Settings: React.FC = () => {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelSearch, setModelSearch] = useState('');
   const [modelLangFilter, setModelLangFilter] = useState<string | undefined>(undefined);
-    
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, ModelDownloadProgress>>({});
+  const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+
   const translationService = Form.useWatch('translation_service', form);
   const googleMode = Form.useWatch('google_translate_mode', form);
   const microsoftMode = Form.useWatch('microsoft_translate_mode', form);
@@ -54,6 +57,58 @@ const Settings: React.FC = () => {
       setModelsLoading(false);
     }
   }, []);
+
+  // 清理轮询定时器
+  useEffect(() => {
+    return () => {
+      Object.values(pollTimers.current).forEach(clearInterval);
+    };
+  }, []);
+
+  const stopPolling = useCallback((modelId: string) => {
+    if (pollTimers.current[modelId]) {
+      clearInterval(pollTimers.current[modelId]);
+      delete pollTimers.current[modelId];
+    }
+  }, []);
+
+  const startPolling = useCallback((modelId: string) => {
+    stopPolling(modelId);
+    pollTimers.current[modelId] = setInterval(async () => {
+      try {
+        const progress = await api.models.getDownloadProgress(modelId);
+        setDownloadProgress(prev => ({ ...prev, [modelId]: progress }));
+        if (progress.status === 'completed') {
+          stopPolling(modelId);
+          message.success('模型下载完成');
+          loadModels();
+          // 3秒后清除进度显示
+          setTimeout(() => {
+            setDownloadProgress(prev => {
+              const next = { ...prev };
+              delete next[modelId];
+              return next;
+            });
+          }, 3000);
+        } else if (progress.status === 'failed') {
+          stopPolling(modelId);
+          message.error(progress.error || '模型下载失败');
+        }
+      } catch {
+        stopPolling(modelId);
+      }
+    }, 1000);
+  }, [stopPolling, loadModels]);
+
+  const handleDownload = useCallback(async (modelId: string) => {
+    try {
+      const progress = await api.models.downloadModel(modelId);
+      setDownloadProgress(prev => ({ ...prev, [modelId]: progress }));
+      startPolling(modelId);
+    } catch (err: any) {
+      message.error(err.message || '启动下载失败');
+    }
+  }, [startPolling]);
 
   // 过滤模型列表
   const filteredModels = React.useMemo(() => {
@@ -206,10 +261,47 @@ const Settings: React.FC = () => {
             </Space>
           );
         }
+        const progress = downloadProgress[record.id];
+        if (progress && (progress.status === 'downloading' || progress.status === 'extracting')) {
+          return (
+            <div style={{ minWidth: 120 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                <LoadingOutlined spin style={{ fontSize: 12, color: 'var(--accent-cyan)' }} />
+                <Text style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  {progress.status === 'extracting' ? '解压中...' : `${progress.progress}%`}
+                </Text>
+              </div>
+              <Progress
+                percent={progress.progress}
+                size="small"
+                showInfo={false}
+                strokeColor="var(--accent-cyan)"
+                trailColor="var(--glass-border)"
+              />
+            </div>
+          );
+        }
+        if (progress?.status === 'completed') {
+          return (
+            <Space>
+              <CheckCircleOutlined style={{ color: 'var(--accent-emerald)' }} />
+              <Text style={{ color: 'var(--accent-emerald)', fontSize: 12 }}>下载完成</Text>
+            </Space>
+          );
+        }
+        if (progress?.status === 'failed') {
+          return (
+            <Space>
+              <Tooltip title={progress.error}>
+                <Button type="link" danger icon={<CloseCircleOutlined />} onClick={() => handleDownload(record.id)} style={{ padding: 0 }}>
+                  失败，重试
+                </Button>
+              </Tooltip>
+            </Space>
+          );
+        }
         return (
-          <Button type="link" icon={<DownloadOutlined />} onClick={() => {
-            message.info('开始下载模型流...');
-          }} style={{ padding: 0, color: 'var(--accent-emerald)' }}>
+          <Button type="link" icon={<DownloadOutlined />} onClick={() => handleDownload(record.id)} style={{ padding: 0, color: 'var(--accent-emerald)' }}>
             下载权重
           </Button>
         );

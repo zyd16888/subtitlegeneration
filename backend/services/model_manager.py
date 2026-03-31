@@ -492,6 +492,85 @@ class ModelManager:
                 DownloadProgress(model_id=model_id, status=DownloadStatus.IDLE),
             )
 
+    # 下载重试配置
+    DOWNLOAD_MAX_RETRIES = 5
+    DOWNLOAD_RETRY_BASE_DELAY = 3  # 秒
+    DOWNLOAD_CHUNK_SIZE = 1024 * 256  # 256KB
+    DOWNLOAD_TIMEOUT = 120.0  # 单次连接超时
+
+    def _download_with_resume(self, model_id: str, url: str, tmp_file: Path) -> None:
+        """带断点续传和重试的文件下载"""
+        total = 0
+        for attempt in range(1, self.DOWNLOAD_MAX_RETRIES + 1):
+            downloaded = tmp_file.stat().st_size if tmp_file.exists() else 0
+            headers = {}
+            if downloaded > 0:
+                headers["Range"] = f"bytes={downloaded}-"
+                logger.info(f"模型 {model_id} 第 {attempt} 次尝试，从 {downloaded} 字节处续传")
+            else:
+                logger.info(f"模型 {model_id} 第 {attempt} 次尝试，从头下载")
+
+            try:
+                timeout = httpx.Timeout(self.DOWNLOAD_TIMEOUT, read=self.DOWNLOAD_TIMEOUT)
+                with httpx.stream("GET", url, headers=headers, follow_redirects=True, timeout=timeout) as resp:
+                    # 如果服务器不支持 Range 返回 200，需要重新下载
+                    if downloaded > 0 and resp.status_code == 200:
+                        logger.warning(f"模型 {model_id} 服务器不支持断点续传，重新下载")
+                        downloaded = 0
+                        tmp_file.unlink(missing_ok=True)
+
+                    resp.raise_for_status()
+
+                    if resp.status_code == 206:
+                        # 部分内容，从 content-range 获取总大小
+                        cr = resp.headers.get("content-range", "")
+                        total = int(cr.split("/")[-1]) if "/" in cr else 0
+                    else:
+                        total = int(resp.headers.get("content-length", 0))
+
+                    if total > 0:
+                        logger.info(f"模型 {model_id} 文件总大小: {total} 字节")
+
+                    mode = "ab" if downloaded > 0 and resp.status_code == 206 else "wb"
+                    with open(tmp_file, mode) as f:
+                        for chunk in resp.iter_bytes(chunk_size=self.DOWNLOAD_CHUNK_SIZE):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total > 0:
+                                pct = min(int(downloaded / total * 90), 90)
+                            else:
+                                pct = 50
+                            self._set_progress(model_id, pct, DownloadStatus.DOWNLOADING)
+
+                # 下载完成后校验文件大小
+                actual_size = tmp_file.stat().st_size
+                if total > 0 and actual_size < total:
+                    raise httpx.ReadError(
+                        f"文件不完整: 已下载 {actual_size}/{total} 字节"
+                    )
+
+                logger.info(f"模型 {model_id} 下载完成，共 {actual_size} 字节")
+                return  # 成功
+
+            except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError,
+                    httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout,
+                    ConnectionError, OSError) as e:
+                current_size = tmp_file.stat().st_size if tmp_file.exists() else 0
+                logger.warning(
+                    f"模型 {model_id} 下载中断 (第 {attempt}/{self.DOWNLOAD_MAX_RETRIES} 次): "
+                    f"{type(e).__name__}: {e}，已下载 {current_size} 字节"
+                )
+                if attempt >= self.DOWNLOAD_MAX_RETRIES:
+                    raise RuntimeError(
+                        f"下载失败，已重试 {self.DOWNLOAD_MAX_RETRIES} 次: {e}"
+                    ) from e
+                delay = self.DOWNLOAD_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                logger.info(f"模型 {model_id} 将在 {delay} 秒后重试...")
+                self._set_progress(model_id,
+                    min(int(current_size / max(total, 1) * 90), 90) if total > 0 else 50,
+                    DownloadStatus.DOWNLOADING)
+                time.sleep(delay)
+
     def _download_worker(self, model_id: str, meta: dict):
         """后台下载 + 解压 + 自动检测文件 + 写入 meta"""
         url = meta["url"]
@@ -500,23 +579,9 @@ class ModelManager:
         extract_tmp = self.models_dir / f"_extract_{model_id}"
 
         try:
-            # 流式下载
+            # 带断点续传和重试的流式下载
             logger.info(f"开始下载模型 {model_id}: {url}")
-            with httpx.stream("GET", url, follow_redirects=True, timeout=600.0) as resp:
-                resp.raise_for_status()
-                total = int(resp.headers.get("content-length", 0))
-                downloaded = 0
-                logger.info(f"模型 {model_id} 文件大小: {total} bytes")
-
-                with open(tmp_file, "wb") as f:
-                    for chunk in resp.iter_bytes(chunk_size=1024 * 256):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total > 0:
-                            pct = min(int(downloaded / total * 90), 90)
-                        else:
-                            pct = 50
-                        self._set_progress(model_id, pct, DownloadStatus.DOWNLOADING)
+            self._download_with_resume(model_id, url, tmp_file)
 
             logger.info(f"模型 {model_id} 下载完成，开始解压...")
             self._set_progress(model_id, 91, DownloadStatus.EXTRACTING)

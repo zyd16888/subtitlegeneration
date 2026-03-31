@@ -317,8 +317,9 @@ async def validate_config(db: Session = Depends(get_db)):
         if not config.asr_engine:
             missing_fields.append("ASR 引擎类型")
         elif config.asr_engine == "sherpa-onnx":
-            if not config.asr_model_path:
-                missing_fields.append("ASR 模型路径")
+            # 必须配置模型路径或模型ID（二选一）
+            if not config.asr_model_path and not config.asr_model_id:
+                missing_fields.append("ASR 模型路径或模型选择")
         elif config.asr_engine == "cloud":
             if not config.cloud_asr_url:
                 missing_fields.append("云端 ASR URL")

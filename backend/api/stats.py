@@ -150,6 +150,45 @@ async def get_statistics(db: Session = Depends(get_db)):
                 translation_message = "已配置 (本地 LLM)"
             else:
                 translation_message = "本地 LLM 缺少 API URL"
+        elif config.translation_service == "google":
+            mode = getattr(config, "google_translate_mode", "free")
+            if mode == "free":
+                translation_configured = True
+                translation_message = "已配置 (Google 免费版)"
+            elif mode == "api" and getattr(config, "google_api_key", None):
+                translation_configured = True
+                translation_message = "已配置 (Google API)"
+            else:
+                translation_message = "Google API 模式缺少 API Key"
+        elif config.translation_service == "microsoft":
+            mode = getattr(config, "microsoft_translate_mode", "free")
+            if mode == "free":
+                translation_configured = True
+                translation_message = "已配置 (微软免费版)"
+            elif mode == "api" and getattr(config, "microsoft_api_key", None):
+                translation_configured = True
+                translation_message = "已配置 (微软 API)"
+            else:
+                translation_message = "微软 API 模式缺少 API Key"
+        elif config.translation_service == "baidu":
+            if getattr(config, "baidu_app_id", None) and getattr(config, "baidu_secret_key", None):
+                translation_configured = True
+                translation_message = "已配置 (百度翻译)"
+            else:
+                translation_message = "百度翻译缺少 APP ID 或 Secret Key"
+        elif config.translation_service == "deepl":
+            mode = getattr(config, "deepl_mode", "deeplx")
+            if mode == "deeplx" and getattr(config, "deeplx_url", None):
+                translation_configured = True
+                translation_message = "已配置 (DeepLX)"
+            elif mode == "api" and getattr(config, "deepl_api_key", None):
+                translation_configured = True
+                translation_message = "已配置 (DeepL API)"
+            else:
+                if mode == "deeplx":
+                    translation_message = "DeepLX 模式缺少服务地址"
+                else:
+                    translation_message = "DeepL API 模式缺少 API Key"
         
         system_status = SystemStatusResponse(
             emby_connected=emby_connected,

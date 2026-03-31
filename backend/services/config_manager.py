@@ -216,9 +216,11 @@ class ConfigManager:
                 errors.append("Emby API Key 已配置但缺少 URL")
         
         # 验证 ASR 配置（只在相关字段更新时验证）
-        if 'asr_engine' in updated_keys or 'asr_model_path' in updated_keys or 'cloud_asr_url' in updated_keys or 'cloud_asr_api_key' in updated_keys:
-            if config.asr_engine == "sherpa-onnx" and not config.asr_model_path:
-                errors.append("使用 sherpa-onnx 引擎时必须配置模型路径")
+        if 'asr_engine' in updated_keys or 'asr_model_path' in updated_keys or 'asr_model_id' in updated_keys or 'cloud_asr_url' in updated_keys or 'cloud_asr_api_key' in updated_keys:
+            if config.asr_engine == "sherpa-onnx":
+                # 必须配置模型路径或模型ID（二选一）
+                if not config.asr_model_path and not config.asr_model_id:
+                    errors.append("使用 sherpa-onnx 引擎时必须配置模型路径或选择模型")
             if config.asr_engine == "cloud":
                 if not config.cloud_asr_url:
                     errors.append("使用云端 ASR 时必须配置 API URL")
@@ -259,8 +261,10 @@ class ConfigManager:
             errors.append("Emby API Key 已配置但缺少 URL")
         
         # 验证 ASR 配置
-        if config.asr_engine == "sherpa-onnx" and not config.asr_model_path:
-            errors.append("使用 sherpa-onnx 引擎时必须配置模型路径")
+        if config.asr_engine == "sherpa-onnx":
+            # 必须配置模型路径或模型ID（二选一）
+            if not config.asr_model_path and not config.asr_model_id:
+                errors.append("使用 sherpa-onnx 引擎时必须配置模型路径或选择模型")
         if config.asr_engine == "cloud":
             if not config.cloud_asr_url:
                 errors.append("使用云端 ASR 时必须配置 API URL")
