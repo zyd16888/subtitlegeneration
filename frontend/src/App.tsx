@@ -3,26 +3,29 @@ import zhCN from 'antd/locale/zh_CN';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import Dashboard from './pages/Dashboard';
 import Library from './pages/Library';
 import Tasks from './pages/Tasks';
 import Settings from './pages/Settings';
 
 const ThemedApp = () => {
+  const { isDark } = useTheme();
+
   return (
     <ConfigProvider
       locale={zhCN}
       theme={{
-        algorithm: theme.darkAlgorithm,
+        algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: {
-          colorPrimary: '#00d4ff',
+          colorPrimary: isDark ? '#00d4ff' : '#0891b2',
           colorBgBase: 'transparent',
           colorBgContainer: 'transparent',
-          colorBgElevated: '#111827',
+          colorBgElevated: isDark ? '#111827' : '#ffffff',
           borderRadius: 10,
           wireframe: false,
-          colorText: '#f1f5f9',
-          colorTextSecondary: '#94a3b8',
+          colorText: isDark ? '#f1f5f9' : '#1e293b',
+          colorTextSecondary: isDark ? '#94a3b8' : '#64748b',
         },
         components: {
           Card: {
@@ -53,7 +56,9 @@ const ThemedApp = () => {
 function App() {
   return (
     <ErrorBoundary>
-      <ThemedApp />
+      <ThemeProvider>
+        <ThemedApp />
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

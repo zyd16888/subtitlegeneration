@@ -161,8 +161,8 @@ const Settings: React.FC = () => {
       render: (text: string, record: ASRModel) => (
         <Space>
           <Text strong style={{ color: 'var(--text-primary)' }}>{text}</Text>
-          {record.active && <Tag color="success" style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid var(--accent-emerald)', color: 'var(--accent-emerald)' }}>当前激活</Tag>}
-          {record.installed && !record.active && <Tag color="processing" style={{ background: 'rgba(0, 212, 255, 0.1)', border: '1px solid var(--accent-cyan)', color: 'var(--accent-cyan)' }}>就绪</Tag>}
+          {record.active && <Tag color="success" style={{ background: 'var(--accent-emerald-bg)', border: '1px solid var(--accent-emerald)', color: 'var(--accent-emerald)' }}>当前激活</Tag>}
+          {record.installed && !record.active && <Tag color="processing" style={{ background: 'var(--accent-cyan-bg)', border: '1px solid var(--accent-cyan)', color: 'var(--accent-cyan)' }}>就绪</Tag>}
         </Space>
       ),
     },
@@ -172,7 +172,7 @@ const Settings: React.FC = () => {
       key: 'type',
       width: 100,
       render: (type: string) => (
-        <Tag color={type === 'online' ? 'blue' : 'green'} style={{ background: type === 'online' ? 'rgba(0, 212, 255, 0.1)' : 'rgba(16, 185, 129, 0.1)', border: 'none' }}>
+        <Tag color={type === 'online' ? 'blue' : 'green'} style={{ background: type === 'online' ? 'var(--accent-cyan-bg)' : 'var(--accent-emerald-bg)', border: 'none' }}>
           {type === 'online' ? '流式' : '离线'}
         </Tag>
       )
@@ -181,7 +181,7 @@ const Settings: React.FC = () => {
       title: '语言支持',
       dataIndex: 'languages',
       key: 'languages',
-      render: (langs: string[]) => (langs || []).slice(0, 3).map(lang => <Tag key={lang} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', fontSize: 10 }}>{lang}</Tag>)
+      render: (langs: string[]) => (langs || []).slice(0, 3).map(lang => <Tag key={lang} style={{ background: 'var(--bg-tag)', border: 'none', fontSize: 10 }}>{lang}</Tag>)
     },
     {
       title: '参数量',
@@ -225,7 +225,7 @@ const Settings: React.FC = () => {
         <div>
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 12 }}>
             系统核心配置
-            {isDirty && <Tag color="warning" style={{ margin: 0, borderRadius: 12, background: 'rgba(245, 158, 11, 0.1)', color: 'var(--accent-amber)', border: '1px solid rgba(245, 158, 11, 0.3)' }}><SyncOutlined spin /> 未保存更改</Tag>}
+            {isDirty && <Tag color="warning" style={{ margin: 0, borderRadius: 12, background: 'var(--accent-amber-bg)', color: 'var(--accent-amber)', border: '1px solid var(--accent-amber-border)' }}><SyncOutlined spin /> 未保存更改</Tag>}
           </h1>
           <Text type="secondary" style={{ fontSize: 13 }}>调整服务参数与神经引擎设置，更改将在保存后生效</Text>
         </div>
@@ -238,9 +238,9 @@ const Settings: React.FC = () => {
             height: 40,
             padding: '0 24px',
             borderRadius: 20,
-            background: isDirty ? 'linear-gradient(135deg, var(--accent-cyan) 0%, #007bb5 100%)' : 'rgba(255,255,255,0.1)',
+            background: isDirty ? 'linear-gradient(135deg, var(--accent-cyan) 0%, #007bb5 100%)' : 'var(--btn-hover-bg)',
             borderColor: isDirty ? 'transparent' : 'var(--glass-border)',
-            boxShadow: isDirty ? '0 0 20px rgba(0, 212, 255, 0.4)' : 'none',
+            boxShadow: isDirty ? 'var(--accent-cyan-glow-wide)' : 'none',
             color: isDirty ? '#fff' : 'var(--text-secondary)',
             transition: 'all 0.4s var(--ease-spring)',
             transform: isDirty ? 'scale(1.05)' : 'scale(1)',
@@ -262,7 +262,7 @@ const Settings: React.FC = () => {
           <div className="glass-card animate-fade-in-up delay-1" style={{ padding: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
-                <div style={{ background: 'rgba(0, 212, 255, 0.1)', padding: 8, borderRadius: 8, color: 'var(--accent-cyan)' }}><CloudServerOutlined /></div>
+                <div style={{ background: 'var(--accent-cyan-bg)', padding: 8, borderRadius: 8, color: 'var(--accent-cyan)' }}><CloudServerOutlined /></div>
                 Emby 核心节点
               </div>
               <Button onClick={testEmby} loading={testingEmby} style={{ borderRadius: 20 }}>
@@ -290,7 +290,7 @@ const Settings: React.FC = () => {
           <div className="glass-card animate-fade-in-up delay-2" style={{ padding: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
-                <div style={{ background: 'rgba(16, 185, 129, 0.1)', padding: 8, borderRadius: 8, color: 'var(--accent-emerald)' }}><TranslationOutlined /></div>
+                <div style={{ background: 'var(--accent-emerald-bg)', padding: 8, borderRadius: 8, color: 'var(--accent-emerald)' }}><TranslationOutlined /></div>
                 神经翻译管线
               </div>
               <Button onClick={testTranslation} loading={testingTranslation} style={{ borderRadius: 20 }}>
@@ -299,7 +299,7 @@ const Settings: React.FC = () => {
             </div>
             
             <Form.Item name="translation_service" label="主理翻译引擎">
-              <Select dropdownStyle={{ background: 'var(--bg-gradient-end)', border: '1px solid var(--glass-border)' }}>
+              <Select dropdownStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--glass-border)' }}>
                 <Option value="openai">OpenAI (GPT) <Tag color="processing" style={{ marginLeft: 8, border: 'none' }}>推荐</Tag></Option>
                 <Option value="deepseek">DeepSeek AI</Option>
                 <Option value="local">本地自定义模型 (LLM)</Option>
@@ -310,11 +310,11 @@ const Settings: React.FC = () => {
               </Select>
             </Form.Item>
             
-            <div style={{ 
-              background: 'rgba(0,0,0,0.2)', 
-              padding: 16, 
-              borderRadius: 'var(--radius-inner)', 
-              border: '1px solid var(--glass-border)' 
+            <div style={{
+              background: 'var(--bg-input)',
+              padding: 16,
+              borderRadius: 'var(--radius-inner)',
+              border: '1px solid var(--glass-border)'
             }}>
               {translationService === 'openai' && (
                 <Row gutter={24}>
@@ -422,7 +422,7 @@ const Settings: React.FC = () => {
           <div className="glass-card animate-fade-in-up delay-3" style={{ padding: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
-                <div style={{ background: 'rgba(245, 158, 11, 0.1)', padding: 8, borderRadius: 8, color: 'var(--accent-amber)' }}><RocketOutlined /></div>
+                <div style={{ background: 'var(--accent-amber-bg)', padding: 8, borderRadius: 8, color: 'var(--accent-amber)' }}><RocketOutlined /></div>
                 ASR 识别引擎配置
               </div>
               <Button icon={<ReloadOutlined />} onClick={loadModels} loading={modelsLoading} style={{ borderRadius: 20 }} type="text">
@@ -433,7 +433,7 @@ const Settings: React.FC = () => {
             <Row gutter={24} style={{ marginBottom: 24 }}>
               <Col span={24}>
                 <Form.Item name="asr_engine" label="默认推理引擎">
-                  <Select dropdownStyle={{ background: 'var(--bg-gradient-end)' }}>
+                  <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
                     <Option value="sherpa-onnx">本地模型 (Sherpa ONNX)</Option>
                     <Option value="cloud">云端 API</Option>
                   </Select>
@@ -443,10 +443,10 @@ const Settings: React.FC = () => {
 
             {/* 本地模型配置区 */}
             <div style={{ 
-              background: 'rgba(16, 185, 129, 0.05)', 
-              padding: 16, 
-              borderRadius: 'var(--radius-inner)', 
-              border: '1px solid rgba(16, 185, 129, 0.2)',
+              background: 'var(--accent-emerald-bg)',
+              padding: 16,
+              borderRadius: 'var(--radius-inner)',
+              border: '1px solid var(--accent-emerald-border)',
               marginBottom: 24
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, color: 'var(--accent-emerald)', fontWeight: 500 }}>
@@ -459,7 +459,7 @@ const Settings: React.FC = () => {
                     <Select 
                       placeholder="请先下载并激活模型"
                       disabled
-                      dropdownStyle={{ background: 'var(--bg-gradient-end)' }}
+                      dropdownStyle={{ background: 'var(--bg-elevated)' }}
                     >
                       {models.filter(m => m.installed).map(m => (
                         <Option key={m.id} value={m.id}>
@@ -482,10 +482,10 @@ const Settings: React.FC = () => {
 
             {/* 云端 API 配置区 */}
             <div style={{ 
-              background: 'rgba(0, 212, 255, 0.05)', 
-              padding: 16, 
-              borderRadius: 'var(--radius-inner)', 
-              border: '1px solid rgba(0, 212, 255, 0.2)',
+              background: 'var(--accent-cyan-bg)',
+              padding: 16,
+              borderRadius: 'var(--radius-inner)',
+              border: '1px solid var(--accent-cyan-border)',
               marginBottom: 24
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, color: 'var(--accent-cyan)', fontWeight: 500 }}>
@@ -509,7 +509,7 @@ const Settings: React.FC = () => {
               </Text>
             </div>
 
-            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.1)' }}>
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--glass-border)', background: 'var(--bg-subtle)' }}>
               <Row gutter={12}>
                 <Col flex="auto">
                   <Input 
@@ -526,7 +526,7 @@ const Settings: React.FC = () => {
                     value={modelLangFilter} 
                     onChange={v => setModelLangFilter(v)}
                     style={{ width: '100%' }}
-                    dropdownStyle={{ background: 'var(--bg-gradient-end)', border: '1px solid var(--glass-border)' }}
+                    dropdownStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--glass-border)' }}
                   >
                     {availableLanguages.map(lang => (
                       <Option key={lang} value={lang}>{lang}</Option>
@@ -556,113 +556,113 @@ const Settings: React.FC = () => {
       </Form>
       
       <style>{`
-        .custom-table .ant-table { 
-          background: transparent !important; 
+        .custom-table .ant-table {
+          background: transparent !important;
         }
         .custom-table .ant-table-thead > tr > th {
-          background: rgba(255,255,255,0.02) !important;
-          border-bottom: 1px solid rgba(255,255,255,0.05) !important;
-          color: rgba(255,255,255,0.45) !important;
+          background: var(--table-header-bg) !important;
+          border-bottom: 1px solid var(--glass-border) !important;
+          color: var(--text-secondary) !important;
           font-size: 12px;
         }
         .custom-table .ant-table-tbody > tr > td {
-          border-bottom: 1px solid rgba(255,255,255,0.03) !important;
+          border-bottom: 1px solid var(--glass-border) !important;
         }
         .custom-table .ant-table-tbody > tr:hover > td {
-          background: rgba(255,255,255,0.02) !important;
+          background: var(--table-row-hover) !important;
         }
         .ant-form-item-label > label {
-          color: rgba(255,255,255,0.45) !important;
+          color: var(--text-secondary) !important;
           font-size: 13px !important;
         }
-        
+
         /* Fix input focus double border */
         .ant-input:hover {
-          border-color: rgba(0, 212, 255, 0.4) !important;
+          border-color: var(--accent-cyan-border) !important;
         }
-        
+
         .ant-input:focus,
         .ant-input-focused {
           border-color: var(--accent-cyan) !important;
-          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          box-shadow: var(--accent-cyan-shadow) !important;
           outline: none !important;
         }
-        
+
         /* Fix Input with allowClear (affix wrapper) double border */
         .ant-input-affix-wrapper {
           padding: 0 !important;
           border: none !important;
           background: transparent !important;
         }
-        
+
         .ant-input-affix-wrapper:hover,
         .ant-input-affix-wrapper:focus,
         .ant-input-affix-wrapper-focused {
           border: none !important;
           box-shadow: none !important;
         }
-        
+
         .ant-input-affix-wrapper .ant-input {
           border: 1px solid var(--glass-border) !important;
-          background: rgba(0,0,0,0.2) !important;
+          background: var(--bg-input) !important;
         }
-        
+
         .ant-input-affix-wrapper:hover .ant-input {
-          border-color: rgba(0, 212, 255, 0.4) !important;
+          border-color: var(--accent-cyan-border) !important;
         }
-        
+
         .ant-input-affix-wrapper-focused .ant-input,
         .ant-input-affix-wrapper .ant-input:focus {
           border-color: var(--accent-cyan) !important;
-          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          box-shadow: var(--accent-cyan-shadow) !important;
         }
-        
+
         /* Fix Password Input double border */
         .ant-input-password {
           padding: 0 !important;
           border: none !important;
           background: transparent !important;
         }
-        
+
         .ant-input-password:hover,
         .ant-input-password:focus,
         .ant-input-password-focused {
           border: none !important;
           box-shadow: none !important;
         }
-        
+
         .ant-input-password .ant-input {
           border: 1px solid var(--glass-border) !important;
-          background: rgba(0,0,0,0.2) !important;
+          background: var(--bg-input) !important;
         }
-        
+
         .ant-input-password:hover .ant-input {
-          border-color: rgba(0, 212, 255, 0.4) !important;
+          border-color: var(--accent-cyan-border) !important;
         }
-        
+
         .ant-input-password-focused .ant-input,
         .ant-input-password .ant-input:focus {
           border-color: var(--accent-cyan) !important;
-          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          box-shadow: var(--accent-cyan-shadow) !important;
         }
-        
+
         .ant-select:not(.ant-select-disabled):hover .ant-select-selector {
-          border-color: rgba(0, 212, 255, 0.4) !important;
+          border-color: var(--accent-cyan-border) !important;
         }
-        
+
         .ant-select-focused .ant-select-selector {
           border-color: var(--accent-cyan) !important;
-          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          box-shadow: var(--accent-cyan-shadow) !important;
           outline: none !important;
         }
-        
+
         .ant-input-number:hover {
-          border-color: rgba(0, 212, 255, 0.4) !important;
+          border-color: var(--accent-cyan-border) !important;
         }
-        
+
         .ant-input-number-focused {
           border-color: var(--accent-cyan) !important;
-          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          box-shadow: var(--accent-cyan-shadow) !important;
           outline: none !important;
         }
       `}</style>

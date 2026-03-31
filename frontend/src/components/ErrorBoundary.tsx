@@ -86,7 +86,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
                 style={{
                   textAlign: 'left',
                   padding: '16px',
-                  background: '#f5f5f5',
+                  background: 'var(--bg-subtle)',
                   borderRadius: '4px',
                   marginTop: '16px',
                 }}

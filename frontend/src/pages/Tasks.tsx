@@ -228,7 +228,7 @@ const Tasks: React.FC = () => {
       <div className="glass-card animate-fade-in-up delay-1" style={{ marginBottom: 24, borderRadius: 16, padding: '16px 24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
           <Space size={12}>
-            <div style={{ background: '#1677ff', padding: 8, borderRadius: 8, color: 'white', display: 'flex' }}>
+            <div style={{ background: 'var(--accent-cyan)', padding: 8, borderRadius: 8, color: 'white', display: 'flex' }}>
               <HistoryOutlined />
             </div>
             <Title level={5} style={{ margin: 0 }}>任务队列管理</Title>
@@ -266,7 +266,7 @@ const Tasks: React.FC = () => {
           className="custom-table"
           expandable={{
             expandedRowRender: (record) => record.error_message && (
-              <div style={{ padding: '16px 24px', background: 'var(--error-bg)', borderLeft: '4px solid #ff4d4f' }}>
+              <div style={{ padding: '16px 24px', background: 'var(--error-bg)', borderLeft: '4px solid var(--accent-rose)' }}>
                 <Text type="danger" strong>错误详情：</Text>
                 <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{record.error_message}</div>
               </div>

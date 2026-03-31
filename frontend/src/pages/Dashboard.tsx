@@ -116,7 +116,7 @@ const StatusNode: React.FC<{
       gap: 16,
       padding: '16px',
       borderRadius: 'var(--radius-inner)',
-      background: 'rgba(255,255,255,0.02)',
+      background: 'var(--bg-subtle)',
       border: '1px solid var(--glass-border)',
       marginBottom: isLast ? 0 : 24,
       transition: 'all var(--trans-base)',
@@ -128,11 +128,11 @@ const StatusNode: React.FC<{
       <div style={{
         fontSize: 24,
         color: status ? 'var(--accent-emerald)' : 'var(--accent-rose)',
-        background: status ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)',
+        background: status ? 'var(--accent-emerald-bg)' : 'var(--accent-rose-bg)',
         padding: 12,
         borderRadius: 10,
         display: 'flex',
-        boxShadow: status ? '0 0 12px rgba(16, 185, 129, 0.2)' : '0 0 12px rgba(244, 63, 94, 0.2)',
+        boxShadow: status ? 'var(--accent-emerald-glow)' : 'var(--accent-rose-glow)',
       }}>
         {icon}
       </div>
@@ -142,12 +142,12 @@ const StatusNode: React.FC<{
       </div>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         {status ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(16, 185, 129, 0.1)', padding: '4px 10px', borderRadius: 20, border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--accent-emerald-bg)', padding: '4px 10px', borderRadius: 20, border: '1px solid var(--accent-emerald-border)' }}>
             <span className="status-dot success" style={{ margin: 0, width: 6, height: 6 }} />
             <span style={{ color: 'var(--accent-emerald)', fontSize: 12, fontWeight: 500 }}>在线</span>
           </div>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(244, 63, 94, 0.1)', padding: '4px 10px', borderRadius: 20, border: '1px solid rgba(244, 63, 94, 0.2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--accent-rose-bg)', padding: '4px 10px', borderRadius: 20, border: '1px solid var(--accent-rose-border)' }}>
             <span className="status-dot error" style={{ margin: 0, width: 6, height: 6 }} />
             <span style={{ color: 'var(--accent-rose)', fontSize: 12, fontWeight: 500 }}>离线</span>
           </div>
@@ -213,7 +213,7 @@ const Dashboard: React.FC = () => {
       cancelled: { color: 'default', text: '已取消', icon: <CloseCircleFilled /> },
     };
     const config = configs[status];
-    return <Tag color={config.color} icon={config.icon} style={{ borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.05)' }}>{config.text}</Tag>;
+    return <Tag color={config.color} icon={config.icon} style={{ borderRadius: 6, border: 'none', background: 'var(--bg-tag)' }}>{config.text}</Tag>;
   };
 
   if (loading && !statistics) {
@@ -276,7 +276,7 @@ const Dashboard: React.FC = () => {
                   <SyncOutlined spin style={{ color: 'var(--accent-amber)' }} /> 实时任务流
                 </div>
                 {processingTasks.map(task => (
-                  <div key={task.id} style={{ marginBottom: 16, background: 'rgba(255,255,255,0.02)', padding: 12, borderRadius: 8, border: '1px solid var(--glass-border)' }}>
+                  <div key={task.id} style={{ marginBottom: 16, background: 'var(--bg-subtle)', padding: 12, borderRadius: 8, border: '1px solid var(--glass-border)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                       <Text ellipsis style={{ maxWidth: '80%', fontSize: 13, color: 'var(--text-primary)' }}>{task.media_item_title}</Text>
                       <Text className="number-font" style={{ fontSize: 12, color: 'var(--accent-cyan)' }}>{task.progress}%</Text>
@@ -285,7 +285,7 @@ const Dashboard: React.FC = () => {
                       percent={task.progress}
                       size="small"
                       strokeColor={{ '0%': 'var(--accent-cyan)', '100%': '#007bb5' }}
-                      trailColor="rgba(255,255,255,0.05)"
+                      trailColor="var(--progress-trail)"
                       showInfo={false}
                       status="active"
                     />
@@ -316,7 +316,7 @@ const Dashboard: React.FC = () => {
                     alignItems: 'center', 
                     justifyContent: 'space-between',
                     padding: '12px 16px',
-                    background: 'rgba(255,255,255,0.01)',
+                    background: 'var(--bg-subtle)',
                     border: '1px solid var(--glass-border)',
                     borderRadius: 8,
                     transition: 'all var(--trans-fast)',

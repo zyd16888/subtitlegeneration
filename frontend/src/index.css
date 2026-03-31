@@ -4,37 +4,181 @@
   /* Fonts */
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  
+
   /* Core Colors */
   --bg-gradient-start: #0a0e1a;
   --bg-gradient-end: #111827;
-  
+
   --accent-cyan: #00d4ff;
   --accent-emerald: #10b981;
   --accent-amber: #f59e0b;
   --accent-rose: #f43f5e;
-  
+
   /* Text */
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --text-weak: #475569;
-  
+
   /* Glassmorphism */
   --glass-bg: rgba(255, 255, 255, 0.03);
   --glass-border: rgba(255, 255, 255, 0.06);
   --glass-hover-border: rgba(0, 212, 255, 0.3);
   --glass-hover-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), 0 0 16px rgba(0, 212, 255, 0.1);
   --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-  
+
+  /* Subtle backgrounds for components */
+  --bg-subtle: rgba(255, 255, 255, 0.02);
+  --bg-subtle-hover: rgba(255, 255, 255, 0.03);
+  --bg-input: rgba(0, 0, 0, 0.2);
+  --bg-elevated: #111827;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+  --bg-tag: rgba(255, 255, 255, 0.05);
+  --bg-code: rgba(255, 255, 255, 0.05);
+  --progress-trail: rgba(255, 255, 255, 0.05);
+
+  /* Accent backgrounds */
+  --accent-cyan-bg: rgba(0, 212, 255, 0.1);
+  --accent-cyan-bg-hover: rgba(0, 212, 255, 0.25);
+  --accent-cyan-border: rgba(0, 212, 255, 0.4);
+  --accent-cyan-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2);
+  --accent-cyan-glow: 0 0 8px rgba(0, 212, 255, 0.3);
+  --accent-cyan-glow-strong: 0 0 12px rgba(0, 212, 255, 0.4);
+  --accent-cyan-glow-wide: 0 0 20px rgba(0, 212, 255, 0.4);
+  --accent-emerald-bg: rgba(16, 185, 129, 0.1);
+  --accent-emerald-border: rgba(16, 185, 129, 0.2);
+  --accent-emerald-glow: 0 0 8px rgba(16, 185, 129, 0.4);
+  --accent-amber-bg: rgba(245, 158, 11, 0.1);
+  --accent-amber-border: rgba(245, 158, 11, 0.3);
+  --accent-rose-bg: rgba(244, 63, 94, 0.1);
+  --accent-rose-border: rgba(244, 63, 94, 0.2);
+  --accent-rose-glow: 0 0 12px rgba(244, 63, 94, 0.2);
+
+  /* Button */
+  --btn-bg: rgba(255, 255, 255, 0.05);
+  --btn-hover-bg: rgba(255, 255, 255, 0.1);
+  --btn-primary-bg: rgba(0, 212, 255, 0.15);
+
+  /* Table */
+  --table-header-bg: rgba(255, 255, 255, 0.02);
+  --table-header-color: var(--text-secondary);
+  --table-row-hover: rgba(255, 255, 255, 0.03);
+
+  /* Switch */
+  --switch-bg: rgba(255, 255, 255, 0.2);
+
+  /* Scrollbar */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
+
+  /* Nav */
+  --nav-active-bg: linear-gradient(90deg, rgba(0, 212, 255, 0.1) 0%, transparent 100%);
+
+  /* Component-specific (used by Library, Modals, Tasks) */
+  --bg-container: rgba(255, 255, 255, 0.03);
+  --bg-spotlight: rgba(255, 255, 255, 0.05);
+  --border-color: rgba(255, 255, 255, 0.06);
+  --card-hover-border: rgba(0, 212, 255, 0.3);
+  --card-hover-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 16px rgba(0, 212, 255, 0.1);
+  --placeholder-icon: rgba(255, 255, 255, 0.2);
+  --info-bg: rgba(0, 212, 255, 0.06);
+  --error-bg: rgba(244, 63, 94, 0.06);
+  --select-dropdown-bg: #1f2937;
+  --select-option-hover: rgba(255, 255, 255, 0.08);
+  --select-option-selected: rgba(0, 212, 255, 0.15);
+
   /* UI Radii & Spacing */
   --radius-card: 16px;
   --radius-inner: 10px;
-  
+
   /* Transitions */
   --ease-spring: cubic-bezier(0.4, 0, 0.2, 1);
   --trans-fast: 150ms var(--ease-spring);
   --trans-base: 300ms var(--ease-spring);
   --trans-slow: 500ms var(--ease-spring);
+}
+
+/* ======================== Light Mode ======================== */
+[data-theme="light"] {
+  /* Core Colors */
+  --bg-gradient-start: #f0f4f8;
+  --bg-gradient-end: #e2e8f0;
+
+  --accent-cyan: #0891b2;
+  --accent-emerald: #059669;
+  --accent-amber: #d97706;
+  --accent-rose: #e11d48;
+
+  /* Text */
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --text-weak: #94a3b8;
+
+  /* Glassmorphism → Light panels */
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-hover-border: rgba(8, 145, 178, 0.4);
+  --glass-hover-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.08), 0 0 16px rgba(8, 145, 178, 0.08);
+  --glass-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.06);
+
+  /* Subtle backgrounds */
+  --bg-subtle: rgba(0, 0, 0, 0.02);
+  --bg-subtle-hover: rgba(0, 0, 0, 0.04);
+  --bg-input: rgba(0, 0, 0, 0.04);
+  --bg-elevated: #ffffff;
+  --bg-overlay: rgba(0, 0, 0, 0.4);
+  --bg-tag: rgba(0, 0, 0, 0.05);
+  --bg-code: rgba(0, 0, 0, 0.04);
+  --progress-trail: rgba(0, 0, 0, 0.06);
+
+  /* Accent backgrounds */
+  --accent-cyan-bg: rgba(8, 145, 178, 0.08);
+  --accent-cyan-bg-hover: rgba(8, 145, 178, 0.15);
+  --accent-cyan-border: rgba(8, 145, 178, 0.4);
+  --accent-cyan-shadow: 0 0 0 2px rgba(8, 145, 178, 0.15);
+  --accent-cyan-glow: 0 0 8px rgba(8, 145, 178, 0.2);
+  --accent-cyan-glow-strong: 0 0 12px rgba(8, 145, 178, 0.25);
+  --accent-cyan-glow-wide: 0 0 20px rgba(8, 145, 178, 0.25);
+  --accent-emerald-bg: rgba(5, 150, 105, 0.08);
+  --accent-emerald-border: rgba(5, 150, 105, 0.2);
+  --accent-emerald-glow: 0 0 8px rgba(5, 150, 105, 0.25);
+  --accent-rose-bg: rgba(225, 29, 72, 0.08);
+  --accent-rose-border: rgba(225, 29, 72, 0.2);
+  --accent-rose-glow: 0 0 12px rgba(225, 29, 72, 0.15);
+  --accent-amber-bg: rgba(217, 119, 6, 0.08);
+  --accent-amber-border: rgba(217, 119, 6, 0.25);
+
+  /* Button */
+  --btn-bg: rgba(0, 0, 0, 0.04);
+  --btn-hover-bg: rgba(0, 0, 0, 0.08);
+  --btn-primary-bg: rgba(8, 145, 178, 0.1);
+
+  /* Table */
+  --table-header-bg: rgba(0, 0, 0, 0.02);
+  --table-header-color: var(--text-secondary);
+  --table-row-hover: rgba(0, 0, 0, 0.03);
+
+  /* Switch */
+  --switch-bg: rgba(0, 0, 0, 0.15);
+
+  /* Scrollbar */
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.2);
+
+  /* Nav */
+  --nav-active-bg: linear-gradient(90deg, rgba(8, 145, 178, 0.08) 0%, transparent 100%);
+
+  /* Component-specific */
+  --bg-container: rgba(255, 255, 255, 0.8);
+  --bg-spotlight: rgba(0, 0, 0, 0.04);
+  --border-color: rgba(0, 0, 0, 0.08);
+  --card-hover-border: rgba(8, 145, 178, 0.4);
+  --card-hover-shadow: 0 8px 32px rgba(0, 0, 0, 0.1), 0 0 16px rgba(8, 145, 178, 0.06);
+  --placeholder-icon: rgba(0, 0, 0, 0.2);
+  --info-bg: rgba(8, 145, 178, 0.06);
+  --error-bg: rgba(225, 29, 72, 0.06);
+  --select-dropdown-bg: #ffffff;
+  --select-option-hover: rgba(0, 0, 0, 0.04);
+  --select-option-selected: rgba(8, 145, 178, 0.08);
 }
 
 body {
@@ -100,11 +244,11 @@ h1, h2, h3, h4, h5, h6 {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Animations */
@@ -169,7 +313,7 @@ h1, h2, h3, h4, h5, h6 {
 
 /* AntD Overrides for Neumorphic / Glassmorphism */
 .ant-btn {
-  background: rgba(255,255,255,0.05) !important;
+  background: var(--btn-bg) !important;
   border: 1px solid var(--glass-border) !important;
   color: var(--text-primary) !important;
   backdrop-filter: blur(4px) !important;
@@ -177,26 +321,26 @@ h1, h2, h3, h4, h5, h6 {
   border-radius: var(--radius-inner) !important;
 }
 .ant-btn:hover {
-  background: rgba(255,255,255,0.1) !important;
+  background: var(--btn-hover-bg) !important;
   border-color: var(--accent-cyan) !important;
   color: var(--accent-cyan) !important;
-  box-shadow: 0 0 8px rgba(0, 212, 255, 0.3) !important;
+  box-shadow: var(--accent-cyan-glow) !important;
 }
 .ant-btn:active {
   transform: scale(0.97) !important;
 }
 .ant-btn-primary {
-  background: rgba(0, 212, 255, 0.15) !important;
+  background: var(--btn-primary-bg) !important;
   border-color: var(--accent-cyan) !important;
   color: var(--accent-cyan) !important;
 }
 .ant-btn-primary:hover {
-  background: rgba(0, 212, 255, 0.25) !important;
-  box-shadow: 0 0 12px rgba(0, 212, 255, 0.4) !important;
+  background: var(--accent-cyan-bg-hover) !important;
+  box-shadow: var(--accent-cyan-glow-strong) !important;
 }
 
 .ant-input, .ant-input-password, .ant-select-selector, .ant-input-number {
-  background: rgba(0,0,0,0.2) !important;
+  background: var(--bg-input) !important;
   border: 1px solid var(--glass-border) !important;
   color: var(--text-primary) !important;
   border-radius: var(--radius-inner) !important;
@@ -204,7 +348,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 .ant-input:focus, .ant-input-focused, .ant-select-focused .ant-select-selector, .ant-input-number-focused {
   border-color: var(--accent-cyan) !important;
-  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2) !important;
+  box-shadow: var(--accent-cyan-shadow) !important;
 }
 .ant-input::placeholder {
   color: var(--text-weak) !important;
@@ -215,8 +359,8 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text-primary);
 }
 .ant-table-thead > tr > th {
-  background: rgba(255,255,255,0.02) !important;
-  color: var(--text-secondary) !important;
+  background: var(--table-header-bg) !important;
+  color: var(--table-header-color) !important;
   border-bottom: 1px solid var(--glass-border) !important;
 }
 .ant-table-tbody > tr > td {
@@ -224,7 +368,7 @@ h1, h2, h3, h4, h5, h6 {
   transition: background var(--trans-fast);
 }
 .ant-table-tbody > tr:hover > td {
-  background: rgba(255,255,255,0.03) !important;
+  background: var(--table-row-hover) !important;
 }
 
 .ant-card {
@@ -240,18 +384,18 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Navigation glow indicator */
 .nav-item-active {
-  background: linear-gradient(90deg, rgba(0,212,255,0.1) 0%, transparent 100%) !important;
+  background: var(--nav-active-bg) !important;
   border-left: 3px solid var(--accent-cyan) !important;
   color: var(--accent-cyan) !important;
 }
 
 /* Switch & Checkbox */
 .ant-switch {
-  background: rgba(255,255,255,0.2) !important;
+  background: var(--switch-bg) !important;
 }
 .ant-switch-checked {
   background: var(--accent-emerald) !important;
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4) !important;
+  box-shadow: var(--accent-emerald-glow) !important;
 }
 
 /* Float Animation */
@@ -290,9 +434,16 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text-secondary) !important;
 }
 
+/* Tag styling */
+.ant-tag {
+  background: var(--bg-tag) !important;
+  border: 1px solid var(--glass-border) !important;
+  color: var(--text-primary) !important;
+}
+
 /* Modal styling */
 .ant-modal-content {
-  background: var(--bg-gradient-end) !important;
+  background: var(--bg-elevated) !important;
   border: 1px solid var(--glass-border) !important;
   box-shadow: var(--glass-hover-shadow) !important;
 }
@@ -307,4 +458,187 @@ h1, h2, h3, h4, h5, h6 {
 }
 .ant-modal-close:hover {
   color: var(--accent-cyan) !important;
+}
+
+/* Select Dropdown (portal, rendered outside component tree) */
+.ant-select-dropdown {
+  background: var(--select-dropdown-bg) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-shadow) !important;
+  border-radius: var(--radius-inner) !important;
+  padding: 4px !important;
+}
+
+/* Reset all select item backgrounds */
+.ant-select-item,
+.ant-select-item-option {
+  background: transparent !important;
+  color: var(--text-primary) !important;
+  transition: background-color 0.2s ease, color 0.2s ease !important;
+}
+
+/* Hover state - use more visible color */
+.ant-select-item:hover,
+.ant-select-item-option:hover,
+.ant-select-item-option-active {
+  background: var(--select-option-hover) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Selected state */
+.ant-select-item-option-selected {
+  background: var(--select-option-selected) !important;
+  color: var(--accent-cyan) !important;
+  font-weight: 500 !important;
+}
+
+/* Selected + hover state */
+.ant-select-item-option-selected:hover {
+  background: var(--select-option-selected) !important;
+  color: var(--accent-cyan) !important;
+}
+
+/* Disabled state */
+.ant-select-item-option-disabled {
+  color: var(--text-weak) !important;
+  cursor: not-allowed !important;
+  background: transparent !important;
+}
+
+/* Empty state */
+.ant-select-item-empty {
+  color: var(--text-weak) !important;
+  background: transparent !important;
+}
+
+/* Override any table cell row hover styles that might affect dropdowns */
+.ant-table-cell-row-hover {
+  background: var(--table-row-hover) !important;
+}
+
+/* Drawer styling */
+.ant-drawer-content {
+  background: var(--bg-elevated) !important;
+}
+.ant-drawer-header {
+  background: transparent !important;
+  border-bottom: 1px solid var(--glass-border) !important;
+}
+.ant-drawer-title {
+  color: var(--text-primary) !important;
+}
+.ant-drawer-close {
+  color: var(--text-secondary) !important;
+}
+.ant-drawer-body {
+  color: var(--text-primary) !important;
+}
+
+/* Descriptions inside drawer/modal */
+.ant-descriptions-bordered .ant-descriptions-item-label {
+  background: var(--bg-subtle) !important;
+  color: var(--text-secondary) !important;
+  border-inline-end: 1px solid var(--glass-border) !important;
+}
+.ant-descriptions-bordered .ant-descriptions-item-content {
+  color: var(--text-primary) !important;
+}
+.ant-descriptions-bordered .ant-descriptions-row {
+  border-bottom: 1px solid var(--glass-border) !important;
+}
+.ant-descriptions-bordered .ant-descriptions-view {
+  border: 1px solid var(--glass-border) !important;
+}
+
+/* Table row selection */
+.ant-table-tbody > tr.ant-table-row-selected > td {
+  background: var(--select-option-selected) !important;
+}
+
+/* Popconfirm */
+.ant-popover-inner {
+  background: var(--bg-elevated) !important;
+  color: var(--text-primary) !important;
+}
+.ant-popconfirm-message-title {
+  color: var(--text-primary) !important;
+}
+
+/* Confirm modal */
+.ant-modal-confirm-body .ant-modal-confirm-title {
+  color: var(--text-primary) !important;
+}
+.ant-modal-confirm-body .ant-modal-confirm-content {
+  color: var(--text-secondary) !important;
+}
+
+/* Form labels inside modal */
+.ant-modal .ant-form-item-label > label {
+  color: var(--text-secondary) !important;
+}
+
+/* ======================== Light Mode AntD Overrides ======================== */
+[data-theme="light"] .ant-menu {
+  color: var(--text-primary) !important;
+}
+[data-theme="light"] .ant-menu-item {
+  color: var(--text-secondary) !important;
+}
+[data-theme="light"] .ant-menu-item:hover {
+  color: var(--accent-cyan) !important;
+}
+[data-theme="light"] .ant-menu-item-selected {
+  color: var(--accent-cyan) !important;
+}
+[data-theme="light"] .ant-table-tbody > tr > td {
+  color: var(--text-primary) !important;
+}
+[data-theme="light"] .ant-select-selection-item {
+  color: var(--text-primary) !important;
+}
+[data-theme="light"] .ant-pagination .ant-pagination-item a {
+  color: var(--text-primary) !important;
+}
+[data-theme="light"] .ant-pagination .ant-pagination-item-active a {
+  color: var(--accent-cyan) !important;
+}
+[data-theme="light"] .ant-empty-description {
+  color: var(--text-secondary) !important;
+}
+[data-theme="light"] .ant-tag {
+  color: var(--text-primary);
+}
+[data-theme="light"] .glass-card::before {
+  background: radial-gradient(circle at 0% 0%, rgba(8, 145, 178, 0.06) 0%, transparent 40%);
+}
+[data-theme="light"] .ant-collapse {
+  background: transparent !important;
+  border-color: var(--glass-border) !important;
+}
+[data-theme="light"] .ant-collapse-header {
+  color: var(--text-primary) !important;
+}
+[data-theme="light"] .ant-collapse-content {
+  background: transparent !important;
+  border-color: var(--glass-border) !important;
+}
+[data-theme="light"] .ant-tabs-tab {
+  color: var(--text-secondary) !important;
+}
+[data-theme="light"] .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--accent-cyan) !important;
+}
+[data-theme="light"] .ant-tooltip-inner {
+  background: var(--bg-elevated) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--glass-border);
+}
+[data-theme="light"] .data-flow-line::after {
+  background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+}
+
+/* Theme transition for smooth switching */
+body, .glass-card, .ant-btn, .ant-input, .ant-card, .ant-table-wrapper .ant-table,
+.ant-modal-content, .ant-menu, .ant-menu-item, .status-dot {
+  transition: background var(--trans-base), color var(--trans-base), border-color var(--trans-base), box-shadow var(--trans-base);
 }

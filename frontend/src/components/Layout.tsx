@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Layout as AntLayout, Menu, Button } from 'antd';
+import { Layout as AntLayout, Menu, Button, Tooltip } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   DashboardOutlined,
@@ -8,7 +8,10 @@ import {
   SettingOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  SunOutlined,
+  MoonOutlined,
 } from '@ant-design/icons';
+import { useTheme } from '../contexts/ThemeContext';
 
 const { Header, Sider, Content } = AntLayout;
 
@@ -16,6 +19,7 @@ const Layout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { isDark, toggleTheme } = useTheme();
 
   const menuItems = [
     { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
@@ -96,7 +100,7 @@ const Layout: React.FC = () => {
         </div>
         
         <Menu
-          theme="dark"
+          theme={isDark ? 'dark' : 'light'}
           mode="inline"
           selectedKeys={[location.pathname]}
           items={menuItems.map(item => ({
@@ -120,7 +124,7 @@ const Layout: React.FC = () => {
               width: '100%',
               color: 'var(--text-secondary)',
               height: 44,
-              background: 'rgba(255,255,255,0.02)',
+              background: 'var(--bg-subtle)',
               border: '1px solid var(--glass-border)',
             }}
           />
@@ -152,6 +156,25 @@ const Layout: React.FC = () => {
             <span style={{ color: 'var(--accent-cyan)', fontSize: 13, fontWeight: 500, letterSpacing: '0.5px' }}>
               System Online
             </span>
+            <Tooltip title={isDark ? '切换亮色模式' : '切换暗色模式'}>
+              <Button
+                type="text"
+                icon={isDark ? <SunOutlined /> : <MoonOutlined />}
+                onClick={toggleTheme}
+                style={{
+                  color: 'var(--text-secondary)',
+                  fontSize: 18,
+                  width: 40,
+                  height: 40,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '50%',
+                  background: 'var(--bg-subtle)',
+                  border: '1px solid var(--glass-border)',
+                }}
+              />
+            </Tooltip>
           </div>
         </Header>
         

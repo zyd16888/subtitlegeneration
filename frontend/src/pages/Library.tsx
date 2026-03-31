@@ -94,7 +94,7 @@ const MediaItemImage: React.FC<{
         <Badge
           count={hasSubtitles ? '已有字幕' : '无字幕'}
           style={{
-            background: hasSubtitles ? 'rgba(16, 185, 129, 0.2)' : 'rgba(244, 63, 94, 0.2)',
+            background: hasSubtitles ? 'var(--accent-emerald-bg)' : 'var(--accent-rose-bg)',
             color: hasSubtitles ? 'var(--accent-emerald)' : 'var(--accent-rose)',
             border: hasSubtitles ? '1px solid var(--accent-emerald)' : '1px solid var(--accent-rose)',
             boxShadow: 'none',
@@ -114,7 +114,7 @@ const MediaItemImage: React.FC<{
               width: 50,
               height: 50,
               fontSize: 24,
-              boxShadow: '0 4px 15px rgba(22, 119, 255, 0.4)',
+              boxShadow: '0 4px 15px var(--accent-cyan-border)',
             }}
           />
           <div style={{ marginTop: 12, color: 'white', fontSize: 12, fontWeight: 500 }}>
@@ -258,7 +258,7 @@ const LibraryPage: React.FC = () => {
         <Row gutter={[24, 16]} align="middle">
           <Col xs={24} md={6}>
             <Space size={12}>
-              <div style={{ background: '#1677ff', padding: 8, borderRadius: 8, color: 'white', display: 'flex' }}>
+              <div style={{ background: 'var(--accent-cyan)', padding: 8, borderRadius: 8, color: 'white', display: 'flex' }}>
                 <AppstoreOutlined />
               </div>
               <Title level={5} style={{ margin: 0 }}>媒体库浏览</Title>
@@ -406,7 +406,7 @@ const LibraryPage: React.FC = () => {
         .media-card-overlay {
           position: absolute;
           top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0, 0, 0, 0.6);
+          background: var(--bg-overlay);
           backdrop-filter: blur(4px);
           display: flex;
           align-items: center;
@@ -426,64 +426,64 @@ const LibraryPage: React.FC = () => {
         
         /* Fix input focus double border */
         .ant-input:hover {
-          border-color: rgba(0, 212, 255, 0.4) !important;
+          border-color: var(--accent-cyan-border) !important;
         }
-        
+
         .ant-input:focus,
         .ant-input-focused {
           border-color: var(--accent-cyan) !important;
-          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          box-shadow: var(--accent-cyan-shadow) !important;
           outline: none !important;
         }
-        
+
         /* Fix Input with allowClear (affix wrapper) double border */
         .ant-input-affix-wrapper {
           padding: 0 !important;
           border: none !important;
           background: transparent !important;
         }
-        
+
         .ant-input-affix-wrapper:hover,
         .ant-input-affix-wrapper:focus,
         .ant-input-affix-wrapper-focused {
           border: none !important;
           box-shadow: none !important;
         }
-        
+
         .ant-input-affix-wrapper .ant-input {
           border: 1px solid var(--glass-border) !important;
-          background: rgba(0,0,0,0.2) !important;
+          background: var(--bg-input) !important;
         }
-        
+
         .ant-input-affix-wrapper:hover .ant-input {
-          border-color: rgba(0, 212, 255, 0.4) !important;
+          border-color: var(--accent-cyan-border) !important;
         }
-        
+
         .ant-input-affix-wrapper-focused .ant-input,
         .ant-input-affix-wrapper .ant-input:focus {
           border-color: var(--accent-cyan) !important;
-          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1) !important;
+          box-shadow: var(--accent-cyan-shadow) !important;
         }
-        
+
         /* Fix Search component double border */
         .ant-input-search .ant-input-group .ant-input-affix-wrapper {
           border-right: none !important;
         }
-        
+
         .ant-input-search .ant-input-group .ant-input-affix-wrapper .ant-input {
           border-right: none !important;
         }
-        
+
         .ant-input-search-button {
           border: 1px solid var(--glass-border) !important;
           border-left: none !important;
-          background: rgba(0,0,0,0.2) !important;
+          background: var(--bg-input) !important;
         }
-        
+
         .ant-input-search:hover .ant-input-search-button {
-          border-color: rgba(0, 212, 255, 0.4) !important;
+          border-color: var(--accent-cyan-border) !important;
         }
-        
+
         .ant-input-search-focused .ant-input-search-button {
           border-color: var(--accent-cyan) !important;
         }
