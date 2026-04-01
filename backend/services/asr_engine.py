@@ -121,12 +121,13 @@ class SherpaOnnxOnlineEngine(ASREngine):
             logger.error(f"Failed to initialize OnlineRecognizer: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize OnlineRecognizer: {e}")
 
-    async def transcribe(self, audio_path: str, language: str = "ja") -> List[Segment]:
+    async def transcribe(self, audio_path: str, language: str = None) -> List[Segment]:
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
         if self.recognizer is None:
             raise RuntimeError("Recognizer not initialized")
 
+        # Online 流式模型是单语言固定的，language 参数不影响识别行为
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
 
@@ -176,6 +177,8 @@ class SherpaOnnxOfflineEngine(ASREngine):
     支持两种模型类型：
     - transducer: zipformer 等离线模型 (encoder + decoder + joiner)
     - whisper:    whisper 系列模型 (encoder + decoder)
+
+    Whisper 模型支持运行时指定语言（通过 transcribe 的 language 参数）。
     """
 
     def __init__(
@@ -190,17 +193,18 @@ class SherpaOnnxOfflineEngine(ASREngine):
             model_path: 模型目录
             model_type: "transducer" 或 "whisper"
             file_map:   各文件的映射
-            language:   语言代码 (如 "ja", "zh", "en")，空字符串表示自动检测
+            language:   默认语言代码 (如 "ja", "zh", "en")，空字符串表示自动检测
         """
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model path not found: {model_path}")
 
         self.model_path = model_path
         self.model_type = model_type
-        self.language = language
+        self.default_language = language
         self.file_map = file_map or self._default_file_map()
         self.recognizer: Optional[sherpa_onnx.OfflineRecognizer] = None
-        self._initialize_recognizer()
+        self._runtime_language: Optional[str] = None  # 运行时语言覆盖
+        self._initialize_recognizer(language)
 
     def _default_file_map(self) -> Dict[str, str]:
         if self.model_type == "whisper":
@@ -216,7 +220,13 @@ class SherpaOnnxOfflineEngine(ASREngine):
             "joiner": "joiner.onnx",
         }
 
-    def _initialize_recognizer(self):
+    def _initialize_recognizer(self, language: str = ""):
+        """
+        初始化识别器。
+
+        Args:
+            language: 初始语言代码，Whisper 模型使用
+        """
         try:
             tokens_path = os.path.join(self.model_path, self.file_map["tokens"])
             encoder_path = os.path.join(self.model_path, self.file_map["encoder"])
@@ -224,16 +234,18 @@ class SherpaOnnxOfflineEngine(ASREngine):
 
             logger.info(f"Initializing OfflineRecognizer with model_path: {self.model_path}")
             logger.info(f"  model_type: {self.model_type}")
+            logger.info(f"  language: {language or 'auto'}")
             logger.info(f"  tokens: {tokens_path} (exists: {os.path.exists(tokens_path)})")
             logger.info(f"  encoder: {encoder_path} (exists: {os.path.exists(encoder_path)})")
             logger.info(f"  decoder: {decoder_path} (exists: {os.path.exists(decoder_path)})")
 
             if self.model_type == "whisper":
+                # Whisper 模型初始化时不设置语言，等待 transcribe 时动态指定
                 self.recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
                     encoder=encoder_path,
                     decoder=decoder_path,
                     tokens=tokens_path,
-                    language=self.language,
+                    language=language or "",  # 空字符串表示自动检测
                     task="transcribe",
                     num_threads=4,
                     decoding_method="greedy_search",
@@ -256,11 +268,29 @@ class SherpaOnnxOfflineEngine(ASREngine):
             logger.error(f"Failed to initialize OfflineRecognizer ({self.model_type}): {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize OfflineRecognizer ({self.model_type}): {e}")
 
-    async def transcribe(self, audio_path: str, language: str = "ja") -> List[Segment]:
+    async def transcribe(self, audio_path: str, language: str = None) -> List[Segment]:
+        """
+        转录音频。
+
+        Args:
+            audio_path: 音频文件路径
+            language: 可选，指定语言代码（如 "ja", "zh", "en"）。
+                     如果为 None 或空，使用初始化时的默认语言。
+                     Whisper 模型支持运行时指定语言。
+        """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
         if self.recognizer is None:
             raise RuntimeError("Recognizer not initialized")
+
+        # Whisper 模型支持运行时指定语言
+        effective_lang = language if language else self.default_language
+        if effective_lang and self.model_type == "whisper":
+            # 如果语言与初始语言不同，需要重新初始化识别器
+            if effective_lang != self.default_language:
+                logger.info(f"Re-initializing Whisper recognizer with language: {effective_lang}")
+                self._initialize_recognizer(effective_lang)
+                self.default_language = effective_lang
 
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
@@ -346,7 +376,7 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
 
         self.model_path = model_path
         self.model_type = model_type
-        self.language = language
+        self.default_language = language  # 默认语言
         self.file_map = file_map or SherpaOnnxOfflineEngine(model_path, model_type)._default_file_map()
         self.vad_model_path = vad_model_path
         self.vad_threshold = vad_threshold
@@ -358,7 +388,14 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
         self.vad: Optional[sherpa_onnx.VoiceActivityDetector] = None
         self._initialize()
 
-    def _initialize(self):
+    def _initialize(self, language: str = None):
+        """
+        初始化识别器和 VAD。
+
+        Args:
+            language: 语言代码，None 时使用 self.default_language
+        """
+        lang = language if language is not None else self.default_language
         try:
             tokens_path = os.path.join(self.model_path, self.file_map["tokens"])
             encoder_path = os.path.join(self.model_path, self.file_map["encoder"])
@@ -370,7 +407,7 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
                     encoder=encoder_path,
                     decoder=decoder_path,
                     tokens=tokens_path,
-                    language=self.language,
+                    language=lang or "",
                     task="transcribe",
                     num_threads=4,
                     decoding_method="greedy_search",
@@ -386,25 +423,43 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
                     decoding_method="greedy_search",
                 )
 
-            # 创建 VAD
-            vad_config = sherpa_onnx.VadModelConfig()
-            vad_config.silero_vad.model = self.vad_model_path
-            vad_config.silero_vad.threshold = self.vad_threshold
-            vad_config.silero_vad.min_silence_duration = self.vad_min_silence_duration
-            vad_config.silero_vad.min_speech_duration = self.vad_min_speech_duration
-            vad_config.silero_vad.max_speech_duration = self.vad_max_speech_duration
-            vad_config.sample_rate = 16000
-            vad_config.num_threads = 4
+            # 创建 VAD（只在首次初始化时创建）
+            if self.vad is None:
+                vad_config = sherpa_onnx.VadModelConfig()
+                vad_config.silero_vad.model = self.vad_model_path
+                vad_config.silero_vad.threshold = self.vad_threshold
+                vad_config.silero_vad.min_silence_duration = self.vad_min_silence_duration
+                vad_config.silero_vad.min_speech_duration = self.vad_min_speech_duration
+                vad_config.silero_vad.max_speech_duration = self.vad_max_speech_duration
+                vad_config.sample_rate = 16000
+                vad_config.num_threads = 4
+                self.vad = sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=30)
 
-            self.vad = sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=30)
-            logger.info("VadOfflineEngine initialized (VAD + OfflineRecognizer)")
+            logger.info(f"VadOfflineEngine initialized (VAD + OfflineRecognizer, language={lang or 'auto'})")
         except Exception as e:
             logger.error(f"Failed to initialize VadOfflineEngine: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize VadOfflineEngine: {e}")
 
-    async def transcribe(self, audio_path: str, language: str = "ja") -> List[Segment]:
+    async def transcribe(self, audio_path: str, language: str = None) -> List[Segment]:
+        """
+        转录音频。
+
+        Args:
+            audio_path: 音频文件路径
+            language: 可选，指定语言代码（如 "ja", "zh", "en"）。
+                     Whisper 模型支持运行时指定语言，其他模型忽略此参数。
+        """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+        # Whisper 模型支持运行时指定语言
+        effective_lang = language if language else self.default_language
+        if effective_lang and self.model_type == "whisper":
+            if effective_lang != self.default_language:
+                logger.info(f"Re-initializing VAD+Whisper recognizer with language: {effective_lang}")
+                self._initialize(effective_lang)
+                self.default_language = effective_lang
+
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
 
@@ -460,10 +515,18 @@ class CloudASREngine(ASREngine):
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
 
-    async def transcribe(self, audio_path: str, language: str = "ja") -> List[Segment]:
+    async def transcribe(self, audio_path: str, language: str = None) -> List[Segment]:
+        """
+        转录音频。
+
+        Args:
+            audio_path: 音频文件路径
+            language: 语言代码（如 "ja", "zh", "en"），传给云端 API
+        """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        effective_lang = language if language else "ja"
         try:
             import httpx
 
@@ -475,7 +538,7 @@ class CloudASREngine(ASREngine):
                 "Content-Type": "application/octet-stream",
             }
             params = {
-                "language": language,
+                "language": effective_lang,
                 "format": "wav",
                 "sample_rate": 16000,
                 "channels": 1,

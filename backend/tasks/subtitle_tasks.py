@@ -69,16 +69,28 @@ def _resolve_vad_model_path(config) -> str:
     return full_path
 
 
-def _get_asr_engine(config) -> ASREngine:
+def _get_asr_engine(config, source_language: str = None) -> ASREngine:
     """
     根据配置创建 ASR 引擎实例。
 
     优先使用 asr_model_id（从模型注册表查找），否则回退到 asr_model_path。
+    
+    Args:
+        config: 系统配置对象
+        source_language: 可选，指定语音识别语言，覆盖 config.source_language
     """
     logger.info(f"=== Creating ASR Engine ===")
     logger.info(f"ASR Engine type: {config.asr_engine}")
     logger.info(f"ASR Model ID: {config.asr_model_id}")
     logger.info(f"ASR Model Path: {config.asr_model_path}")
+    
+    # 优先级：source_language 参数 > config.source_language
+    if source_language:
+        source_lang = source_language
+        logger.info(f"Using task-specified language: {source_lang}")
+    else:
+        source_lang = config.source_language
+        logger.info(f"Using config default language: {source_lang}")
     
     if config.asr_engine == "cloud":
         if not config.cloud_asr_url or not config.cloud_asr_api_key:
@@ -105,8 +117,6 @@ def _get_asr_engine(config) -> ASREngine:
             file_map = meta.get("files", {})
             logger.info(f"Model type: {model_type}")
             logger.info(f"File map: {file_map}")
-
-            source_lang = config.source_language
 
             if meta.get("type") == "online":
                 logger.info("Creating SherpaOnnxOnlineEngine")
@@ -289,6 +299,7 @@ def generate_subtitle_task(
     openai_model: str = None,
     library_id: str = None,
     path_mapping_index: int = None,
+    source_language: str = None,
 ):
     """
     字幕生成主任务
@@ -318,8 +329,10 @@ def generate_subtitle_task(
         if openai_model:
             config.openai_model = openai_model
 
-        source_lang = config.source_language
+        # 语言参数：任务指定 > 全局配置
+        source_lang = source_language if source_language else config.source_language
         target_lang = config.target_language
+        logger.info(f"[{task_id}] 使用语音识别语言: {source_lang} (任务指定: {source_language}, 全局: {config.source_language})")
 
         loop.run_until_complete(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
         logger.info(f"开始处理任务 {task_id}: {video_path}")
@@ -349,13 +362,14 @@ def generate_subtitle_task(
         logger.info(f"[{task_id}] 步骤 2/5: 语音识别")
         logger.info(f"[{task_id}] 创建 ASR 引擎...")
         try:
-            asr_engine_instance = _get_asr_engine(config)
+            asr_engine_instance = _get_asr_engine(config, source_language=source_lang)
             logger.info(f"[{task_id}] ASR 引擎创建成功: {type(asr_engine_instance).__name__}")
         except Exception as e:
             logger.error(f"[{task_id}] ASR 引擎创建失败: {e}", exc_info=True)
             raise
         
         logger.info(f"[{task_id}] 开始转录音频: {audio_path}")
+        # Whisper 模型支持 transcribe 时指定语言，其他模型忽略
         segments = loop.run_until_complete(
             asr_engine_instance.transcribe(audio_path, language=source_lang)
         )

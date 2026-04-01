@@ -9,14 +9,20 @@ import {
   Tag,
   Image,
   Alert,
+  Typography,
+  Tooltip,
 } from 'antd';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   PlayCircleOutlined,
+  GlobalOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 import { api } from '../services/api';
 import type { MediaItem, TaskConfig, SystemConfig } from '../types/api';
+
+const { Text } = Typography;
 
 const { Option } = Select;
 
@@ -34,6 +40,7 @@ interface EpisodeConfig extends MediaItem {
   asr_engine?: 'sherpa-onnx' | 'cloud';
   translation_service?: 'openai' | 'deepseek' | 'local';
   openai_model?: string;
+  path_mapping_index?: number;
 }
 
 /**
@@ -56,6 +63,8 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const [globalConfig, setGlobalConfig] = useState<SystemConfig | null>(null);
+  const [sharedPathMappingIndex, setSharedPathMappingIndex] = useState<number | undefined>(undefined);
+  const [sharedSourceLanguage, setSharedSourceLanguage] = useState<string | undefined>(undefined);
 
   // 加载剧集集数
   const fetchEpisodes = async () => {
@@ -115,6 +124,8 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
         asr_engine: episode?.asr_engine,
         translation_service: episode?.translation_service,
         openai_model: episode?.openai_model,
+        path_mapping_index: sharedPathMappingIndex,
+        source_language: sharedSourceLanguage,
       };
     });
 
@@ -272,8 +283,81 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
         <Space>
           <span>当前全局配置：</span>
           <Tag>ASR: {globalConfig?.asr_engine || '未配置'}</Tag>
+          <Tag>识别语言: {globalConfig?.source_language || 'ja'}</Tag>
           <Tag>翻译: {globalConfig?.translation_service || '未配置'}</Tag>
           {globalConfig?.openai_model && <Tag>模型: {globalConfig.openai_model}</Tag>}
+          <Tag>
+            路径映射: {globalConfig?.path_mappings?.length || 0} 条
+            {globalConfig?.path_mappings && globalConfig.path_mappings.length > 0 && (
+              <Tooltip title={
+                <div>
+                  {globalConfig.path_mappings.map((m, i) => (
+                    <div key={i}>{m.name || `规则${i + 1}`}: {m.emby_prefix} → {m.local_prefix}</div>
+                  ))}
+                </div>
+              }>
+                <InfoCircleOutlined style={{ marginLeft: 4 }} />
+              </Tooltip>
+            )}
+          </Tag>
+        </Space>
+      </div>
+
+      <div style={{ marginBottom: 16, padding: '12px 16px', background: 'var(--info-bg)', borderRadius: 8 }}>
+        <Space size="large" wrap>
+          <div>
+            <Text strong>批量识别语言：</Text>
+            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+              Whisper 模型生效，Online/Transducer 模型忽略
+            </Text>
+          </div>
+          <Select
+            style={{ minWidth: 200 }}
+            placeholder={`使用全局配置 (${globalConfig?.source_language || 'ja'})`}
+            value={sharedSourceLanguage}
+            onChange={setSharedSourceLanguage}
+            allowClear
+          >
+            <Option value="ja">日语 (ja)</Option>
+            <Option value="zh">中文 (zh)</Option>
+            <Option value="en">英语 (en)</Option>
+            <Option value="ko">韩语 (ko)</Option>
+            <Option value="fr">法语 (fr)</Option>
+            <Option value="de">德语 (de)</Option>
+            <Option value="es">西班牙语 (es)</Option>
+            <Option value="ru">俄语 (ru)</Option>
+          </Select>
+        </Space>
+      </div>
+
+      <div style={{ marginBottom: 16, padding: '12px 16px', background: 'var(--info-bg)', borderRadius: 8 }}>
+        <Space size="large" wrap>
+          <div>
+            <Text strong>批量路径映射规则：</Text>
+            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+              所有选中集将使用相同规则
+            </Text>
+          </div>
+          <Select
+            style={{ minWidth: 300 }}
+            placeholder="使用媒体库默认规则"
+            value={sharedPathMappingIndex}
+            onChange={setSharedPathMappingIndex}
+            allowClear
+            disabled={!globalConfig?.path_mappings || globalConfig.path_mappings.length === 0}
+          >
+            {globalConfig?.path_mappings?.map((mapping, idx) => (
+              <Option key={idx} value={idx}>
+                <Space>
+                  <GlobalOutlined />
+                  <Text strong>{mapping.name || `规则 ${idx + 1}`}</Text>
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    {mapping.emby_prefix} → {mapping.local_prefix}
+                  </Text>
+                </Space>
+              </Option>
+            ))}
+          </Select>
         </Space>
       </div>
       <Table

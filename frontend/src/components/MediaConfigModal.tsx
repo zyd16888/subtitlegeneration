@@ -9,14 +9,20 @@ import {
   Image,
   Divider,
   Alert,
+  Typography,
+  Tooltip,
 } from 'antd';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   PlayCircleOutlined,
+  GlobalOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 import { api } from '../services/api';
 import type { MediaItem, TaskConfig, SystemConfig } from '../types/api';
+
+const { Text } = Typography;
 
 const { Option } = Select;
 
@@ -78,6 +84,8 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
         asr_engine: values.asr_engine,
         translation_service: values.translation_service,
         openai_model: values.openai_model,
+        path_mapping_index: values.path_mapping_index,
+        source_language: values.source_language,
       };
 
       onGenerateSubtitle(task);
@@ -174,8 +182,23 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
         <div style={{ marginBottom: 8, fontWeight: 'bold' }}>当前全局配置：</div>
         <Space wrap>
           <Tag>ASR: {globalConfig?.asr_engine || '未配置'}</Tag>
+          <Tag>识别语言: {globalConfig?.source_language || 'ja'}</Tag>
           <Tag>翻译: {globalConfig?.translation_service || '未配置'}</Tag>
           {globalConfig?.openai_model && <Tag>模型: {globalConfig.openai_model}</Tag>}
+          <Tag>
+            路径映射: {globalConfig?.path_mappings?.length || 0} 条
+            {globalConfig?.path_mappings && globalConfig.path_mappings.length > 0 && (
+              <Tooltip title={
+                <div>
+                  {globalConfig.path_mappings.map((m, i) => (
+                    <div key={i}>{m.name || `规则${i + 1}`}: {m.emby_prefix} → {m.local_prefix}</div>
+                  ))}
+                </div>
+              }>
+                <InfoCircleOutlined style={{ marginLeft: 4 }} />
+              </Tooltip>
+            )}
+          </Tag>
         </Space>
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
           留空则使用全局配置
@@ -195,6 +218,23 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
           <Select placeholder="使用全局配置" allowClear>
             <Option value="sherpa-onnx">Sherpa-ONNX (本地)</Option>
             <Option value="cloud">云端 ASR</Option>
+          </Select>
+        </Form.Item>
+
+        <Form.Item
+          label="识别语言"
+          name="source_language"
+          tooltip="音频的语言，Whisper 模型支持运行时切换；Online/Transducer 模型为固定语言，此设置不生效。留空使用全局配置"
+        >
+          <Select placeholder={`使用全局配置 (${globalConfig?.source_language || 'ja'})`} allowClear>
+            <Option value="ja">日语 (ja)</Option>
+            <Option value="zh">中文 (zh)</Option>
+            <Option value="en">英语 (en)</Option>
+            <Option value="ko">韩语 (ko)</Option>
+            <Option value="fr">法语 (fr)</Option>
+            <Option value="de">德语 (de)</Option>
+            <Option value="es">西班牙语 (es)</Option>
+            <Option value="ru">俄语 (ru)</Option>
           </Select>
         </Form.Item>
 
@@ -220,6 +260,32 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
             <Option value="gpt-3.5-turbo">GPT-3.5 Turbo</Option>
             <Option value="deepseek-chat">DeepSeek Chat</Option>
           </Select>
+        </Form.Item>
+
+        <Form.Item
+          label="路径映射规则"
+          name="path_mapping_index"
+          tooltip="字幕文件将复制到映射后的本地目录，留空使用媒体库默认规则"
+        >
+          {globalConfig?.path_mappings && globalConfig.path_mappings.length > 0 ? (
+            <Select placeholder="使用媒体库默认规则" allowClear>
+              {globalConfig.path_mappings.map((mapping, idx) => (
+                <Option key={idx} value={idx}>
+                  <Space>
+                    <GlobalOutlined />
+                    <Text strong>{mapping.name || `规则 ${idx + 1}`}</Text>
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      {mapping.emby_prefix} → {mapping.local_prefix}
+                    </Text>
+                  </Space>
+                </Option>
+              ))}
+            </Select>
+          ) : (
+            <Select placeholder="未配置路径映射" disabled>
+              <Option value={undefined}>未配置路径映射</Option>
+            </Select>
+          )}
         </Form.Item>
       </Form>
     </Modal>

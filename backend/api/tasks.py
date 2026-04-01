@@ -24,6 +24,7 @@ class TaskConfigRequest(BaseModel):
     translation_service: Optional[str] = None
     openai_model: Optional[str] = None
     path_mapping_index: Optional[int] = None  # 指定路径映射规则索引
+    source_language: Optional[str] = None  # 语音识别语言，覆盖全局配置
 
 
 class CreateTaskRequest(BaseModel):
@@ -134,6 +135,7 @@ async def create_tasks(
                         media_item_id=media_item_id,
                         video_path=audio_url,
                         library_id=request.library_id,
+                        source_language=None,  # 使用全局配置的语言
                     )
 
                     created_tasks.append(TaskResponse.model_validate(task))
@@ -175,6 +177,7 @@ async def create_tasks(
                         openai_model=task_config.openai_model,
                         library_id=request.library_id,
                         path_mapping_index=task_config.path_mapping_index,
+                        source_language=task_config.source_language,  # 语音识别语言
                     )
                     
                     created_tasks.append(TaskResponse.model_validate(task))

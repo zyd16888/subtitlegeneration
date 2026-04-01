@@ -90,6 +90,7 @@ export interface TaskConfig {
   translation_service?: 'openai' | 'deepseek' | 'local';
   openai_model?: string;
   path_mapping_index?: number;
+  source_language?: string; // 语音识别语言，覆盖全局配置
 }
 
 /**
