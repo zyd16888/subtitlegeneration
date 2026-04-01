@@ -74,9 +74,12 @@ _INCOMPATIBLE_KEYWORDS = [
 
 # 非 ASR 资产关键词
 _NON_ASR_KEYWORDS = [
-    "native-lib", "speaker", "tts", "punctuation", "keyword", "vad",
+    "native-lib", "speaker", "tts", "punctuation", "keyword",
     "kws-", "audio-tagging", "fire-red-asr",
 ]
+
+# VAD 模型关键词
+_VAD_KEYWORDS = ["vad"]
 
 
 # ── 下载状态 ────────────────────────────────────────────────────────────────
@@ -180,29 +183,43 @@ class ModelRegistry:
             if kw in name_lower:
                 return None
 
-        # 排除不兼容模型
+        # 去掉前缀 "sherpa-onnx-" 和后缀 ".tar.bz2"
+        stem = name[len("sherpa-onnx-"):-len(".tar.bz2")]
+        archive_dir = name[:-len(".tar.bz2")]
+        size_bytes = asset.get("size", 0)
+        size_str = self._format_size(size_bytes)
+        model_id = self._make_model_id(stem)
+
+        # VAD 模型单独处理
+        is_vad = any(kw in name_lower for kw in _VAD_KEYWORDS)
+        if is_vad:
+            return {
+                "id": model_id,
+                "name": self._make_display_name(stem, "vad", []),
+                "type": "vad",
+                "model_type": "silero_vad",
+                "category": "vad",
+                "languages": [],
+                "size": size_str,
+                "url": asset.get("browser_download_url", ""),
+                "archive_dir": archive_dir,
+                "download_count": asset.get("download_count", 0),
+            }
+
+        # 排除不兼容 ASR 模型
         for kw in _INCOMPATIBLE_KEYWORDS:
             if kw in name_lower:
                 return None
 
-        # 去掉前缀 "sherpa-onnx-" 和后缀 ".tar.bz2"
-        stem = name[len("sherpa-onnx-"):-len(".tar.bz2")]
-        # archive_dir 就是去掉 .tar.bz2 的完整文件名
-        archive_dir = name[:-len(".tar.bz2")]
-
         engine_type, model_type = self._infer_engine_and_model_type(stem)
         languages = self._infer_languages(stem, model_type)
-        size_bytes = asset.get("size", 0)
-        size_str = self._format_size(size_bytes)
-
-        # 生成 model_id: 去掉日期后缀来得到简洁 ID
-        model_id = self._make_model_id(stem)
 
         return {
             "id": model_id,
             "name": self._make_display_name(stem, model_type, languages),
             "type": engine_type,
             "model_type": model_type,
+            "category": "asr",
             "languages": languages,
             "size": size_str,
             "url": asset.get("browser_download_url", ""),
@@ -319,10 +336,12 @@ class ModelManager:
     # ── 查询 ──
 
     def list_models(self, active_model_id: Optional[str] = None) -> List[dict]:
-        """返回所有注册模型及其安装状态"""
+        """返回所有 ASR 模型及其安装状态（排除 VAD 模型）"""
         registry_models = self.registry.get_models()
         result = []
         for model_id, meta in registry_models.items():
+            if meta.get("category") == "vad":
+                continue
             installed = self._is_installed(model_id)
             result.append({
                 "id": model_id,
@@ -335,7 +354,28 @@ class ModelManager:
                 "active": model_id == active_model_id,
                 "download_count": meta.get("download_count", 0),
             })
-        # 排序：已安装优先，然后按下载量降序
+        result.sort(key=lambda m: (not m["installed"], -m.get("download_count", 0)))
+        return result
+
+    def list_vad_models(self, active_vad_model_id: Optional[str] = None) -> List[dict]:
+        """返回所有 VAD 模型及其安装状态"""
+        registry_models = self.registry.get_models()
+        result = []
+        for model_id, meta in registry_models.items():
+            if meta.get("category") != "vad":
+                continue
+            installed = self._is_installed_vad(model_id)
+            result.append({
+                "id": model_id,
+                "name": meta.get("name", model_id),
+                "type": "vad",
+                "model_type": meta.get("model_type", "silero_vad"),
+                "languages": [],
+                "size": meta.get("size", "unknown"),
+                "installed": installed,
+                "active": model_id == active_vad_model_id,
+                "download_count": meta.get("download_count", 0),
+            })
         result.sort(key=lambda m: (not m["installed"], -m.get("download_count", 0)))
         return result
 
@@ -391,6 +431,34 @@ class ModelManager:
             return bool(files)
         except (json.JSONDecodeError, OSError):
             return False
+
+    def _is_installed_vad(self, model_id: str) -> bool:
+        """检查 VAD 模型是否已安装"""
+        model_dir = self.models_dir / model_id
+        if not model_dir.exists():
+            return False
+        meta_path = model_dir / self.MODEL_META_FILE
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                model_file = meta.get("files", {}).get("model", "")
+                return bool(model_file and (model_dir / model_file).exists())
+            except (json.JSONDecodeError, OSError):
+                return False
+        # 没有 meta，检查是否有 .onnx 文件
+        vad_files = self._auto_detect_vad_files(model_dir)
+        return bool(vad_files)
+
+    @staticmethod
+    def _auto_detect_vad_files(model_dir: Path) -> Dict[str, str]:
+        """检测 VAD 模型目录中的 .onnx 文件"""
+        onnx_files = list(model_dir.glob("*.onnx"))
+        for f in onnx_files:
+            if "vad" in f.name.lower():
+                return {"model": f.name}
+        if len(onnx_files) == 1:
+            return {"model": onnx_files[0].name}
+        return {}
 
     def _try_generate_meta(self, model_id: str) -> bool:
         """为旧版安装的模型自动生成 model_meta.json"""
@@ -598,7 +666,7 @@ class ModelManager:
                 tar.extractall(path=extract_tmp)
 
             # 找到包含模型文件的目录
-            source_dir = self._find_model_dir(extract_tmp)
+            source_dir = self._find_model_dir(extract_tmp, is_vad=meta.get("category") == "vad")
 
             if source_dir is None:
                 contents = list(extract_tmp.rglob("*"))[:30]
@@ -613,13 +681,20 @@ class ModelManager:
             shutil.move(str(source_dir), str(target_dir))
 
             # 自动检测文件并写入 meta
-            file_map = self._auto_detect_files(target_dir)
-            if not file_map:
-                raise RuntimeError("模型文件自动检测失败：缺少必要的 encoder/decoder/tokens 文件")
+            is_vad = meta.get("category") == "vad"
+            if is_vad:
+                file_map = self._auto_detect_vad_files(target_dir)
+                if not file_map:
+                    raise RuntimeError("VAD 模型文件检测失败：找不到 .onnx 文件")
+            else:
+                file_map = self._auto_detect_files(target_dir)
+                if not file_map:
+                    raise RuntimeError("模型文件自动检测失败：缺少必要的 encoder/decoder/tokens 文件")
 
             model_meta = {
                 "type": meta.get("type", "offline"),
                 "model_type": meta.get("model_type", "transducer"),
+                "category": meta.get("category", "asr"),
                 "languages": meta.get("languages", []),
                 "files": file_map,
                 "name": meta.get("name", model_id),
@@ -644,10 +719,12 @@ class ModelManager:
             if extract_tmp.exists():
                 shutil.rmtree(extract_tmp, ignore_errors=True)
 
-    def _find_model_dir(self, extract_root: Path) -> Optional[Path]:
-        """在解压目录中搜索包含模型文件（encoder+decoder+tokens）的目录"""
+    def _find_model_dir(self, extract_root: Path, is_vad: bool = False) -> Optional[Path]:
+        """在解压目录中搜索包含模型文件的目录"""
 
         def has_model_files(d: Path) -> bool:
+            if is_vad:
+                return bool(self._auto_detect_vad_files(d))
             return bool(self._auto_detect_files(d))
 
         # 策略1: 直接在解压根目录

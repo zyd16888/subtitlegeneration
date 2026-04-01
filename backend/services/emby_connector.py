@@ -261,13 +261,26 @@ class EmbyConnector:
             MediaItem: 媒体项对象
         """
         try:
-            url = f"{self.base_url}/Users/{await self._get_user_id()}/Items/{item_id}"
+            user_id = await self._get_user_id()
+            url = f"{self.base_url}/Users/{user_id}/Items/{item_id}"
+            
+            logger.info(f"正在获取媒体项详情 (ID: {item_id})")
+            
             response = await self.client.get(url, headers=self._get_headers())
             response.raise_for_status()
             
             data = response.json()
             return MediaItem.from_emby_response(data, self.base_url, self.api_key)
             
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.error(f"媒体项不存在 (ID: {item_id})")
+                raise ValueError(f"媒体项 {item_id} 不存在或已被删除")
+            else:
+                logger.error(f"获取媒体项详情失败 (ID: {item_id}, HTTP {e.response.status_code}): {e}")
+                raise Exception(f"Emby API 错误 (HTTP {e.response.status_code}): {e.response.text}")
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"获取媒体项详情失败 (ID: {item_id}): {e}")
             raise
@@ -289,6 +302,8 @@ class EmbyConnector:
                 "UserId": await self._get_user_id()
             }
             
+            logger.info(f"正在获取剧集集数 (Series ID: {series_id})")
+            
             response = await self.client.get(
                 url,
                 headers=self._get_headers(),
@@ -301,7 +316,13 @@ class EmbyConnector:
                 MediaItem.from_emby_response(item, self.base_url, self.api_key) 
                 for item in data.get("Items", [])
             ]
-            logger.info(f"获取到剧集 {series_id} 的 {len(episodes)} 集")
+            
+            if episodes:
+                logger.info(f"获取到剧集 {series_id} 的 {len(episodes)} 集")
+                logger.debug(f"第一集信息: ID={episodes[0].id}, Name={episodes[0].name}, Type={episodes[0].type}")
+            else:
+                logger.warning(f"剧集 {series_id} 没有找到任何集")
+            
             return episodes
             
         except httpx.HTTPStatusError as e:
@@ -323,8 +344,12 @@ class EmbyConnector:
             str: 媒体文件的物理路径
         """
         try:
-            url = f"{self.base_url}/Items/{item_id}"
+            # 先尝试使用带 User ID 的端点
+            user_id = await self._get_user_id()
+            url = f"{self.base_url}/Users/{user_id}/Items/{item_id}"
             params = {"Fields": "Path"}
+            
+            logger.info(f"正在获取媒体文件路径 (ID: {item_id})")
             
             response = await self.client.get(
                 url,
@@ -342,8 +367,81 @@ class EmbyConnector:
             logger.info(f"获取到媒体文件路径: {path}")
             return path
             
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.error(f"媒体项不存在 (ID: {item_id})")
+                raise ValueError(f"媒体项 {item_id} 不存在或已被删除")
+            else:
+                logger.error(f"获取媒体文件路径失败 (ID: {item_id}, HTTP {e.response.status_code}): {e}")
+                raise Exception(f"Emby API 错误 (HTTP {e.response.status_code}): {e.response.text}")
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"获取媒体文件路径失败 (ID: {item_id}): {e}")
+            raise
+    
+    async def get_audio_stream_url(self, item_id: str) -> str:
+        """
+        获取媒体项的视频流 URL（用于 FFmpeg 提取音频）
+        
+        用于远程 Emby 服务器，获取视频的直接流 URL
+        然后由 FFmpeg 从视频流中提取音频
+        
+        Args:
+            item_id: 媒体项 ID
+        
+        Returns:
+            str: 视频流的完整 URL（FFmpeg 将从中提取音频）
+        """
+        try:
+            user_id = await self._get_user_id()
+            logger.info(f"构建视频流 URL (ID: {item_id})")
+            
+            # 第一步：调用 PlaybackInfo API 获取 MediaSourceId
+            playback_info_url = f"{self.base_url}/Items/{item_id}/PlaybackInfo"
+            params = {"UserId": user_id}
+            
+            logger.debug(f"获取 PlaybackInfo: {playback_info_url}")
+            response = await self.client.get(
+                playback_info_url,
+                headers=self._get_headers(),
+                params=params
+            )
+            response.raise_for_status()
+            
+            playback_info = response.json()
+            media_sources = playback_info.get("MediaSources", [])
+            
+            if not media_sources:
+                raise ValueError(f"媒体项 {item_id} 没有可用的媒体源")
+            
+            # 使用第一个媒体源
+            media_source = media_sources[0]
+            media_source_id = media_source.get("Id")
+            
+            if not media_source_id:
+                raise ValueError(f"无法获取媒体项 {item_id} 的 MediaSourceId")
+            
+            logger.debug(f"MediaSourceId: {media_source_id}")
+            
+            # 第二步：构建直接流 URL
+            # 使用 Static=true 进行直接流传输，不转码
+            # FFmpeg 会从这个视频流中提取音频
+            stream_url = (
+                f"{self.base_url}/Videos/{item_id}/stream?"
+                f"api_key={self.api_key}&"
+                f"MediaSourceId={media_source_id}&"
+                f"Static=true"  # 直接流，不转码
+            )
+            
+            logger.info(f"视频流 URL (用于 FFmpeg 提取音频): {stream_url}")
+            return stream_url
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"获取 PlaybackInfo 失败 (ID: {item_id}, HTTP {e.response.status_code}): {e}")
+            raise Exception(f"Emby API 错误 (HTTP {e.response.status_code}): {e.response.text}")
+        except Exception as e:
+            logger.error(f"构建视频流 URL 失败 (ID: {item_id}): {e}")
             raise
     
     async def refresh_metadata(self, item_id: str) -> bool:

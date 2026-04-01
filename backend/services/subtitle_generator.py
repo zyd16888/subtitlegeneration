@@ -42,32 +42,51 @@ class SubtitleGenerator:
         segments: List[SubtitleSegment],
         video_path: str,
         target_language: str = "zh",
+        output_dir: str = None,
     ) -> str:
         """
         Generate SRT format subtitle file.
 
         Args:
             segments: List of SubtitleSegment objects containing text and timestamps
-            video_path: Path to the video file (used to determine output location)
+            video_path: Path to the video file or URL (used to determine filename)
             target_language: Target language code for the subtitle filename
+            output_dir: Output directory (required when video_path is a URL)
 
         Returns:
             Path to the generated subtitle file
 
         Raises:
-            ValueError: If segments list is empty or video_path is invalid
+            ValueError: If segments list is empty
             IOError: If unable to write subtitle file
         """
         if not segments:
             raise ValueError("Segments list cannot be empty")
 
-        if not video_path or not os.path.exists(video_path):
-            raise ValueError(f"Invalid video path: {video_path}")
+        if not video_path:
+            raise ValueError("video_path cannot be empty")
 
-        # Generate output path: {video_filename}.{lang}.srt
-        video_dir = os.path.dirname(video_path)
-        video_filename = os.path.splitext(os.path.basename(video_path))[0]
-        output_path = os.path.join(video_dir, f"{video_filename}.{target_language}.srt")
+        # 从 video_path 提取文件名（支持本地路径和 URL）
+        is_url = video_path.startswith(('http://', 'https://'))
+        if is_url:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(video_path)
+            # 尝试从 URL 路径提取有意义的名称
+            path_parts = parsed.path.strip('/').split('/')
+            video_filename = '_'.join(path_parts) if path_parts else 'subtitle'
+        else:
+            video_filename = os.path.splitext(os.path.basename(video_path))[0]
+
+        # 确定输出目录
+        if output_dir:
+            save_dir = output_dir
+        elif not is_url:
+            save_dir = os.path.dirname(video_path)
+        else:
+            save_dir = '.'
+
+        os.makedirs(save_dir, exist_ok=True)
+        output_path = os.path.join(save_dir, f"{video_filename}.{target_language}.srt")
         
         # Generate SRT content
         srt_content = self._generate_srt_content(segments)

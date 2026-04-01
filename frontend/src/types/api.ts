@@ -125,6 +125,14 @@ export interface SystemConfig {
   deepl_api_key?: string;
   deeplx_url?: string;
 
+  // VAD 配置
+  enable_vad?: boolean;
+  vad_model_id?: string;
+  vad_threshold?: number;
+  vad_min_silence_duration?: number;
+  vad_min_speech_duration?: number;
+  vad_max_speech_duration?: number;
+
   // 任务配置
   max_concurrent_tasks: number;
   temp_dir: string;

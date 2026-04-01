@@ -44,9 +44,17 @@ class SystemConfigData(BaseModel):
     deepl_api_key: Optional[str] = None
     deeplx_url: Optional[str] = None
     
+    # VAD 配置
+    enable_vad: bool = False
+    vad_model_id: Optional[str] = None
+    vad_threshold: float = 0.5
+    vad_min_silence_duration: float = 0.5
+    vad_min_speech_duration: float = 0.25
+    vad_max_speech_duration: float = 20.0
+
     # 任务配置
     max_concurrent_tasks: int = 2
-    temp_dir: str = "/tmp/subtitle_service"
+    temp_dir: str = "./data"
     
     @field_validator('emby_url', 'cloud_asr_url', 'local_llm_url', 'deeplx_url')
     @classmethod

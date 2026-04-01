@@ -105,10 +105,17 @@ async def create_tasks(
                     # 获取媒体项信息
                     try:
                         media_item = await emby.get_media_item(media_item_id)
-                        video_path = await emby.get_media_file_path(media_item_id)
-                    except Exception as e:
+                        # 使用音频流 URL 而不是物理路径（支持远程 Emby）
+                        audio_url = await emby.get_audio_stream_url(media_item_id)
+                    except ValueError as e:
+                        # 媒体项不存在或没有路径
                         raise HTTPException(
                             status_code=404,
+                            detail=str(e)
+                        )
+                    except Exception as e:
+                        raise HTTPException(
+                            status_code=500,
                             detail=f"获取媒体项 {media_item_id} 失败: {str(e)}"
                         )
                     
@@ -116,14 +123,14 @@ async def create_tasks(
                     task = await task_manager.create_task(
                         media_item_id=media_item_id,
                         media_item_title=media_item.name,
-                        video_path=video_path
+                        video_path=audio_url  # 存储音频流 URL
                     )
                     
                     # 提交 Celery 任务（使用全局配置）
                     generate_subtitle_task.delay(
                         task_id=task.id,
                         media_item_id=media_item_id,
-                        video_path=video_path
+                        video_path=audio_url
                     )
                     
                     created_tasks.append(TaskResponse.model_validate(task))
@@ -134,10 +141,17 @@ async def create_tasks(
                     # 获取媒体项信息
                     try:
                         media_item = await emby.get_media_item(task_config.media_item_id)
-                        video_path = await emby.get_media_file_path(task_config.media_item_id)
-                    except Exception as e:
+                        # 使用音频流 URL 而不是物理路径（支持远程 Emby）
+                        audio_url = await emby.get_audio_stream_url(task_config.media_item_id)
+                    except ValueError as e:
+                        # 媒体项不存在或没有路径
                         raise HTTPException(
                             status_code=404,
+                            detail=str(e)
+                        )
+                    except Exception as e:
+                        raise HTTPException(
+                            status_code=500,
                             detail=f"获取媒体项 {task_config.media_item_id} 失败: {str(e)}"
                         )
                     
@@ -145,14 +159,14 @@ async def create_tasks(
                     task = await task_manager.create_task(
                         media_item_id=task_config.media_item_id,
                         media_item_title=media_item.name,
-                        video_path=video_path
+                        video_path=audio_url  # 存储音频流 URL
                     )
                     
                     # 提交 Celery 任务（使用自定义配置）
                     generate_subtitle_task.delay(
                         task_id=task.id,
                         media_item_id=task_config.media_item_id,
-                        video_path=video_path,
+                        video_path=audio_url,
                         asr_engine=task_config.asr_engine,
                         translation_service=task_config.translation_service,
                         openai_model=task_config.openai_model

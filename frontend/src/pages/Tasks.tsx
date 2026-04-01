@@ -138,7 +138,12 @@ const Tasks: React.FC = () => {
     return stages.map((stage) => {
       let status: 'wait' | 'process' | 'finish' | 'error' = 'wait';
       if (task.status === 'failed' || task.status === 'cancelled') {
-        status = task.progress >= stage.range[0] ? 'error' : 'wait';
+        if (task.progress >= stage.range[1]) {
+          status = 'finish';  // 已完成的阶段保持绿色
+        } else if (task.progress >= stage.range[0]) {
+          status = 'error';   // 正在进行中的阶段标红（失败发生在此阶段）
+        }
+        // 其余保持 'wait'
       } else if (task.status === 'completed') {
         status = 'finish';
       } else if (task.progress >= stage.range[1]) {

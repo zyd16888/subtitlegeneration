@@ -168,34 +168,58 @@ class TestEmbyConnector:
     @pytest.mark.asyncio
     async def test_get_media_file_path_success(self, emby_connector, mock_httpx_client):
         """测试获取媒体文件路径成功"""
-        # Mock 响应
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "Id": "item1",
-            "Path": "/path/to/video.mp4"
-        }
-        mock_httpx_client.get.return_value = mock_response
-        
-        emby_connector.client = mock_httpx_client
-        
-        path = await emby_connector.get_media_file_path("item1")
-        
-        assert path == "/path/to/video.mp4"
+        # Mock _get_user_id
+        with patch.object(emby_connector, '_get_user_id', return_value="user123"):
+            # Mock 响应
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "Id": "item1",
+                "Path": "/path/to/video.mp4"
+            }
+            mock_httpx_client.get.return_value = mock_response
+            
+            emby_connector.client = mock_httpx_client
+            
+            path = await emby_connector.get_media_file_path("item1")
+            
+            assert path == "/path/to/video.mp4"
     
     @pytest.mark.asyncio
     async def test_get_media_file_path_no_path(self, emby_connector, mock_httpx_client):
         """测试获取媒体文件路径失败（无路径）"""
-        # Mock 响应
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"Id": "item1"}
-        mock_httpx_client.get.return_value = mock_response
-        
-        emby_connector.client = mock_httpx_client
-        
-        with pytest.raises(ValueError, match="没有物理路径"):
-            await emby_connector.get_media_file_path("item1")
+        # Mock _get_user_id
+        with patch.object(emby_connector, '_get_user_id', return_value="user123"):
+            # Mock 响应
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"Id": "item1"}
+            mock_httpx_client.get.return_value = mock_response
+            
+            emby_connector.client = mock_httpx_client
+            
+            with pytest.raises(ValueError, match="没有物理路径"):
+                await emby_connector.get_media_file_path("item1")
+    
+    @pytest.mark.asyncio
+    async def test_get_media_file_path_not_found(self, emby_connector, mock_httpx_client):
+        """测试获取媒体文件路径失败（404）"""
+        # Mock _get_user_id
+        with patch.object(emby_connector, '_get_user_id', return_value="user123"):
+            # Mock 404 响应
+            mock_response = MagicMock()
+            mock_response.status_code = 404
+            mock_response.text = "Not Found"
+            mock_httpx_client.get.side_effect = httpx.HTTPStatusError(
+                "Not Found",
+                request=MagicMock(),
+                response=mock_response
+            )
+            
+            emby_connector.client = mock_httpx_client
+            
+            with pytest.raises(ValueError, match="不存在或已被删除"):
+                await emby_connector.get_media_file_path("item1")
     
     @pytest.mark.asyncio
     async def test_refresh_metadata_success(self, emby_connector, mock_httpx_client):

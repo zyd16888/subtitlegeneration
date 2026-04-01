@@ -308,6 +308,31 @@ class ApiClient {
       const response = await this.client.get<LanguageInfo[]>('/api/models/languages');
       return response.data;
     },
+
+    /**
+     * 获取 VAD 模型列表
+     */
+    listVadModels: async (): Promise<ASRModel[]> => {
+      const response = await this.client.get<ASRModel[]>('/api/models/vad');
+      return response.data;
+    },
+
+    /**
+     * 下载 VAD 模型
+     */
+    downloadVadModel: async (modelId: string): Promise<ModelDownloadProgress> => {
+      const response = await this.client.post<ModelDownloadProgress>(
+        `/api/models/vad/${modelId}/download`
+      );
+      return response.data;
+    },
+
+    /**
+     * 激活 VAD 模型
+     */
+    activateVadModel: async (modelId: string): Promise<void> => {
+      await this.client.post(`/api/models/vad/${modelId}/activate`);
+    },
   };
 
   /**

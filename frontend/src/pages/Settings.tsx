@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Form, Input, Select, Button, message, Spin, Space, InputNumber,
+  Form, Input, Select, Button, message, Spin, Space, InputNumber, Switch, Slider, Collapse,
   Table, Tag, Popconfirm, Typography, Row, Col, Tooltip, Progress
 } from 'antd';
 import {
@@ -10,7 +10,7 @@ import {
   LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined
 } from '@ant-design/icons';
 import { api } from '../services/api';
-import type { SystemConfig, ASRModel, ModelDownloadProgress } from '../types/api';
+import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo } from '../types/api';
 
 const { Option } = Select;
 const { Text } = Typography;
@@ -30,7 +30,12 @@ const Settings: React.FC = () => {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, ModelDownloadProgress>>({});
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
+  const [vadModels, setVadModels] = useState<ASRModel[]>([]);
+  const [vadModelsLoading, setVadModelsLoading] = useState(false);
+  const [languages, setLanguages] = useState<LanguageInfo[]>([]);
+
   const translationService = Form.useWatch('translation_service', form);
+  const enableVad = Form.useWatch('enable_vad', form);
   const googleMode = Form.useWatch('google_translate_mode', form);
   const microsoftMode = Form.useWatch('microsoft_translate_mode', form);
   const deeplMode = Form.useWatch('deepl_mode', form);
@@ -56,6 +61,23 @@ const Settings: React.FC = () => {
     } catch { } finally {
       setModelsLoading(false);
     }
+  }, []);
+
+  const loadVadModels = useCallback(async () => {
+    setVadModelsLoading(true);
+    try {
+      const data = await api.models.listVadModels();
+      setVadModels(data);
+    } catch { } finally {
+      setVadModelsLoading(false);
+    }
+  }, []);
+
+  const loadLanguages = useCallback(async () => {
+    try {
+      const data = await api.models.listLanguages();
+      setLanguages(data);
+    } catch { }
   }, []);
 
   // 清理轮询定时器
@@ -110,6 +132,34 @@ const Settings: React.FC = () => {
     }
   }, [startPolling]);
 
+  const handleVadDownload = useCallback(async (modelId: string) => {
+    try {
+      const progress = await api.models.downloadVadModel(modelId);
+      setDownloadProgress(prev => ({ ...prev, [modelId]: progress }));
+      // 复用 ASR 的轮询逻辑（进度端点相同）
+      stopPolling(modelId);
+      pollTimers.current[modelId] = setInterval(async () => {
+        try {
+          const p = await api.models.getDownloadProgress(modelId);
+          setDownloadProgress(prev => ({ ...prev, [modelId]: p }));
+          if (p.status === 'completed') {
+            stopPolling(modelId);
+            message.success('VAD 模型下载完成');
+            loadVadModels();
+            setTimeout(() => {
+              setDownloadProgress(prev => { const next = { ...prev }; delete next[modelId]; return next; });
+            }, 3000);
+          } else if (p.status === 'failed') {
+            stopPolling(modelId);
+            message.error(p.error || 'VAD 模型下载失败');
+          }
+        } catch { stopPolling(modelId); }
+      }, 1000);
+    } catch (err: any) {
+      message.error(err.message || 'VAD 模型下载失败');
+    }
+  }, [stopPolling, loadVadModels]);
+
   // 过滤模型列表
   const filteredModels = React.useMemo(() => {
     let list = models;
@@ -141,7 +191,9 @@ const Settings: React.FC = () => {
   useEffect(() => {
     loadConfig();
     loadModels();
-  }, [loadModels]);
+    loadVadModels();
+    loadLanguages();
+  }, [loadModels, loadVadModels, loadLanguages]);
 
   const handleValuesChange = () => {
     setIsDirty(true);
@@ -548,7 +600,7 @@ const Settings: React.FC = () => {
               <Row gutter={24}>
                 <Col span={16}>
                   <Form.Item name="asr_model_id" label="已激活模型">
-                    <Select 
+                    <Select
                       placeholder="请先下载并激活模型"
                       disabled
                       dropdownStyle={{ background: 'var(--bg-elevated)' }}
@@ -570,6 +622,150 @@ const Settings: React.FC = () => {
                   </Form.Item>
                 </Col>
               </Row>
+
+              {/* 语言配置 */}
+              <Row gutter={24} style={{ marginTop: 16 }}>
+                <Col span={12}>
+                  <Form.Item name="source_language" label="源语言（音频语言）">
+                    <Select placeholder="选择源语言" dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                      {languages.map(lang => (
+                        <Option key={lang.code} value={lang.code}>{lang.name} ({lang.code})</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="target_language" label="目标语言（字幕语言）">
+                    <Select placeholder="选择目标语言" dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                      {languages.map(lang => (
+                        <Option key={lang.code} value={lang.code}>{lang.name} ({lang.code})</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                源语言与目标语言相同时将跳过翻译步骤，仅生成转录字幕
+              </Text>
+
+              {/* VAD 配置 */}
+              <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
+                <Row align="middle" gutter={16}>
+                  <Col flex="auto">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
+                      <InfoCircleOutlined style={{ color: 'var(--accent-amber)' }} />
+                      语音活动检测 (VAD)
+                    </div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      启用后使用 Silero VAD 检测语音段，获得更精确的字幕时间戳（仅离线模型有效）
+                    </Text>
+                  </Col>
+                  <Col>
+                    <Form.Item name="enable_vad" valuePropName="checked" style={{ margin: 0 }}>
+                      <Switch />
+                    </Form.Item>
+                  </Col>
+                </Row>
+
+                {enableVad && (
+                  <div style={{ marginTop: 12 }}>
+                    <Row gutter={24}>
+                      <Col span={16}>
+                        <Form.Item name="vad_model_id" label="VAD 模型">
+                          <Select
+                            placeholder={vadModels.filter(m => m.installed).length ? '选择 VAD 模型' : '请先下载 VAD 模型'}
+                            dropdownStyle={{ background: 'var(--bg-elevated)' }}
+                            loading={vadModelsLoading}
+                            disabled={!vadModels.some(m => m.installed)}
+                          >
+                            {vadModels.filter(m => m.installed).map(m => (
+                              <Option key={m.id} value={m.id}>
+                                {m.name} {m.active && <Tag color="success" style={{ marginLeft: 8 }}>激活</Tag>}
+                              </Option>
+                            ))}
+                          </Select>
+                        </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item label=" ">
+                          <Button onClick={loadVadModels} loading={vadModelsLoading} icon={<ReloadOutlined />} type="text" size="small">
+                            刷新
+                          </Button>
+                        </Form.Item>
+                      </Col>
+                    </Row>
+
+                    {/* VAD 模型下载列表 */}
+                    {vadModels.length > 0 && (
+                      <div style={{ marginBottom: 12 }}>
+                        {vadModels.map(m => {
+                          const progress = downloadProgress[m.id];
+                          const isDownloading = progress && (progress.status === 'downloading' || progress.status === 'extracting');
+                          return (
+                            <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--glass-border)' }}>
+                              <Space>
+                                <Text style={{ color: 'var(--text-primary)' }}>{m.name}</Text>
+                                <Tag style={{ background: 'var(--bg-tag)', border: 'none', fontSize: 10 }}>{m.size}</Tag>
+                                {m.installed && <Tag color="success" style={{ background: 'var(--accent-emerald-bg)', border: '1px solid var(--accent-emerald)', color: 'var(--accent-emerald)' }}>已安装</Tag>}
+                              </Space>
+                              <Space>
+                                {isDownloading ? (
+                                  <Space size={4}>
+                                    <LoadingOutlined spin style={{ fontSize: 12, color: 'var(--accent-cyan)' }} />
+                                    <Text style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{progress.progress}%</Text>
+                                  </Space>
+                                ) : m.installed ? (
+                                  <Button type="link" size="small" onClick={() => api.models.activateVadModel(m.id).then(() => { loadVadModels(); loadConfig(); })} style={{ padding: 0, color: 'var(--accent-cyan)' }}>
+                                    {m.active ? '已激活' : '激活'}
+                                  </Button>
+                                ) : (
+                                  <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => handleVadDownload(m.id)} style={{ padding: 0, color: 'var(--accent-emerald)' }}>
+                                    下载
+                                  </Button>
+                                )}
+                              </Space>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* VAD 高级参数 */}
+                    <Collapse ghost size="small" items={[{
+                      key: 'vad-advanced',
+                      label: <Text type="secondary" style={{ fontSize: 12 }}>VAD 高级参数</Text>,
+                      children: (
+                        <>
+                          <Row gutter={24}>
+                            <Col span={12}>
+                              <Form.Item name="vad_threshold" label="语音检测阈值">
+                                <Slider min={0.1} max={0.9} step={0.05} marks={{ 0.2: '0.2', 0.5: '0.5', 0.8: '0.8' }} />
+                              </Form.Item>
+                            </Col>
+                            <Col span={12}>
+                              <Form.Item name="vad_max_speech_duration" label="最大语音段长度 (秒)">
+                                <InputNumber min={1} max={60} step={1} style={{ width: '100%' }} />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                          <Row gutter={24}>
+                            <Col span={12}>
+                              <Form.Item name="vad_min_silence_duration" label="最小静音时长 (秒)">
+                                <InputNumber min={0.1} max={5} step={0.1} style={{ width: '100%' }} />
+                              </Form.Item>
+                            </Col>
+                            <Col span={12}>
+                              <Form.Item name="vad_min_speech_duration" label="最小语音时长 (秒)">
+                                <InputNumber min={0.05} max={5} step={0.05} style={{ width: '100%' }} />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                        </>
+                      ),
+                    }]} />
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 云端 API 配置区 */}

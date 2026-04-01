@@ -33,43 +33,57 @@ class AudioExtractor:
         output_path: Optional[str] = None
     ) -> str:
         """
-        从视频中提取音频
+        从视频中提取音频（支持本地文件和 HTTP/HTTPS URL）
         
         Args:
-            video_path: 视频文件路径
+            video_path: 视频文件路径或 HTTP/HTTPS URL
             output_path: 输出音频文件路径（可选，默认在临时目录生成）
         
         Returns:
             str: 提取的音频文件路径
         
         Raises:
-            FileNotFoundError: 视频文件不存在
+            FileNotFoundError: 本地视频文件不存在
             RuntimeError: 音频提取失败
         """
-        # 验证视频文件存在
-        if not os.path.exists(video_path):
+        logger.info(f"=== Starting audio extraction ===")
+        logger.info(f"Input video_path: {video_path}")
+        logger.info(f"Output path: {output_path}")
+        
+        # 判断是 URL 还是本地文件
+        is_url = video_path.startswith(('http://', 'https://'))
+        logger.info(f"Is URL: {is_url}")
+        
+        # 如果是本地文件，验证文件存在
+        if not is_url and not os.path.exists(video_path):
             error_msg = f"Video file not found: {video_path}"
             logger.error(error_msg)
             raise FileNotFoundError(error_msg)
         
         # 生成输出路径
         if output_path is None:
-            video_name = Path(video_path).stem
-            output_path = str(self.temp_dir / f"{video_name}_audio.wav")
+            if is_url:
+                # 从 URL 中提取文件名或使用时间戳
+                import hashlib
+                import time
+                url_hash = hashlib.md5(video_path.encode()).hexdigest()[:8]
+                output_path = str(self.temp_dir / f"audio_{url_hash}_{int(time.time())}.wav")
+            else:
+                video_name = Path(video_path).stem
+                output_path = str(self.temp_dir / f"{video_name}_audio.wav")
         
-        logger.info(f"Extracting audio from {video_path} to {output_path}")
+        logger.info(f"Extracting audio from {'URL' if is_url else 'file'}: {video_path}")
+        logger.info(f"Output path: {output_path}")
         
         try:
-            # 获取音频流信息
-            audio_info = self._get_audio_stream_info(video_path)
-            logger.debug(f"Audio stream info: {audio_info}")
-            
             # 使用 ffmpeg 提取音频并转换格式
+            # ffmpeg 原生支持 HTTP/HTTPS 输入
             # 参数说明:
             # - ar: 采样率 16kHz
             # - ac: 声道数 1 (单声道)
             # - acodec: 音频编码器 pcm_s16le (16-bit PCM)
             # - map 0:a:0: 选择第一个音频流
+            logger.info("Building ffmpeg command...")
             stream = ffmpeg.input(video_path)
             stream = ffmpeg.output(
                 stream,
@@ -81,18 +95,34 @@ class AudioExtractor:
             )
             
             # 执行 ffmpeg 命令，覆盖已存在的文件
-            ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+            logger.info(f"Running ffmpeg command: input={video_path}, output={output_path}")
+            logger.info(f"FFmpeg parameters: acodec=pcm_s16le, ar=16000, ac=1, map=0:a:0")
             
-            logger.info(f"Audio extracted successfully: {output_path}")
+            stdout, stderr = ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+            
+            logger.info(f"FFmpeg completed successfully")
+            if stderr:
+                logger.debug(f"FFmpeg stderr: {stderr.decode()[:500]}")  # 只记录前500字符
+            
+            # 验证输出文件
+            if os.path.exists(output_path):
+                file_size = os.path.getsize(output_path)
+                logger.info(f"Audio extracted successfully: {output_path} (size: {file_size} bytes)")
+            else:
+                logger.error(f"Output file not created: {output_path}")
+                raise RuntimeError(f"Output file not created: {output_path}")
+            
             return output_path
             
         except ffmpeg.Error as e:
-            error_msg = f"FFmpeg error while extracting audio: {e.stderr.decode() if e.stderr else str(e)}"
+            stderr_msg = e.stderr.decode() if e.stderr else str(e)
+            error_msg = f"FFmpeg error while extracting audio: {stderr_msg}"
             logger.error(error_msg)
+            logger.error(f"FFmpeg command failed for input: {video_path}")
             raise RuntimeError(error_msg)
         except Exception as e:
             error_msg = f"Unexpected error while extracting audio: {str(e)}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg)
     
     def _get_audio_stream_info(self, video_path: str) -> dict:

@@ -136,6 +136,49 @@ async def activate_model(model_id: str, db: Session = Depends(get_db)):
     return {"message": f"已启用模型 {model_id}", "model_path": str(model_path)}
 
 
+# ── VAD 模型端点 ──────────────────────────────────────────────────────────
+
+
+@router.get("/vad", response_model=List[ModelInfo])
+async def list_vad_models(db: Session = Depends(get_db)):
+    """列出所有可用 VAD 模型"""
+    manager = _get_model_manager()
+    config_manager = ConfigManager(db)
+    config = await config_manager.get_config()
+    models = manager.list_vad_models(active_vad_model_id=config.vad_model_id)
+    return models
+
+
+@router.post("/vad/{model_id}/download", response_model=ModelDownloadProgressResponse)
+async def download_vad_model(model_id: str):
+    """下载 VAD 模型"""
+    manager = _get_model_manager()
+    progress = manager.start_download(model_id)
+    if progress.status == DownloadStatus.FAILED:
+        raise HTTPException(status_code=400, detail=progress.error)
+    return ModelDownloadProgressResponse(
+        model_id=progress.model_id,
+        progress=progress.progress,
+        status=progress.status.value,
+        error=progress.error,
+    )
+
+
+@router.post("/vad/{model_id}/activate")
+async def activate_vad_model(model_id: str, db: Session = Depends(get_db)):
+    """激活 VAD 模型"""
+    manager = _get_model_manager()
+    if not manager._is_installed_vad(model_id):
+        raise HTTPException(status_code=400, detail="VAD 模型未安装，请先下载")
+
+    config_manager = ConfigManager(db)
+    config = await config_manager.get_config()
+    config.vad_model_id = model_id
+    config.enable_vad = True
+    await config_manager.partial_update_config(config, {"vad_model_id", "enable_vad"})
+    return {"message": f"已启用 VAD 模型 {model_id}"}
+
+
 @router.get("/storage-info")
 async def get_storage_info():
     """诊断端点：查看模型存储路径和目录内容"""

@@ -8,12 +8,39 @@ Supports:
 """
 
 import asyncio
+import logging
 import os
+import wave
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import sherpa_onnx
+
+logger = logging.getLogger(__name__)
+
+
+def _read_wave(audio_path: str) -> Tuple[List[float], int]:
+    """读取 WAV 文件，返回 (float32 samples list, sample_rate)"""
+    with wave.open(audio_path, "rb") as wf:
+        sample_rate = wf.getframerate()
+        num_channels = wf.getnchannels()
+        sample_width = wf.getsampwidth()
+        num_frames = wf.getnframes()
+        raw = wf.readframes(num_frames)
+
+    if sample_width == 2:
+        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif sample_width == 4:
+        samples = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+    else:
+        raise RuntimeError(f"Unsupported sample width: {sample_width}")
+
+    if num_channels > 1:
+        samples = samples[::num_channels]  # 取第一声道
+
+    return samples.tolist(), sample_rate
 
 
 @dataclass
@@ -68,18 +95,30 @@ class SherpaOnnxOnlineEngine(ASREngine):
 
     def _initialize_recognizer(self):
         try:
-            config = sherpa_onnx.OnlineRecognizerConfig(
-                model_config=sherpa_onnx.OnlineModelConfig(
-                    tokens=os.path.join(self.model_path, self.file_map["tokens"]),
-                    encoder=os.path.join(self.model_path, self.file_map["encoder"]),
-                    decoder=os.path.join(self.model_path, self.file_map["decoder"]),
-                    joiner=os.path.join(self.model_path, self.file_map["joiner"]),
-                ),
+            tokens_path = os.path.join(self.model_path, self.file_map["tokens"])
+            encoder_path = os.path.join(self.model_path, self.file_map["encoder"])
+            decoder_path = os.path.join(self.model_path, self.file_map["decoder"])
+            joiner_path = os.path.join(self.model_path, self.file_map["joiner"])
+
+            logger.info(f"Initializing OnlineRecognizer with model_path: {self.model_path}")
+            logger.info(f"  tokens: {tokens_path} (exists: {os.path.exists(tokens_path)})")
+            logger.info(f"  encoder: {encoder_path} (exists: {os.path.exists(encoder_path)})")
+            logger.info(f"  decoder: {decoder_path} (exists: {os.path.exists(decoder_path)})")
+            logger.info(f"  joiner: {joiner_path} (exists: {os.path.exists(joiner_path)})")
+
+            self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+                tokens=tokens_path,
+                encoder=encoder_path,
+                decoder=decoder_path,
+                joiner=joiner_path,
+                num_threads=4,
                 decoding_method="greedy_search",
                 max_active_paths=4,
+                enable_endpoint_detection=True,
             )
-            self.recognizer = sherpa_onnx.OnlineRecognizer(config)
+            logger.info("OnlineRecognizer initialized successfully")
         except Exception as e:
+            logger.error(f"Failed to initialize OnlineRecognizer: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize OnlineRecognizer: {e}")
 
     async def transcribe(self, audio_path: str, language: str = "ja") -> List[Segment]:
@@ -92,7 +131,7 @@ class SherpaOnnxOnlineEngine(ASREngine):
         return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
 
     def _transcribe_sync(self, audio_path: str) -> List[Segment]:
-        wave, sample_rate = sherpa_onnx.read_wave(audio_path)
+        wave, sample_rate = _read_wave(audio_path)
         stream = self.recognizer.create_stream()
 
         chunk_size = int(0.1 * sample_rate)
@@ -105,22 +144,23 @@ class SherpaOnnxOnlineEngine(ASREngine):
             while self.recognizer.is_ready(stream):
                 self.recognizer.decode_stream(stream)
 
-            result = self.recognizer.get_result(stream)
-            if result and result.text.strip():
+            # get_result 返回 str
+            text = self.recognizer.get_result(stream).strip()
+            if text:
                 start_time = current_time
                 end_time = current_time + len(chunk) / sample_rate
-                segments.append(Segment(start=start_time, end=end_time, text=result.text.strip()))
+                segments.append(Segment(start=start_time, end=end_time, text=text))
                 stream = self.recognizer.create_stream()
 
             current_time += len(chunk) / sample_rate
 
-        result = self.recognizer.get_result(stream)
-        if result and result.text.strip():
+        text = self.recognizer.get_result(stream).strip()
+        if text:
             segments.append(
                 Segment(
                     start=current_time - len(wave[-chunk_size:]) / sample_rate,
                     end=current_time,
-                    text=result.text.strip(),
+                    text=text,
                 )
             )
         return segments
@@ -143,18 +183,21 @@ class SherpaOnnxOfflineEngine(ASREngine):
         model_path: str,
         model_type: str = "transducer",
         file_map: Optional[Dict[str, str]] = None,
+        language: str = "",
     ):
         """
         Args:
             model_path: 模型目录
             model_type: "transducer" 或 "whisper"
             file_map:   各文件的映射
+            language:   语言代码 (如 "ja", "zh", "en")，空字符串表示自动检测
         """
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model path not found: {model_path}")
 
         self.model_path = model_path
         self.model_type = model_type
+        self.language = language
         self.file_map = file_map or self._default_file_map()
         self.recognizer: Optional[sherpa_onnx.OfflineRecognizer] = None
         self._initialize_recognizer()
@@ -179,36 +222,38 @@ class SherpaOnnxOfflineEngine(ASREngine):
             encoder_path = os.path.join(self.model_path, self.file_map["encoder"])
             decoder_path = os.path.join(self.model_path, self.file_map["decoder"])
 
+            logger.info(f"Initializing OfflineRecognizer with model_path: {self.model_path}")
+            logger.info(f"  model_type: {self.model_type}")
+            logger.info(f"  tokens: {tokens_path} (exists: {os.path.exists(tokens_path)})")
+            logger.info(f"  encoder: {encoder_path} (exists: {os.path.exists(encoder_path)})")
+            logger.info(f"  decoder: {decoder_path} (exists: {os.path.exists(decoder_path)})")
+
             if self.model_type == "whisper":
-                config = sherpa_onnx.OfflineRecognizerConfig(
-                    model_config=sherpa_onnx.OfflineModelConfig(
-                        whisper=sherpa_onnx.OfflineWhisperModelConfig(
-                            encoder=encoder_path,
-                            decoder=decoder_path,
-                        ),
-                        tokens=tokens_path,
-                        num_threads=4,
-                    ),
+                self.recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
+                    encoder=encoder_path,
+                    decoder=decoder_path,
+                    tokens=tokens_path,
+                    language=self.language,
+                    task="transcribe",
+                    num_threads=4,
                     decoding_method="greedy_search",
                 )
             else:
-                # transducer
                 joiner_path = os.path.join(self.model_path, self.file_map["joiner"])
-                config = sherpa_onnx.OfflineRecognizerConfig(
-                    model_config=sherpa_onnx.OfflineModelConfig(
-                        transducer=sherpa_onnx.OfflineTransducerModelConfig(
-                            encoder=encoder_path,
-                            decoder=decoder_path,
-                            joiner=joiner_path,
-                        ),
-                        tokens=tokens_path,
-                        num_threads=4,
-                    ),
+                logger.info(f"  joiner: {joiner_path} (exists: {os.path.exists(joiner_path)})")
+
+                self.recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
+                    encoder=encoder_path,
+                    decoder=decoder_path,
+                    joiner=joiner_path,
+                    tokens=tokens_path,
+                    num_threads=4,
                     decoding_method="greedy_search",
                 )
 
-            self.recognizer = sherpa_onnx.OfflineRecognizer(config)
+            logger.info("OfflineRecognizer initialized successfully")
         except Exception as e:
+            logger.error(f"Failed to initialize OfflineRecognizer ({self.model_type}): {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize OfflineRecognizer ({self.model_type}): {e}")
 
     async def transcribe(self, audio_path: str, language: str = "ja") -> List[Segment]:
@@ -221,7 +266,7 @@ class SherpaOnnxOfflineEngine(ASREngine):
         return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
 
     def _transcribe_sync(self, audio_path: str) -> List[Segment]:
-        wave, sample_rate = sherpa_onnx.read_wave(audio_path)
+        wave, sample_rate = _read_wave(audio_path)
 
         stream = self.recognizer.create_stream()
         stream.accept_waveform(sample_rate, wave)
@@ -269,6 +314,136 @@ class SherpaOnnxOfflineEngine(ASREngine):
                     if s:
                         result.append(s)
         return result if result else [text]
+
+
+# ── VAD + Offline Engine ───────────────────────────────────────────────────
+
+
+class SherpaOnnxVadOfflineEngine(ASREngine):
+    """
+    VAD + 离线 ASR 引擎。
+
+    先用 silero_vad 检测语音段获得精确时间戳，再逐段用 OfflineRecognizer 识别。
+    相比 SherpaOnnxOfflineEngine，字幕时间戳更准确。
+    """
+
+    def __init__(
+        self,
+        model_path: str,
+        model_type: str = "transducer",
+        file_map: Optional[Dict[str, str]] = None,
+        language: str = "",
+        vad_model_path: str = "",
+        vad_threshold: float = 0.5,
+        vad_min_silence_duration: float = 0.5,
+        vad_min_speech_duration: float = 0.25,
+        vad_max_speech_duration: float = 20.0,
+    ):
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model path not found: {model_path}")
+        if not vad_model_path or not os.path.exists(vad_model_path):
+            raise FileNotFoundError(f"VAD model not found: {vad_model_path}")
+
+        self.model_path = model_path
+        self.model_type = model_type
+        self.language = language
+        self.file_map = file_map or SherpaOnnxOfflineEngine(model_path, model_type)._default_file_map()
+        self.vad_model_path = vad_model_path
+        self.vad_threshold = vad_threshold
+        self.vad_min_silence_duration = vad_min_silence_duration
+        self.vad_min_speech_duration = vad_min_speech_duration
+        self.vad_max_speech_duration = vad_max_speech_duration
+
+        self.recognizer: Optional[sherpa_onnx.OfflineRecognizer] = None
+        self.vad: Optional[sherpa_onnx.VoiceActivityDetector] = None
+        self._initialize()
+
+    def _initialize(self):
+        try:
+            tokens_path = os.path.join(self.model_path, self.file_map["tokens"])
+            encoder_path = os.path.join(self.model_path, self.file_map["encoder"])
+            decoder_path = os.path.join(self.model_path, self.file_map["decoder"])
+
+            # 创建 OfflineRecognizer
+            if self.model_type == "whisper":
+                self.recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
+                    encoder=encoder_path,
+                    decoder=decoder_path,
+                    tokens=tokens_path,
+                    language=self.language,
+                    task="transcribe",
+                    num_threads=4,
+                    decoding_method="greedy_search",
+                )
+            else:
+                joiner_path = os.path.join(self.model_path, self.file_map["joiner"])
+                self.recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
+                    encoder=encoder_path,
+                    decoder=decoder_path,
+                    joiner=joiner_path,
+                    tokens=tokens_path,
+                    num_threads=4,
+                    decoding_method="greedy_search",
+                )
+
+            # 创建 VAD
+            vad_config = sherpa_onnx.VadModelConfig()
+            vad_config.silero_vad.model = self.vad_model_path
+            vad_config.silero_vad.threshold = self.vad_threshold
+            vad_config.silero_vad.min_silence_duration = self.vad_min_silence_duration
+            vad_config.silero_vad.min_speech_duration = self.vad_min_speech_duration
+            vad_config.silero_vad.max_speech_duration = self.vad_max_speech_duration
+            vad_config.sample_rate = 16000
+            vad_config.num_threads = 4
+
+            self.vad = sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=30)
+            logger.info("VadOfflineEngine initialized (VAD + OfflineRecognizer)")
+        except Exception as e:
+            logger.error(f"Failed to initialize VadOfflineEngine: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize VadOfflineEngine: {e}")
+
+    async def transcribe(self, audio_path: str, language: str = "ja") -> List[Segment]:
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
+
+    def _transcribe_sync(self, audio_path: str) -> List[Segment]:
+        samples, sample_rate = _read_wave(audio_path)
+        window_size = self.vad.config.silero_vad.window_size  # 512 for 16kHz
+
+        segments: List[Segment] = []
+
+        # 逐窗口喂入 VAD
+        for i in range(0, len(samples), window_size):
+            chunk = samples[i: i + window_size]
+            if len(chunk) < window_size:
+                break
+            self.vad.accept_waveform(chunk)
+            self._process_vad_segments(sample_rate, segments)
+
+        # 处理剩余音频
+        self.vad.flush()
+        self._process_vad_segments(sample_rate, segments)
+
+        logger.info(f"VAD+ASR transcription complete: {len(segments)} segments")
+        return segments
+
+    def _process_vad_segments(self, sample_rate: int, segments: List[Segment]):
+        while not self.vad.empty():
+            start_time = self.vad.front.start / sample_rate
+            seg_samples = self.vad.front.samples
+            duration = len(seg_samples) / sample_rate
+
+            stream = self.recognizer.create_stream()
+            stream.accept_waveform(sample_rate, list(seg_samples))
+            self.recognizer.decode_stream(stream)
+            text = stream.result.text.strip()
+
+            if text:
+                segments.append(Segment(start=start_time, end=start_time + duration, text=text))
+
+            self.vad.pop()
 
 
 # ── Cloud ASR Engine ────────────────────────────────────────────────────────
