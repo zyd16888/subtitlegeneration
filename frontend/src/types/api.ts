@@ -72,6 +72,16 @@ export interface PaginatedTaskResponse {
 }
 
 /**
+ * 路径映射规则
+ */
+export interface PathMapping {
+  name: string;
+  emby_prefix: string;
+  local_prefix: string;
+  library_ids: string[];
+}
+
+/**
  * 单个任务配置
  */
 export interface TaskConfig {
@@ -79,6 +89,7 @@ export interface TaskConfig {
   asr_engine?: 'sherpa-onnx' | 'cloud';
   translation_service?: 'openai' | 'deepseek' | 'local';
   openai_model?: string;
+  path_mapping_index?: number;
 }
 
 /**
@@ -87,6 +98,7 @@ export interface TaskConfig {
 export interface CreateTaskRequest {
   media_item_ids?: string[]; // 批量创建，使用全局配置
   tasks?: TaskConfig[]; // 单独配置每个任务
+  library_id?: string; // 当前媒体库 ID（用于路径映射匹配）
 }
 
 /**
@@ -132,6 +144,9 @@ export interface SystemConfig {
   vad_min_silence_duration?: number;
   vad_min_speech_duration?: number;
   vad_max_speech_duration?: number;
+
+  // 路径映射配置
+  path_mappings: PathMapping[];
 
   // 任务配置
   max_concurrent_tasks: number;

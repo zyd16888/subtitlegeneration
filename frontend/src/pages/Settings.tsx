@@ -7,10 +7,11 @@ import {
   SaveOutlined, TranslationOutlined, DownloadOutlined,
   CloudServerOutlined, RocketOutlined,
   InfoCircleOutlined, ReloadOutlined, SyncOutlined,
-  LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined
+  LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined,
+  PlusOutlined, DeleteOutlined, SwapOutlined
 } from '@ant-design/icons';
 import { api } from '../services/api';
-import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo } from '../types/api';
+import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo, Library } from '../types/api';
 
 const { Option } = Select;
 const { Text } = Typography;
@@ -33,6 +34,7 @@ const Settings: React.FC = () => {
   const [vadModels, setVadModels] = useState<ASRModel[]>([]);
   const [vadModelsLoading, setVadModelsLoading] = useState(false);
   const [languages, setLanguages] = useState<LanguageInfo[]>([]);
+  const [embyLibraries, setEmbyLibraries] = useState<Library[]>([]);
 
   const translationService = Form.useWatch('translation_service', form);
   const enableVad = Form.useWatch('enable_vad', form);
@@ -77,6 +79,13 @@ const Settings: React.FC = () => {
     try {
       const data = await api.models.listLanguages();
       setLanguages(data);
+    } catch { }
+  }, []);
+
+  const loadEmbyLibraries = useCallback(async () => {
+    try {
+      const data = await api.media.getLibraries();
+      setEmbyLibraries(data);
     } catch { }
   }, []);
 
@@ -193,7 +202,8 @@ const Settings: React.FC = () => {
     loadModels();
     loadVadModels();
     loadLanguages();
-  }, [loadModels, loadVadModels, loadLanguages]);
+    loadEmbyLibraries();
+  }, [loadModels, loadVadModels, loadLanguages, loadEmbyLibraries]);
 
   const handleValuesChange = () => {
     setIsDirty(true);
@@ -430,8 +440,115 @@ const Settings: React.FC = () => {
             </Row>
           </div>
 
-          {/* Translation Pipeline */}
+          {/* Path Mapping */}
           <div className="glass-card animate-fade-in-up delay-2" style={{ padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <div style={{ background: 'var(--accent-amber-bg)', padding: 8, borderRadius: 8, color: 'var(--accent-amber)' }}><SwapOutlined /></div>
+                路径映射
+              </div>
+              <Tooltip title="将 Emby 服务器上的视频路径映射为本地可访问路径，用于字幕文件回写">
+                <InfoCircleOutlined style={{ color: 'var(--text-secondary)' }} />
+              </Tooltip>
+            </div>
+
+            <div style={{ marginBottom: 16, padding: 12, background: 'var(--info-bg)', borderRadius: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+              配置 Emby 视频路径到本地挂载路径的映射规则。字幕生成完成后，系统会将 SRT 文件复制到视频同目录下，然后刷新 Emby 元数据使字幕生效。
+            </div>
+
+            <Form.List name="path_mappings">
+              {(fields, { add, remove }) => (
+                <>
+                  {fields.map(({ key, name, ...restField }) => (
+                    <div
+                      key={key}
+                      style={{
+                        background: 'var(--bg-input)',
+                        padding: 16,
+                        borderRadius: 'var(--radius-inner)',
+                        border: '1px solid var(--glass-border)',
+                        marginBottom: 12,
+                      }}
+                    >
+                      <Row gutter={12} align="top">
+                        <Col span={5}>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'name']}
+                            rules={[{ required: true, message: '请输入名称' }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder="规则名称" size="small" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={7}>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'emby_prefix']}
+                            rules={[{ required: true, message: '请输入 Emby 路径前缀' }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder="Emby 路径前缀 (如 /me/matched)" size="small" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={7}>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'local_prefix']}
+                            rules={[{ required: true, message: '请输入本地路径前缀' }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Input placeholder="本地路径前缀 (如 /mnt/drive/matched)" size="small" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={4}>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'library_ids']}
+                            initialValue={[]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Select
+                              mode="multiple"
+                              placeholder="关联媒体库"
+                              size="small"
+                              maxTagCount={1}
+                              allowClear
+                            >
+                              {embyLibraries.map((lib) => (
+                                <Option key={lib.id} value={lib.id}>{lib.name}</Option>
+                              ))}
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col span={1} style={{ display: 'flex', justifyContent: 'center', paddingTop: 4 }}>
+                          <Button
+                            type="text"
+                            danger
+                            icon={<DeleteOutlined />}
+                            size="small"
+                            onClick={() => remove(name)}
+                          />
+                        </Col>
+                      </Row>
+                    </div>
+                  ))}
+                  <Button
+                    type="dashed"
+                    onClick={() => add({ name: '', emby_prefix: '', local_prefix: '', library_ids: [] })}
+                    block
+                    icon={<PlusOutlined />}
+                    style={{ borderColor: 'var(--glass-border)' }}
+                  >
+                    添加映射规则
+                  </Button>
+                </>
+              )}
+            </Form.List>
+          </div>
+
+          {/* Translation Pipeline */}
+          <div className="glass-card animate-fade-in-up delay-3" style={{ padding: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
                 <div style={{ background: 'var(--accent-emerald-bg)', padding: 8, borderRadius: 8, color: 'var(--accent-emerald)' }}><TranslationOutlined /></div>

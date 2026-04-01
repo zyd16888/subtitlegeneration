@@ -5,7 +5,8 @@
 """
 import logging
 import os
-from typing import List
+import shutil
+from typing import List, Optional
 from celery import Task
 
 from .celery_app import celery_app
@@ -175,6 +176,65 @@ def _get_translation_service(config) -> TranslationService:
         raise ValueError(f"不支持的翻译服务类型: {config.translation_service}")
 
 
+def _apply_path_mapping(
+    emby_path: str,
+    path_mappings: list,
+    path_mapping_index: Optional[int] = None,
+    library_id: Optional[str] = None,
+) -> Optional[str]:
+    """
+    将 Emby 服务器上的视频路径映射为本地可访问路径。
+
+    匹配优先级：
+    1. 明确指定 path_mapping_index
+    2. library_id 匹配映射规则的 library_ids
+    3. emby_prefix 前缀匹配（最长前缀优先）
+    """
+    if not path_mappings:
+        return None
+
+    # 统一正斜杠
+    normalized = emby_path.replace("\\", "/")
+
+    # 1. 指定索引
+    if path_mapping_index is not None:
+        if 0 <= path_mapping_index < len(path_mappings):
+            m = path_mappings[path_mapping_index]
+            prefix = m.get("emby_prefix", "").replace("\\", "/").rstrip("/")
+            local = m.get("local_prefix", "").replace("\\", "/").rstrip("/")
+            if normalized.startswith(prefix):
+                return local + normalized[len(prefix):]
+            # 前缀不匹配也强制替换（用户明确指定）
+            return local + "/" + os.path.basename(emby_path)
+        return None
+
+    # 2. library_id 匹配
+    if library_id:
+        for m in path_mappings:
+            lib_ids = m.get("library_ids", [])
+            if library_id in lib_ids:
+                prefix = m.get("emby_prefix", "").replace("\\", "/").rstrip("/")
+                local = m.get("local_prefix", "").replace("\\", "/").rstrip("/")
+                if normalized.startswith(prefix):
+                    return local + normalized[len(prefix):]
+
+    # 3. 前缀匹配（最长前缀优先）
+    best_match = None
+    best_len = 0
+    for m in path_mappings:
+        prefix = m.get("emby_prefix", "").replace("\\", "/").rstrip("/")
+        if normalized.startswith(prefix) and len(prefix) > best_len:
+            best_match = m
+            best_len = len(prefix)
+
+    if best_match:
+        prefix = best_match["emby_prefix"].replace("\\", "/").rstrip("/")
+        local = best_match["local_prefix"].replace("\\", "/").rstrip("/")
+        return local + normalized[len(prefix):]
+
+    return None
+
+
 async def _translate_segments(
     segments: List[Segment],
     translation_service: TranslationService,
@@ -227,6 +287,8 @@ def generate_subtitle_task(
     asr_engine: str = None,
     translation_service: str = None,
     openai_model: str = None,
+    library_id: str = None,
+    path_mapping_index: int = None,
 ):
     """
     字幕生成主任务
@@ -332,9 +394,52 @@ def generate_subtitle_task(
         loop.run_until_complete(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 95))
         logger.info(f"[{task_id}] 字幕文件生成完成: {subtitle_path}")
 
-        # 5. 回写 Emby
-        logger.info(f"[{task_id}] 步骤 5/5: 回写 Emby")
+        # 5. 复制字幕到视频目录 + 刷新 Emby
+        logger.info(f"[{task_id}] 步骤 5/6: 复制字幕到视频目录")
         if config.emby_url and config.emby_api_key:
+
+            async def get_video_real_path():
+                async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
+                    return await emby.get_media_file_path(media_item_id)
+
+            # 获取视频在 Emby 服务器上的真实路径
+            try:
+                emby_video_path = loop.run_until_complete(get_video_real_path())
+                logger.info(f"[{task_id}] Emby 视频真实路径: {emby_video_path}")
+            except Exception as e:
+                logger.warning(f"[{task_id}] 获取视频真实路径失败: {e}，跳过字幕文件复制")
+                emby_video_path = None
+
+            if emby_video_path and config.path_mappings:
+                local_video_path = _apply_path_mapping(
+                    emby_video_path,
+                    config.path_mappings,
+                    path_mapping_index=path_mapping_index,
+                    library_id=library_id,
+                )
+                if local_video_path:
+                    # 生成目标字幕路径：与视频同目录同名
+                    video_basename = os.path.splitext(os.path.basename(local_video_path))[0]
+                    video_dir = os.path.dirname(local_video_path)
+                    target_srt = os.path.join(video_dir, f"{video_basename}.{target_lang}.srt")
+
+                    try:
+                        os.makedirs(video_dir, exist_ok=True)
+                        shutil.copy2(subtitle_path, target_srt)
+                        logger.info(f"[{task_id}] 字幕文件已复制: {subtitle_path} → {target_srt}")
+                    except Exception as e:
+                        logger.error(f"[{task_id}] 复制字幕文件失败: {e}", exc_info=True)
+                        raise RuntimeError(f"复制字幕文件到视频目录失败: {e}")
+                else:
+                    logger.warning(
+                        f"[{task_id}] 路径映射未匹配，Emby 路径: {emby_video_path}，"
+                        f"已配置 {len(config.path_mappings)} 条映射规则，跳过复制"
+                    )
+            elif emby_video_path and not config.path_mappings:
+                logger.warning(f"[{task_id}] 未配置路径映射规则，跳过字幕文件复制到视频目录")
+
+            # 6. 刷新 Emby 元数据
+            logger.info(f"[{task_id}] 步骤 6/6: 刷新 Emby 元数据")
 
             async def refresh_emby():
                 async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
@@ -346,7 +451,7 @@ def generate_subtitle_task(
             else:
                 logger.warning(f"[{task_id}] Emby 元数据刷新失败，但字幕文件已生成")
         else:
-            logger.warning(f"[{task_id}] 未配置 Emby 连接，跳过元数据刷新")
+            logger.warning(f"[{task_id}] 未配置 Emby 连接，跳过字幕回写")
 
         loop.run_until_complete(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
         logger.info(f"[{task_id}] 任务完成")

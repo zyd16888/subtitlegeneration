@@ -222,7 +222,7 @@ const LibraryPage: React.FC = () => {
       return;
     }
     try {
-      await api.tasks.createTasks({ tasks: [task] });
+      await api.tasks.createTasks({ tasks: [task], library_id: selectedLibrary });
       message.success('成功创建字幕生成任务');
     } catch (err: any) {
       message.error(err.message || '创建任务失败');
@@ -235,7 +235,7 @@ const LibraryPage: React.FC = () => {
       return;
     }
     try {
-      await api.tasks.createTasks({ tasks });
+      await api.tasks.createTasks({ tasks, library_id: selectedLibrary });
       message.success(`成功创建 ${tasks.length} 个任务`);
     } catch (err: any) {
       message.error(err.message || '创建任务失败');

@@ -52,6 +52,10 @@ class SystemConfigData(BaseModel):
     vad_min_speech_duration: float = 0.25
     vad_max_speech_duration: float = 20.0
 
+    # 路径映射配置（Emby 路径前缀 → 本地路径前缀）
+    # 格式: [{"name": "映射名称", "emby_prefix": "/me/matched", "local_prefix": "/mnt/drive/matched", "library_ids": []}]
+    path_mappings: list = []
+
     # 任务配置
     max_concurrent_tasks: int = 2
     temp_dir: str = "./data"

@@ -23,12 +23,14 @@ class TaskConfigRequest(BaseModel):
     asr_engine: Optional[str] = None
     translation_service: Optional[str] = None
     openai_model: Optional[str] = None
+    path_mapping_index: Optional[int] = None  # 指定路径映射规则索引
 
 
 class CreateTaskRequest(BaseModel):
     """创建任务请求模型"""
     media_item_ids: Optional[List[str]] = None  # 批量创建，使用全局配置
     tasks: Optional[List[TaskConfigRequest]] = None  # 单独配置每个任务
+    library_id: Optional[str] = None  # 当前浏览的媒体库 ID（用于路径映射匹配）
 
 
 class TaskResponse(BaseModel):
@@ -130,11 +132,12 @@ async def create_tasks(
                     generate_subtitle_task.delay(
                         task_id=task.id,
                         media_item_id=media_item_id,
-                        video_path=audio_url
+                        video_path=audio_url,
+                        library_id=request.library_id,
                     )
-                    
+
                     created_tasks.append(TaskResponse.model_validate(task))
-            
+
             # 处理单独配置的任务
             if request.tasks:
                 for task_config in request.tasks:
@@ -154,14 +157,14 @@ async def create_tasks(
                             status_code=500,
                             detail=f"获取媒体项 {task_config.media_item_id} 失败: {str(e)}"
                         )
-                    
+
                     # 创建任务
                     task = await task_manager.create_task(
                         media_item_id=task_config.media_item_id,
                         media_item_title=media_item.name,
                         video_path=audio_url  # 存储音频流 URL
                     )
-                    
+
                     # 提交 Celery 任务（使用自定义配置）
                     generate_subtitle_task.delay(
                         task_id=task.id,
@@ -169,7 +172,9 @@ async def create_tasks(
                         video_path=audio_url,
                         asr_engine=task_config.asr_engine,
                         translation_service=task_config.translation_service,
-                        openai_model=task_config.openai_model
+                        openai_model=task_config.openai_model,
+                        library_id=request.library_id,
+                        path_mapping_index=task_config.path_mapping_index,
                     )
                     
                     created_tasks.append(TaskResponse.model_validate(task))
