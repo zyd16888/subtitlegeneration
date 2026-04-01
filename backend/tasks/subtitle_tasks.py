@@ -195,6 +195,11 @@ def _apply_path_mapping(
     """
     将 Emby 服务器上的视频路径映射为本地可访问路径。
 
+    支持跨平台路径转换：
+    - Linux → Windows: /mnt/media/film.mkv → Z:/Media/film.mkv
+    - Windows → Linux: Z:/Media/film.mkv → /mnt/media/film.mkv
+    - 同平台: 直接前缀替换
+
     匹配优先级：
     1. 明确指定 path_mapping_index
     2. library_id 匹配映射规则的 library_ids
@@ -203,19 +208,50 @@ def _apply_path_mapping(
     if not path_mappings:
         return None
 
-    # 统一正斜杠
-    normalized = emby_path.replace("\\", "/")
+    def _do_replace(emby_path: str, emby_prefix: str, local_prefix: str) -> Optional[str]:
+        """
+        执行路径替换，自动处理跨平台分隔符。
+
+        - 统一用正斜杠做前缀匹配
+        - 替换后根据 local_prefix 的风格决定输出分隔符
+        """
+        # 统一正斜杠做匹配
+        norm_path = emby_path.replace("\\", "/")
+        norm_emby_prefix = emby_prefix.replace("\\", "/").rstrip("/")
+        norm_local_prefix = local_prefix.replace("\\", "/").rstrip("/")
+
+        if not norm_path.startswith(norm_emby_prefix):
+            return None
+
+        # 替换前缀，得到统一正斜杠的结果
+        suffix = norm_path[len(norm_emby_prefix):]  # 保留开头的 /
+        result = norm_local_prefix + suffix
+
+        # 判断 local_prefix 是否是 Windows 风格（盘符开头，如 Z:/ 或 Z:\）
+        is_windows_local = (
+            len(local_prefix) >= 2 and local_prefix[1] == ':'
+        )
+        if is_windows_local:
+            # 转为 Windows 反斜杠
+            result = result.replace("/", "\\")
+
+        return result
 
     # 1. 指定索引
     if path_mapping_index is not None:
         if 0 <= path_mapping_index < len(path_mappings):
             m = path_mappings[path_mapping_index]
-            prefix = m.get("emby_prefix", "").replace("\\", "/").rstrip("/")
-            local = m.get("local_prefix", "").replace("\\", "/").rstrip("/")
-            if normalized.startswith(prefix):
-                return local + normalized[len(prefix):]
-            # 前缀不匹配也强制替换（用户明确指定）
-            return local + "/" + os.path.basename(emby_path)
+            emby_prefix = m.get("emby_prefix", "")
+            local_prefix = m.get("local_prefix", "")
+            result = _do_replace(emby_path, emby_prefix, local_prefix)
+            if result:
+                return result
+            # 前缀不匹配也强制替换（用户明确指定），只取文件名拼接
+            norm_local = local_prefix.replace("\\", "/").rstrip("/")
+            basename = emby_path.replace("\\", "/").split("/")[-1]
+            fallback = norm_local + "/" + basename
+            is_windows_local = len(local_prefix) >= 2 and local_prefix[1] == ':'
+            return fallback.replace("/", "\\") if is_windows_local else fallback
         return None
 
     # 2. library_id 匹配
@@ -223,24 +259,24 @@ def _apply_path_mapping(
         for m in path_mappings:
             lib_ids = m.get("library_ids", [])
             if library_id in lib_ids:
-                prefix = m.get("emby_prefix", "").replace("\\", "/").rstrip("/")
-                local = m.get("local_prefix", "").replace("\\", "/").rstrip("/")
-                if normalized.startswith(prefix):
-                    return local + normalized[len(prefix):]
+                result = _do_replace(emby_path, m.get("emby_prefix", ""), m.get("local_prefix", ""))
+                if result:
+                    return result
 
     # 3. 前缀匹配（最长前缀优先）
     best_match = None
     best_len = 0
     for m in path_mappings:
-        prefix = m.get("emby_prefix", "").replace("\\", "/").rstrip("/")
-        if normalized.startswith(prefix) and len(prefix) > best_len:
+        norm_prefix = m.get("emby_prefix", "").replace("\\", "/").rstrip("/")
+        norm_path = emby_path.replace("\\", "/")
+        if norm_path.startswith(norm_prefix) and len(norm_prefix) > best_len:
             best_match = m
-            best_len = len(prefix)
+            best_len = len(norm_prefix)
 
     if best_match:
-        prefix = best_match["emby_prefix"].replace("\\", "/").rstrip("/")
-        local = best_match["local_prefix"].replace("\\", "/").rstrip("/")
-        return local + normalized[len(prefix):]
+        result = _do_replace(emby_path, best_match["emby_prefix"], best_match["local_prefix"])
+        if result:
+            return result
 
     return None
 

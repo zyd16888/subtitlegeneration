@@ -454,6 +454,10 @@ const Settings: React.FC = () => {
 
             <div style={{ marginBottom: 16, padding: 12, background: 'var(--info-bg)', borderRadius: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
               配置 Emby 视频路径到本地挂载路径的映射规则。字幕生成完成后，系统会将 SRT 文件复制到视频同目录下，然后刷新 Emby 元数据使字幕生效。
+              <br />
+              <span style={{ marginTop: 6, display: 'block' }}>
+                💡 支持跨平台路径：Emby（Linux）路径如 <code>/mnt/media</code>，本地（Windows）挂载路径如 <code>Z:\Media</code> 或 <code>Z:/Media</code>，系统会自动转换分隔符。
+              </span>
             </div>
 
             <Form.List name="path_mappings">
@@ -488,7 +492,7 @@ const Settings: React.FC = () => {
                             rules={[{ required: true, message: '请输入 Emby 路径前缀' }]}
                             style={{ marginBottom: 0 }}
                           >
-                            <Input placeholder="Emby 路径前缀 (如 /me/matched)" size="small" />
+                            <Input placeholder="Emby 路径前缀，如 /mnt/media" size="small" />
                           </Form.Item>
                         </Col>
                         <Col span={7}>
@@ -498,7 +502,7 @@ const Settings: React.FC = () => {
                             rules={[{ required: true, message: '请输入本地路径前缀' }]}
                             style={{ marginBottom: 0 }}
                           >
-                            <Input placeholder="本地路径前缀 (如 /mnt/drive/matched)" size="small" />
+                            <Input placeholder="本地路径前缀，如 Z:\Media 或 /mnt/drive" size="small" />
                           </Form.Item>
                         </Col>
                         <Col span={4}>
