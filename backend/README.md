@@ -9,15 +9,12 @@ backend/
 ├── api/                    # FastAPI 路由和端点
 │   ├── config.py          # 配置相关 API
 │   ├── media.py           # 媒体库相关 API
+│   ├── models.py          # ASR 模型管理 API
 │   ├── stats.py           # 统计信息 API
 │   └── tasks.py           # 任务相关 API
 ├── config/                 # 配置管理
 │   └── settings.py        # 系统配置
 ├── docs/                   # 文档目录
-│   ├── implementation/    # 实现文档
-│   │   ├── API_IMPLEMENTATION.md
-│   │   ├── TASK_*_IMPLEMENTATION.md
-│   │   └── TASK_*_VERIFICATION.md
 │   └── usage/             # 使用文档
 │       ├── AUDIO_EXTRACTOR_USAGE.md
 │       ├── CELERY_TASKS_USAGE.md
@@ -25,24 +22,22 @@ backend/
 │       ├── SUBTITLE_GENERATOR_USAGE.md
 │       ├── TASK_MANAGER_USAGE.md
 │       └── TRANSLATION_SERVICE_USAGE.md
-├── examples/               # 示例代码
-│   ├── example_celery_workflow.py
-│   ├── example_logging_usage.py
-│   └── example_subtitle_workflow.py
 ├── logs/                   # 日志文件
-│   └── subtitle_service.log
 ├── models/                 # 数据库模型
 │   ├── base.py            # 数据库基类
 │   ├── config.py          # 配置模型
 │   └── task.py            # 任务模型
-├── scripts/                # 脚本工具
-│   ├── start_server.bat   # 启动服务器脚本
-│   └── verify_api_structure.py
+├── models_data/            # ASR 模型文件
+│   ├── streaming-zipformer-bilingual-zh-en
+│   ├── whisper-base
+│   ├── whisper-tiny
+│   └── zipformer-ja-reazonspeech
 ├── services/               # 业务逻辑服务
 │   ├── asr_engine.py      # ASR 语音识别引擎
 │   ├── audio_extractor.py # 音频提取服务
 │   ├── config_manager.py  # 配置管理服务
 │   ├── emby_connector.py  # Emby 连接器
+│   ├── model_manager.py   # ASR 模型管理
 │   ├── subtitle_generator.py # 字幕生成服务
 │   ├── task_manager.py    # 任务管理服务
 │   └── translation_service.py # 翻译服务
@@ -50,8 +45,6 @@ backend/
 │   ├── celery_app.py      # Celery 应用配置
 │   └── subtitle_tasks.py  # 字幕生成任务
 ├── tests/                  # 测试文件
-│   ├── test_*.py          # 各模块单元测试
-│   └── test_backend_setup.py # 后端功能验证测试
 ├── utils/                  # 工具模块
 │   └── logger.py          # 日志工具
 ├── main.py                 # FastAPI 应用入口
@@ -88,50 +81,19 @@ cp .env.example .env
 
 ### 3. 启动服务
 
-#### 方式一：使用脚本启动（Windows）
-
 ```bash
-.\scripts\start_server.bat
-```
-
-#### 方式二：手动启动
-
-```bash
-# 设置 Python 路径
-set PYTHONPATH=%CD%\..
-
 # 启动 FastAPI 服务器
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-```
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-#### 方式三：启动 Celery Worker
-
-```bash
-cd backend
+# 启动 Celery Worker（另一个终端）
 celery -A tasks.celery_app worker --loglevel=info --pool=solo
 ```
 
 ### 4. 访问 API 文档
 
 启动服务后，访问：
-- Swagger UI: http://localhost:8000/api/docs
-- ReDoc: http://localhost:8000/api/redoc
-
-## 测试
-
-运行所有测试：
-
-```bash
-cd backend
-python tests/test_backend_setup.py
-```
-
-运行特定测试：
-
-```bash
-pytest tests/test_task_manager.py
-pytest tests/test_emby_connector.py
-```
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
 
 ## 核心功能
 
@@ -146,7 +108,7 @@ pytest tests/test_emby_connector.py
 - 转换为 WAV 格式（16kHz, 单声道）
 
 ### 3. ASR 语音识别
-- 支持 sherpa-onnx 本地识别
+- 支持 sherpa-onnx 本地识别（多种模型）
 - 支持云端 ASR API
 - 返回带时间戳的文本片段
 
@@ -154,6 +116,7 @@ pytest tests/test_emby_connector.py
 - 支持 OpenAI GPT 翻译
 - 支持 DeepSeek 翻译
 - 支持本地 LLM 翻译
+- 支持 Google、Microsoft、Baidu、DeepL 翻译
 - 批量翻译和重试机制
 
 ### 5. 字幕生成
@@ -167,6 +130,11 @@ pytest tests/test_emby_connector.py
 - 任务取消和重试
 - 统计信息
 
+### 7. 模型管理
+- 下载 ASR 模型
+- 激活/停用模型
+- 查看模型状态
+
 ## API 端点
 
 ### 配置管理
@@ -174,10 +142,12 @@ pytest tests/test_emby_connector.py
 - `PUT /api/config` - 更新系统配置
 - `POST /api/config/test-emby` - 测试 Emby 连接
 - `POST /api/config/test-translation` - 测试翻译服务
+- `GET /api/config/validate` - 验证配置完整性
 
 ### 媒体库
 - `GET /api/libraries` - 获取媒体库列表
 - `GET /api/media` - 获取媒体项列表
+- `GET /api/series/{id}/episodes` - 获取剧集列表
 
 ### 任务管理
 - `POST /api/tasks` - 创建任务
@@ -189,6 +159,11 @@ pytest tests/test_emby_connector.py
 ### 统计信息
 - `GET /api/stats` - 获取系统统计信息
 
+### 模型管理
+- `GET /api/models` - 获取模型列表
+- `POST /api/models/{model_id}/download` - 下载模型
+- `POST /api/models/{model_id}/activate` - 激活模型
+
 ## 开发指南
 
 ### 添加新的服务
@@ -196,14 +171,12 @@ pytest tests/test_emby_connector.py
 1. 在 `services/` 目录创建新的服务文件
 2. 实现服务类和方法
 3. 在 `tests/` 目录添加单元测试
-4. 在 `docs/usage/` 添加使用文档
 
 ### 添加新的 API 端点
 
 1. 在 `api/` 目录创建或修改路由文件
 2. 在 `main.py` 中注册路由
 3. 在 `tests/` 目录添加 API 测试
-4. 更新 API 文档
 
 ### 添加新的 Celery 任务
 
@@ -246,5 +219,3 @@ celery -A tasks.celery_app worker --loglevel=info --pool=solo
 ## 相关文档
 
 - [使用文档](docs/usage/) - 各模块的使用说明
-- [实现文档](docs/implementation/) - 实现细节和验证报告
-- [示例代码](examples/) - 使用示例
