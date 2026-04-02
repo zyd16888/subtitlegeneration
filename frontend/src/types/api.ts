@@ -175,6 +175,7 @@ export interface SystemConfig {
   // 任务配置
   max_concurrent_tasks: number;
   temp_dir: string;
+  cleanup_temp_files_on_success: boolean;
 }
 
 /**
@@ -284,6 +285,26 @@ export interface Statistics {
   task_statistics: TaskStatistics;
   recent_tasks: RecentTask[];
   system_status: SystemStatus;
+}
+
+/**
+ * 清理结果类型
+ */
+export interface CleanupResult {
+  success: boolean;
+  cleaned_count: number;
+  freed_bytes: number;
+  message: string;
+}
+
+/**
+ * 临时文件磁盘占用
+ */
+export interface TempDiskUsage {
+  total_bytes: number;
+  total_mb: number;
+  task_count: number;
+  details: { task_id: string; bytes: number; mb: number }[];
 }
 
 /**

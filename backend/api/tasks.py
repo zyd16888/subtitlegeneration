@@ -3,7 +3,7 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator
 from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
@@ -100,8 +100,8 @@ class PaginatedTaskResponse(BaseModel):
 
 # ── 辅助函数 ────────────────────────────────────────────────────────────────
 
-async def get_emby_connector(db: Session = Depends(get_db)) -> EmbyConnector:
-    """获取 Emby 连接器实例"""
+async def get_emby_connector(db: Session = Depends(get_db)) -> AsyncGenerator[EmbyConnector, None]:
+    """获取 Emby 连接器实例（自动关闭，防止连接泄漏）"""
     config_manager = ConfigManager(db)
     config = await config_manager.get_config()
     
@@ -111,7 +111,11 @@ async def get_emby_connector(db: Session = Depends(get_db)) -> EmbyConnector:
             detail="Emby 连接未配置"
         )
     
-    return EmbyConnector(config.emby_url, config.emby_api_key)
+    connector = EmbyConnector(config.emby_url, config.emby_api_key)
+    try:
+        yield connector
+    finally:
+        await connector.close()
 
 
 def task_to_response(task: Task) -> TaskResponse:
@@ -173,101 +177,100 @@ async def create_tasks(
     created_tasks = []
     
     try:
-        async with emby:
-            # 处理批量创建（使用全局配置）
-            if request.media_item_ids:
-                for media_item_id in request.media_item_ids:
-                    # 获取媒体项信息
-                    try:
-                        media_item = await emby.get_media_item(media_item_id)
-                        # 使用音频流 URL 而不是物理路径（支持远程 Emby）
-                        audio_url = await emby.get_audio_stream_url(media_item_id)
-                    except ValueError as e:
-                        # 媒体项不存在或没有路径
-                        raise HTTPException(
-                            status_code=404,
-                            detail=str(e)
-                        )
-                    except Exception as e:
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"获取媒体项 {media_item_id} 失败: {str(e)}"
-                        )
-                    
-                    # 创建任务（记录配置信息）
-                    task = await task_manager.create_task(
-                        media_item_id=media_item_id,
-                        media_item_title=media_item.name,
-                        video_path=audio_url,
-                        asr_engine=config.asr_engine,
-                        asr_model_id=config.asr_model_id,
-                        translation_service=config.translation_service,
-                        source_language=config.source_language,
-                        target_language=config.target_language,
+        # 处理批量创建（使用全局配置）
+        if request.media_item_ids:
+            for media_item_id in request.media_item_ids:
+                # 获取媒体项信息
+                try:
+                    media_item = await emby.get_media_item(media_item_id)
+                    # 使用音频流 URL 而不是物理路径（支持远程 Emby）
+                    audio_url = await emby.get_audio_stream_url(media_item_id)
+                except ValueError as e:
+                    # 媒体项不存在或没有路径
+                    raise HTTPException(
+                        status_code=404,
+                        detail=str(e)
                     )
-                    
-                    # 提交 Celery 任务（使用全局配置）
-                    generate_subtitle_task.delay(
-                        task_id=task.id,
-                        media_item_id=media_item_id,
-                        video_path=audio_url,
-                        library_id=request.library_id,
-                        source_language=None,  # 使用全局配置的语言
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"获取媒体项 {media_item_id} 失败: {str(e)}"
                     )
+                
+                # 创建任务（记录配置信息）
+                task = await task_manager.create_task(
+                    media_item_id=media_item_id,
+                    media_item_title=media_item.name,
+                    video_path=audio_url,
+                    asr_engine=config.asr_engine,
+                    asr_model_id=config.asr_model_id,
+                    translation_service=config.translation_service,
+                    source_language=config.source_language,
+                    target_language=config.target_language,
+                )
+                
+                # 提交 Celery 任务（使用全局配置）
+                generate_subtitle_task.delay(
+                    task_id=task.id,
+                    media_item_id=media_item_id,
+                    video_path=audio_url,
+                    library_id=request.library_id,
+                    source_language=None,  # 使用全局配置的语言
+                )
 
-                    created_tasks.append(task_to_response(task))
+                created_tasks.append(task_to_response(task))
 
-            # 处理单独配置的任务
-            if request.tasks:
-                for task_config in request.tasks:
-                    # 获取媒体项信息
-                    try:
-                        media_item = await emby.get_media_item(task_config.media_item_id)
-                        # 使用音频流 URL 而不是物理路径（支持远程 Emby）
-                        audio_url = await emby.get_audio_stream_url(task_config.media_item_id)
-                    except ValueError as e:
-                        # 媒体项不存在或没有路径
-                        raise HTTPException(
-                            status_code=404,
-                            detail=str(e)
-                        )
-                    except Exception as e:
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"获取媒体项 {task_config.media_item_id} 失败: {str(e)}"
-                        )
-
-                    # 确定使用的配置
-                    task_asr_engine = task_config.asr_engine or config.asr_engine
-                    task_translation_service = task_config.translation_service or config.translation_service
-                    task_source_language = task_config.source_language or config.source_language
-
-                    # 创建任务
-                    task = await task_manager.create_task(
-                        media_item_id=task_config.media_item_id,
-                        media_item_title=media_item.name,
-                        video_path=audio_url,
-                        asr_engine=task_asr_engine,
-                        asr_model_id=config.asr_model_id,
-                        translation_service=task_translation_service,
-                        source_language=task_source_language,
-                        target_language=config.target_language,
+        # 处理单独配置的任务
+        if request.tasks:
+            for task_config in request.tasks:
+                # 获取媒体项信息
+                try:
+                    media_item = await emby.get_media_item(task_config.media_item_id)
+                    # 使用音频流 URL 而不是物理路径（支持远程 Emby）
+                    audio_url = await emby.get_audio_stream_url(task_config.media_item_id)
+                except ValueError as e:
+                    # 媒体项不存在或没有路径
+                    raise HTTPException(
+                        status_code=404,
+                        detail=str(e)
+                    )
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"获取媒体项 {task_config.media_item_id} 失败: {str(e)}"
                     )
 
-                    # 提交 Celery 任务（使用自定义配置）
-                    generate_subtitle_task.delay(
-                        task_id=task.id,
-                        media_item_id=task_config.media_item_id,
-                        video_path=audio_url,
-                        asr_engine=task_config.asr_engine,
-                        translation_service=task_config.translation_service,
-                        openai_model=task_config.openai_model,
-                        library_id=request.library_id,
-                        path_mapping_index=task_config.path_mapping_index,
-                        source_language=task_config.source_language,
-                    )
-                    
-                    created_tasks.append(task_to_response(task))
+                # 确定使用的配置
+                task_asr_engine = task_config.asr_engine or config.asr_engine
+                task_translation_service = task_config.translation_service or config.translation_service
+                task_source_language = task_config.source_language or config.source_language
+
+                # 创建任务
+                task = await task_manager.create_task(
+                    media_item_id=task_config.media_item_id,
+                    media_item_title=media_item.name,
+                    video_path=audio_url,
+                    asr_engine=task_asr_engine,
+                    asr_model_id=config.asr_model_id,
+                    translation_service=task_translation_service,
+                    source_language=task_source_language,
+                    target_language=config.target_language,
+                )
+
+                # 提交 Celery 任务（使用自定义配置）
+                generate_subtitle_task.delay(
+                    task_id=task.id,
+                    media_item_id=task_config.media_item_id,
+                    video_path=audio_url,
+                    asr_engine=task_config.asr_engine,
+                    translation_service=task_config.translation_service,
+                    openai_model=task_config.openai_model,
+                    library_id=request.library_id,
+                    path_mapping_index=task_config.path_mapping_index,
+                    source_language=task_config.source_language,
+                )
+                
+                created_tasks.append(task_to_response(task))
         
         return created_tasks
         
@@ -301,16 +304,12 @@ async def get_tasks(
     task_manager = TaskManager(db)
     
     try:
-        # 获取任务列表
-        tasks = await task_manager.list_tasks(
+        # 获取任务列表（同时返回总数，避免二次全量查询）
+        tasks, total = await task_manager.list_tasks(
             status=status,
             limit=limit,
             offset=offset
         )
-        
-        # 获取总数（需要单独查询）
-        all_tasks = await task_manager.list_tasks(status=status, limit=10000, offset=0)
-        total = len(all_tasks)
         
         return PaginatedTaskResponse(
             items=[task_to_response(task) for task in tasks],

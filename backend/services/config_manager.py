@@ -59,6 +59,7 @@ class SystemConfigData(BaseModel):
     # 任务配置
     max_concurrent_tasks: int = 2
     temp_dir: str = "./data"
+    cleanup_temp_files_on_success: bool = True  # 任务成功后自动清理临时文件
     
     @field_validator('emby_url', 'cloud_asr_url', 'local_llm_url', 'deeplx_url')
     @classmethod

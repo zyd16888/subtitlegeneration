@@ -138,8 +138,7 @@ class SherpaOnnxOnlineEngine(ASREngine):
             raise RuntimeError("Recognizer not initialized")
 
         # Online 流式模型是单语言固定的，language 参数不影响识别行为
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
+        return await asyncio.get_running_loop().run_in_executor(None, self._transcribe_sync, audio_path)
 
     def _transcribe_sync(self, audio_path: str) -> List[Segment]:
         samples, sample_rate = _read_wave(audio_path)
@@ -221,6 +220,8 @@ class SherpaOnnxOfflineEngine(ASREngine):
         self.num_threads = num_threads
         self.debug = debug
         self.recognizer: Optional[sherpa_onnx.OfflineRecognizer] = None
+        # 锁：Whisper 模型切换语言时防止并发重复初始化
+        self._init_lock = asyncio.Lock()
         self._initialize_recognizer(language)
 
     def _default_file_map(self) -> Dict[str, str]:
@@ -305,14 +306,16 @@ class SherpaOnnxOfflineEngine(ASREngine):
         # Whisper 模型支持运行时指定语言
         effective_lang = language if language else self.default_language
         if effective_lang and self.model_type == "whisper":
-            # 如果语言与初始语言不同，需要重新初始化识别器
+            # 如果语言与初始语言不同，需要重新初始化识别器（加锁防止并发冲突）
             if effective_lang != self.default_language:
-                logger.info(f"Re-initializing Whisper recognizer with language: {effective_lang}")
-                self._initialize_recognizer(effective_lang)
-                self.default_language = effective_lang
+                async with self._init_lock:
+                    # Double-check：锁内再判断一次
+                    if effective_lang != self.default_language:
+                        logger.info(f"Re-initializing Whisper recognizer with language: {effective_lang}")
+                        self._initialize_recognizer(effective_lang)
+                        self.default_language = effective_lang
 
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
+        return await asyncio.get_running_loop().run_in_executor(None, self._transcribe_sync, audio_path)
 
     def _transcribe_sync(self, audio_path: str) -> List[Segment]:
         samples, sample_rate = _read_wave(audio_path)
@@ -423,6 +426,8 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
 
         self.recognizer: Optional[sherpa_onnx.OfflineRecognizer] = None
         self.vad: Optional[sherpa_onnx.VoiceActivityDetector] = None
+        # 锁：Whisper 模型切换语言时防止并发重复初始化
+        self._init_lock = asyncio.Lock()
         self._initialize()
 
     def _default_file_map(self) -> Dict[str, str]:
@@ -518,12 +523,14 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
         effective_lang = language if language else self.default_language
         if effective_lang and self.model_type == "whisper":
             if effective_lang != self.default_language:
-                logger.info(f"Re-initializing VAD+Whisper recognizer with language: {effective_lang}")
-                self._initialize(effective_lang)
-                self.default_language = effective_lang
+                async with self._init_lock:
+                    # Double-check：锁内再判断一次
+                    if effective_lang != self.default_language:
+                        logger.info(f"Re-initializing VAD+Whisper recognizer with language: {effective_lang}")
+                        self._initialize(effective_lang)
+                        self.default_language = effective_lang
 
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
+        return await asyncio.get_running_loop().run_in_executor(None, self._transcribe_sync, audio_path)
 
     def _transcribe_sync(self, audio_path: str) -> List[Segment]:
         """

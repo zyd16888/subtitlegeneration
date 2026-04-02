@@ -354,8 +354,7 @@ def generate_subtitle_task(
     audio_path = None
 
     try:
-        loop = asyncio.get_event_loop()
-        config = loop.run_until_complete(config_manager.get_config())
+        config = asyncio.run(config_manager.get_config())
 
         # 应用自定义配置覆盖
         if asr_engine:
@@ -370,7 +369,7 @@ def generate_subtitle_task(
         target_lang = config.target_language
         logger.info(f"[{task_id}] 使用语音识别语言: {source_lang} (任务指定: {source_language}, 全局: {config.source_language})")
 
-        loop.run_until_complete(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
+        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
         logger.info(f"开始处理任务 {task_id}: {video_path}")
         logger.info(
             f"[{task_id}] 配置: ASR={config.asr_engine}, model_id={config.asr_model_id}, "
@@ -387,12 +386,12 @@ def generate_subtitle_task(
         logger.info(f"[{task_id}] 视频路径: {video_path}")
         audio_extractor = AudioExtractor(task_work_dir)
         try:
-            audio_path = loop.run_until_complete(audio_extractor.extract_audio(video_path))
+            audio_path = asyncio.run(audio_extractor.extract_audio(video_path))
             logger.info(f"[{task_id}] 音频提取成功: {audio_path}")
         except Exception as e:
             logger.error(f"[{task_id}] 音频提取失败: {e}", exc_info=True)
             raise
-        loop.run_until_complete(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 20))
+        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 20))
 
         # 2. 语音识别
         logger.info(f"[{task_id}] 步骤 2/5: 语音识别")
@@ -406,10 +405,10 @@ def generate_subtitle_task(
         
         logger.info(f"[{task_id}] 开始转录音频: {audio_path}")
         # Whisper 模型支持 transcribe 时指定语言，其他模型忽略
-        segments = loop.run_until_complete(
+        segments = asyncio.run(
             asr_engine_instance.transcribe(audio_path, language=source_lang)
         )
-        loop.run_until_complete(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 60))
+        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 60))
         logger.info(f"[{task_id}] 语音识别完成，识别到 {len(segments)} 个片段")
 
         # 保存 ASR 原始识别结果
@@ -432,16 +431,16 @@ def generate_subtitle_task(
             ]
         else:
             translation_service_instance = _get_translation_service(config)
-            subtitle_segments = loop.run_until_complete(
+            subtitle_segments = asyncio.run(
                 _translate_segments(segments, translation_service_instance, source_lang, target_lang)
             )
-        loop.run_until_complete(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
+        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
 
         # 4. 生成字幕文件
         logger.info(f"[{task_id}] 步骤 4/5: 生成字幕文件")
         subtitle_generator = SubtitleGenerator()
         subtitle_path = subtitle_generator.generate_srt(subtitle_segments, video_path, target_lang, output_dir=task_work_dir)
-        loop.run_until_complete(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 95))
+        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 95))
         logger.info(f"[{task_id}] 字幕文件生成完成: {subtitle_path}")
 
         # 5. 复制字幕到视频目录 + 刷新 Emby
@@ -454,7 +453,7 @@ def generate_subtitle_task(
 
             # 获取视频在 Emby 服务器上的真实路径
             try:
-                emby_video_path = loop.run_until_complete(get_video_real_path())
+                emby_video_path = asyncio.run(get_video_real_path())
                 logger.info(f"[{task_id}] Emby 视频真实路径: {emby_video_path}")
             except Exception as e:
                 logger.warning(f"[{task_id}] 获取视频真实路径失败: {e}，跳过字幕文件复制")
@@ -495,7 +494,7 @@ def generate_subtitle_task(
                 async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
                     return await emby.refresh_metadata(media_item_id)
 
-            success = loop.run_until_complete(refresh_emby())
+            success = asyncio.run(refresh_emby())
             if success:
                 logger.info(f"[{task_id}] Emby 元数据刷新成功")
             else:
@@ -503,16 +502,23 @@ def generate_subtitle_task(
         else:
             logger.warning(f"[{task_id}] 未配置 Emby 连接，跳过字幕回写")
 
-        loop.run_until_complete(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
+        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
         logger.info(f"[{task_id}] 任务完成")
+
+        # 按配置决定是否清理临时文件
+        if config.cleanup_temp_files_on_success:
+            try:
+                shutil.rmtree(task_work_dir)
+                logger.info(f"[{task_id}] 临时文件已清理: {task_work_dir}")
+            except Exception as e:
+                logger.warning(f"[{task_id}] 清理临时文件失败: {e}")
 
         return {"task_id": task_id, "status": "completed", "subtitle_path": subtitle_path}
 
     except Exception as e:
         error_message = str(e)
         logger.error(f"[{task_id}] 任务失败: {error_message}", exc_info=True)
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(
+        asyncio.run(
             task_manager.update_task_status(task_id, TaskStatus.FAILED, error_message=error_message)
         )
         raise

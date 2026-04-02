@@ -117,9 +117,9 @@ class TaskManager:
         status: Optional[TaskStatus] = None,
         limit: int = 100,
         offset: int = 0
-    ) -> List[Task]:
+    ) -> tuple[List[Task], int]:
         """
-        获取任务列表
+        获取任务列表（带总数）
         
         Args:
             status: 可选的状态筛选
@@ -127,17 +127,21 @@ class TaskManager:
             offset: 分页偏移量
             
         Returns:
-            任务列表
+            (任务列表, 总数) 的 tuple
         """
         query = self.db.query(Task)
         
         if status is not None:
             query = query.filter(Task.status == status)
         
+        # 先获取总数（不分页）
+        total = query.count()
+        
+        # 再获取分页数据
         query = query.order_by(desc(Task.created_at))
         query = query.limit(limit).offset(offset)
         
-        return query.all()
+        return query.all(), total
 
     async def update_task_status(
         self,

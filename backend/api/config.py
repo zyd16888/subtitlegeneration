@@ -1,12 +1,17 @@
 """
 配置相关 API 端点
 """
+import logging
+import os
+import shutil
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 
 from models.base import get_db
+
+logger = logging.getLogger(__name__)
 from services.config_manager import ConfigManager, SystemConfigData
 from services.emby_connector import EmbyConnector
 from services.translation_service import (
@@ -291,6 +296,14 @@ class ConfigValidationResult(BaseModel):
     message: str
 
 
+class CleanupResult(BaseModel):
+    """清理结果模型"""
+    success: bool
+    cleaned_count: int = 0
+    freed_bytes: int = 0
+    message: str
+
+
 @router.get("/config/validate", response_model=ConfigValidationResult)
 async def validate_config(db: Session = Depends(get_db)):
     """
@@ -378,3 +391,103 @@ async def validate_config(db: Session = Depends(get_db)):
             status_code=500,
             detail=f"验证配置失败: {str(e)}"
         )
+
+
+def _calc_dir_size(path: str) -> int:
+    """计算目录大小（字节）"""
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            try:
+                total += os.path.getsize(fp)
+            except OSError:
+                pass
+    return total
+
+
+@router.post("/config/cleanup-temp", response_model=CleanupResult)
+async def cleanup_temp_files(db: Session = Depends(get_db)):
+    """
+    手动清理所有任务临时文件目录
+    
+    删除 data/tasks/ 下所有任务目录，释放磁盘空间
+    """
+    import os
+    from config.settings import settings
+
+    try:
+        tasks_dir = os.path.join(settings.temp_dir, "tasks")
+        if not os.path.isdir(tasks_dir):
+            return CleanupResult(
+                success=True,
+                cleaned_count=0,
+                freed_bytes=0,
+                message="没有找到任务临时目录"
+            )
+
+        entries = os.listdir(tasks_dir)
+        if not entries:
+            return CleanupResult(
+                success=True,
+                cleaned_count=0,
+                freed_bytes=0,
+                message="任务临时目录为空，无需清理"
+            )
+
+        cleaned = 0
+        freed = 0
+        for entry in entries:
+            entry_path = os.path.join(tasks_dir, entry)
+            if os.path.isdir(entry_path):
+                size = _calc_dir_size(entry_path)
+                try:
+                    shutil.rmtree(entry_path)
+                    cleaned += 1
+                    freed += size
+                except OSError as e:
+                    logger.warning(f"清理目录失败 {entry_path}: {e}")
+
+        return CleanupResult(
+            success=True,
+            cleaned_count=cleaned,
+            freed_bytes=freed,
+            message=f"已清理 {cleaned} 个任务目录，释放 {freed / 1024 / 1024:.1f} MB"
+        )
+
+    except Exception as e:
+        logger.error(f"清理临时文件失败: {e}")
+        raise HTTPException(status_code=500, detail=f"清理失败: {str(e)}")
+
+
+@router.get("/config/temp-disk-usage", response_model=dict)
+async def get_temp_disk_usage(db: Session = Depends(get_db)):
+    """
+    查询任务临时目录占用的磁盘空间
+    """
+    import os
+    from config.settings import settings
+
+    try:
+        tasks_dir = os.path.join(settings.temp_dir, "tasks")
+        if not os.path.isdir(tasks_dir):
+            return {"total_bytes": 0, "task_count": 0, "details": []}
+
+        details = []
+        total = 0
+        for entry in sorted(os.listdir(tasks_dir)):
+            entry_path = os.path.join(tasks_dir, entry)
+            if os.path.isdir(entry_path):
+                size = _calc_dir_size(entry_path)
+                details.append({"task_id": entry, "bytes": size, "mb": round(size / 1024 / 1024, 1)})
+                total += size
+
+        return {
+            "total_bytes": total,
+            "total_mb": round(total / 1024 / 1024, 1),
+            "task_count": len(details),
+            "details": details,
+        }
+    except Exception as e:
+        logger.error(f"查询磁盘占用失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

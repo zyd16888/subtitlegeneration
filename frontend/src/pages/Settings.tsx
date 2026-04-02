@@ -23,9 +23,12 @@ const Settings: React.FC = () => {
   const [savingEmby, setSavingEmby] = useState(false);
   const [savingTranslation, setSavingTranslation] = useState(false);
   const [savingEngine, setSavingEngine] = useState(false);
+  const [savingCleanup, setSavingCleanup] = useState(false);
   const [testingEmby, setTestingEmby] = useState(false);
   const [testingTranslation, setTestingTranslation] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [cleaningTemp, setCleaningTemp] = useState(false);
+  const [diskUsage, setDiskUsage] = useState<{ total_mb: number; task_count: number } | null>(null);
 
   const [models, setModels] = useState<ASRModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -89,6 +92,13 @@ const Settings: React.FC = () => {
     try {
       const data = await api.media.getLibraries();
       setEmbyLibraries(data);
+    } catch { }
+  }, []);
+
+  const loadDiskUsage = useCallback(async () => {
+    try {
+      const data = await api.config.getTempDiskUsage();
+      setDiskUsage({ total_mb: data.total_mb, task_count: data.task_count });
     } catch { }
   }, []);
 
@@ -206,7 +216,8 @@ const Settings: React.FC = () => {
     loadVadModels();
     loadLanguages();
     loadEmbyLibraries();
-  }, [loadModels, loadVadModels, loadLanguages, loadEmbyLibraries]);
+    loadDiskUsage();
+  }, [loadModels, loadVadModels, loadLanguages, loadEmbyLibraries, loadDiskUsage]);
 
   const handleValuesChange = () => {
     setIsDirty(true);
@@ -298,6 +309,30 @@ const Settings: React.FC = () => {
     } catch (err: any) {
       message.error(err.message || '保存失败');
     } finally { setSavingEngine(false); }
+  };
+
+  const handleSaveCleanup = async () => {
+    try {
+      const values = {
+        cleanup_temp_files_on_success: form.getFieldValue('cleanup_temp_files_on_success'),
+      };
+      setSavingCleanup(true);
+      await api.config.partialUpdateConfig(values);
+      message.success('清理配置已保存');
+    } catch (err: any) {
+      message.error(err.message || '保存失败');
+    } finally { setSavingCleanup(false); }
+  };
+
+  const handleCleanupTemp = async () => {
+    setCleaningTemp(true);
+    try {
+      const result = await api.config.cleanupTemp();
+      message.success(result.message);
+      loadDiskUsage();
+    } catch (err: any) {
+      message.error(err.message || '清理失败');
+    } finally { setCleaningTemp(false); }
   };
 
   const testEmby = async () => {
@@ -1067,6 +1102,93 @@ const Settings: React.FC = () => {
               className="custom-table"
               style={{ background: 'transparent' }}
             />
+          </div>
+
+          {/* 临时文件清理 */}
+          <div className="glass-card animate-fade-in-up delay-4" style={{ padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <div style={{ background: 'rgba(239,68,68,0.12)', padding: 8, borderRadius: 8, color: '#ef4444' }}>🗑️</div>
+                临时文件管理
+              </div>
+              <Button
+                type="primary"
+                icon={<SaveOutlined />}
+                onClick={handleSaveCleanup}
+                loading={savingCleanup}
+                style={{ borderRadius: 20, background: 'var(--accent-cyan)' }}
+              >
+                保存
+              </Button>
+            </div>
+
+            <div style={{ marginBottom: 20, padding: 14, background: 'var(--bg-input)', borderRadius: 8, border: '1px solid var(--glass-border)' }}>
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <div style={{ fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>
+                    任务成功后自动清理临时文件
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    开启后，字幕生成成功时自动删除音频提取、ASR 中间结果等临时文件。
+                    关闭则保留所有中间产物，方便调试排查问题。
+                  </Text>
+                </Col>
+                <Col>
+                  <Form.Item name="cleanup_temp_files_on_success" valuePropName="checked" style={{ margin: 0 }}>
+                    <Switch />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </div>
+
+            <div style={{ padding: 14, background: 'var(--bg-input)', borderRadius: 8, border: '1px solid var(--glass-border)' }}>
+              <Row align="middle" justify="space-between" style={{ marginBottom: 12 }}>
+                <Col>
+                  <div style={{ fontWeight: 500, color: 'var(--text-primary)', marginBottom: 2 }}>
+                    手动清理所有临时文件
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    立即删除 data/tasks/ 下所有任务目录（包括失败任务的中间产物）
+                  </Text>
+                </Col>
+                <Col>
+                  <Space>
+                    {diskUsage !== null && (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        当前占用：<span style={{ color: diskUsage.total_mb > 500 ? '#ef4444' : 'var(--accent-cyan)', fontWeight: 600 }}>
+                          {diskUsage.total_mb} MB
+                        </span>
+                        &nbsp;({diskUsage.task_count} 个任务目录)
+                      </Text>
+                    )}
+                    <Button
+                      icon={<ReloadOutlined />}
+                      size="small"
+                      type="text"
+                      onClick={loadDiskUsage}
+                      style={{ color: 'var(--text-secondary)' }}
+                    />
+                  </Space>
+                </Col>
+              </Row>
+              <Popconfirm
+                title="确认清理所有临时文件？"
+                description="此操作不可撤销，将删除所有任务的中间产物（音频、ASR 结果等）"
+                onConfirm={handleCleanupTemp}
+                okText="确认清理"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button
+                  danger
+                  loading={cleaningTemp}
+                  icon={<DeleteOutlined />}
+                  style={{ borderRadius: 8 }}
+                >
+                  立即清理
+                </Button>
+              </Popconfirm>
+            </div>
           </div>
 
         </Space>

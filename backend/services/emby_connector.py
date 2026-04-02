@@ -119,6 +119,8 @@ class EmbyConnector:
         self.api_key = api_key
         # 禁用SSL验证以支持自签名证书
         self.client = httpx.AsyncClient(timeout=30.0, verify=False)
+        # 缓存 user_id，避免每次请求都调用 /Users 接口
+        self._user_id: Optional[str] = None
         
     async def __aenter__(self):
         """异步上下文管理器入口"""
@@ -480,11 +482,14 @@ class EmbyConnector:
     
     async def _get_user_id(self) -> str:
         """
-        获取当前用户 ID
+        获取当前用户 ID（结果会被缓存，同一实例只请求一次）
         
         Returns:
             str: 用户 ID
         """
+        if self._user_id is not None:
+            return self._user_id
+
         try:
             url = f"{self.base_url}/Users"
             response = await self.client.get(url, headers=self._get_headers())
@@ -494,8 +499,9 @@ class EmbyConnector:
             if not users:
                 raise ValueError("没有找到任何用户")
             
-            # 返回第一个用户的 ID
-            return users[0]["Id"]
+            # 缓存并返回第一个用户的 ID
+            self._user_id = users[0]["Id"]
+            return self._user_id
             
         except Exception as e:
             logger.error(f"获取用户 ID 失败: {e}")

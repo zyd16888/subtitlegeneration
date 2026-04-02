@@ -23,6 +23,8 @@ import type {
   ASRModel,
   ModelDownloadProgress,
   LanguageInfo,
+  CleanupResult,
+  TempDiskUsage,
 } from '../types/api';
 
 /**
@@ -244,6 +246,22 @@ class ApiClient {
       const response = await this.client.get<ConfigValidationResult>(
         '/api/config/validate'
       );
+      return response.data;
+    },
+
+    /**
+     * 手动清理临时文件
+     */
+    cleanupTemp: async (): Promise<CleanupResult> => {
+      const response = await this.client.post<CleanupResult>('/api/config/cleanup-temp');
+      return response.data;
+    },
+
+    /**
+     * 查询临时文件磁盘占用
+     */
+    getTempDiskUsage: async (): Promise<TempDiskUsage> => {
+      const response = await this.client.get<TempDiskUsage>('/api/config/temp-disk-usage');
       return response.data;
     },
   };
