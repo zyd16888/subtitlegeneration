@@ -121,11 +121,19 @@ class ModelRegistry:
         if not force_refresh:
             cached = self._read_cache()
             if cached is not None:
-                return cached
+                asr_count = sum(1 for m in cached.values() if m.get("category") != "vad")
+                vad_count = len(cached) - asr_count
+                logger.debug(f"使用缓存: {len(cached)} 个模型 (ASR={asr_count}, VAD={vad_count})")
+                if asr_count == 0:
+                    logger.warning("缓存中无 ASR 模型，强制刷新")
+                else:
+                    return cached
 
         try:
             models = self._fetch_from_github()
             self._write_cache(models)
+            asr_count = sum(1 for m in models.values() if m.get("category") != "vad")
+            logger.info(f"模型列表已更新: {len(models)} 个模型 (ASR={asr_count})")
             return models
         except Exception as e:
             logger.error(f"从 GitHub 获取模型列表失败: {e}")
@@ -147,72 +155,106 @@ class ModelRegistry:
 
     def _fetch_from_github(self) -> Dict[str, dict]:
         """从 GitHub Releases API 获取并解析模型列表，失败时回退到本地 JSON 文件"""
-        logger.info("正在从 GitHub 获取模型列表...")
-        
+        from config.settings import settings as app_settings
+
+        logger.info(f"正在从 GitHub 获取模型列表: {self.GITHUB_API_URL}")
+
         # 尝试从 GitHub 获取
         try:
+            headers = {"Accept": "application/vnd.github.v3+json"}
+            if app_settings.github_token:
+                headers["Authorization"] = f"token {app_settings.github_token}"
+                logger.debug("使用 GitHub Token 认证请求")
+
             resp = httpx.get(
                 self.GITHUB_API_URL,
-                headers={"Accept": "application/vnd.github.v3+json"},
+                headers=headers,
                 timeout=30.0,
             )
+            if resp.status_code == 403:
+                body = resp.text[:200]
+                logger.warning(f"GitHub API 返回 403: {body}")
+                if "rate limit" in body.lower():
+                    logger.warning("GitHub API 速率限制！可在 .env 中设置 GITHUB_TOKEN 提高限额（匿名 60次/小时 → 认证 5000次/小时）")
+                raise httpx.HTTPStatusError(
+                    f"GitHub API 403: {body[:100]}", request=resp.request, response=resp
+                )
             resp.raise_for_status()
             release = resp.json()
             assets = release.get("assets", [])
-            
+            logger.info(f"GitHub 返回 {len(assets)} 个 assets")
+
             models: Dict[str, dict] = {}
+            skipped_reasons: Dict[str, int] = {}
             for asset in assets:
                 parsed = self._parse_asset(asset)
                 if parsed:
                     model_id = parsed.pop("id")
                     models[model_id] = parsed
-            
-            logger.info(f"从 GitHub 获取到 {len(models)} 个兼容模型")
-            
+                else:
+                    asset_name = asset.get("name", "unknown")
+                    reason = self._skip_reason(asset_name)
+                    skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+
+            asr_count = sum(1 for m in models.values() if m.get("category") != "vad")
+            vad_count = len(models) - asr_count
+            logger.info(f"从 GitHub 解析到 {len(models)} 个模型 (ASR={asr_count}, VAD={vad_count})")
+            if skipped_reasons:
+                logger.info(f"跳过的 assets: {skipped_reasons}")
+
+            if asr_count == 0 and len(assets) > 0:
+                # 打印前5个 asset 名称帮助排查
+                sample = [a.get("name", "?") for a in assets[:5]]
+                logger.warning(f"GitHub 有 {len(assets)} 个 assets 但解析出 0 个 ASR 模型! 前5个: {sample}")
+
             # 保存到本地文件作为缓存
             self._save_models_cache(models)
-            
+
             return models
-            
+
         except Exception as e:
-            logger.warning(f"从 GitHub 获取模型列表失败: {e}，尝试使用本地缓存...")
-            
+            logger.warning(f"从 GitHub 获取模型列表失败: {type(e).__name__}: {e}")
+
             # 回退到本地 JSON 文件
             return self._fetch_from_local_json()
     
     def _fetch_from_local_json(self) -> Dict[str, dict]:
         """从本地 JSON 文件加载模型列表（GitHub 不可用时使用）"""
         if not self.LOCAL_MODELS_JSON.exists():
-            logger.warning(f"本地模型缓存文件不存在: {self.LOCAL_MODELS_JSON}")
-            # 返回预定义的常用模型列表
+            logger.warning(f"本地模型注册文件不存在: {self.LOCAL_MODELS_JSON}，回退到内置模型列表")
             return self._get_builtin_models()
-        
+
         try:
-            import json
             data = json.loads(self.LOCAL_MODELS_JSON.read_text(encoding="utf-8"))
+
+            # 兼容两种格式：
+            # 1) _save_models_cache 写入的已解析格式: {"models": {id: meta, ...}}
+            # 2) 原始 GitHub release 格式: {"assets": [{name, size, ...}, ...]}
+            if "models" in data and isinstance(data["models"], dict):
+                models = data["models"]
+                logger.info(f"从本地缓存加载 {len(models)} 个模型（已解析格式）")
+                return models
+
             assets = data.get("assets", [])
-            
             models: Dict[str, dict] = {}
             for asset in assets:
                 parsed = self._parse_asset(asset)
                 if parsed:
                     model_id = parsed.pop("id")
                     models[model_id] = parsed
-            
-            logger.info(f"从本地缓存获取到 {len(models)} 个兼容模型")
+
+            logger.info(f"从本地缓存解析到 {len(models)} 个兼容模型（原始 assets 格式）")
             return models
-            
+
         except Exception as e:
             logger.warning(f"从本地缓存加载失败: {e}，使用内置模型列表")
             return self._get_builtin_models()
     
     def _save_models_cache(self, models: Dict[str, dict]) -> None:
-        """保存模型列表到本地缓存"""
+        """保存模型列表到本地 JSON 文件（GitHub 不可用时的备份）"""
         try:
-            import json
-            # 只保存元数据，不保存完整 asset
             cache_data = {
-                "fetched_at": str(Path()),
+                "fetched_at": time.time(),
                 "count": len(models),
                 "models": models,
             }
@@ -225,8 +267,8 @@ class ModelRegistry:
             logger.warning(f"保存模型缓存失败: {e}")
     
     def _get_builtin_models(self) -> Dict[str, dict]:
-        """获取内置的预定义模型列表（VAD + 常用 ASR 模型）"""
-        # 基于 GitHub 仓库中的实际模型
+        """获取内置的预定义模型列表（仅 VAD，ASR 需从 GitHub 获取）"""
+        logger.warning("GitHub 和本地缓存均不可用，仅返回内置 VAD 模型")
         return {
             "silero_vad": {
                 "name": "Silero VAD",
@@ -350,6 +392,26 @@ class ModelRegistry:
             "download_count": asset.get("download_count", 0),
         }
 
+    @staticmethod
+    def _skip_reason(name: str) -> str:
+        """返回 asset 被跳过的原因分类（用于调试日志）"""
+        name_lower = name.lower()
+        if any(kw in name_lower for kw in _VAD_KEYWORDS):
+            return "vad(已收录)"
+        if name_lower.endswith(".onnx"):
+            return "非tar.bz2(.onnx)"
+        if not name.endswith(".tar.bz2"):
+            return f"非tar.bz2({name.rsplit('.', 1)[-1] if '.' in name else 'no-ext'})"
+        if not name.startswith("sherpa-onnx-"):
+            return "无sherpa-onnx前缀"
+        for kw in _NON_ASR_KEYWORDS:
+            if kw in name_lower:
+                return f"非ASR({kw})"
+        for kw in _INCOMPATIBLE_KEYWORDS:
+            if kw in name_lower:
+                return f"不兼容({kw})"
+        return "未知原因"
+
     # ── 名称推断 ──
 
     @staticmethod
@@ -461,6 +523,7 @@ class ModelManager:
     def list_models(self, active_model_id: Optional[str] = None) -> List[dict]:
         """返回所有 ASR 模型及其安装状态（排除 VAD 模型）"""
         registry_models = self.registry.get_models()
+        logger.debug(f"注册表返回 {len(registry_models)} 个模型, 分类: {set(m.get('category', 'unknown') for m in registry_models.values())}")
         result = []
         for model_id, meta in registry_models.items():
             if meta.get("category") == "vad":

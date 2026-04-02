@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # 模型存储目录（为空时使用跨平台默认路径）
     model_storage_dir: Optional[str] = None
 
+    # GitHub Token（可选，用于提高 API 速率限制：匿名 60次/小时 → 认证 5000次/小时）
+    github_token: Optional[str] = None
+
     # 翻译服务配置
     translation_service: str = "openai"  # openai, deepseek, local, google, microsoft, baidu, deepl
     openai_api_key: Optional[str] = None
