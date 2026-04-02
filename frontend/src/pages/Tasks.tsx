@@ -16,6 +16,10 @@ import {
   Steps,
   Alert,
   Typography,
+  Divider,
+  Statistic,
+  Row,
+  Col,
 } from 'antd';
 import {
   CheckCircleFilled,
@@ -29,13 +33,19 @@ import {
   LoadingOutlined,
   FilterOutlined,
   HistoryOutlined,
+  SoundOutlined,
+  FileTextOutlined,
+  SettingOutlined,
+  FieldTimeOutlined,
+  PlayCircleOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { api } from '../services/api';
-import type { Task, TaskStatus } from '../types/api';
+import type { Task, TaskDetail, TaskStatus } from '../types/api';
+import { LANGUAGE_NAMES, TRANSLATION_SERVICE_NAMES, ASR_ENGINE_NAMES } from '../types/api';
 
 const { Option } = Select;
-const { Text, Title } = Typography;
+const { Text, Title, Paragraph } = Typography;
 
 const Tasks: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -45,7 +55,8 @@ const Tasks: React.FC = () => {
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [detailsVisible, setDetailsVisible] = useState(false);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedTask, setSelectedTask] = useState<TaskDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const fetchTasks = async () => {
     setLoading(true);
@@ -61,6 +72,18 @@ const Tasks: React.FC = () => {
       message.error(err.message || '获取任务列表失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTaskDetail = async (taskId: string) => {
+    setDetailLoading(true);
+    try {
+      const detail = await api.tasks.getTask(taskId);
+      setSelectedTask(detail);
+    } catch (err: any) {
+      message.error(err.message || '获取任务详情失败');
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -126,24 +149,28 @@ const Tasks: React.FC = () => {
     });
   };
 
-  const getTaskStages = (task: Task) => {
+  const handleViewDetail = (taskId: string) => {
+    setDetailsVisible(true);
+    fetchTaskDetail(taskId);
+  };
+
+  const getTaskStages = (task: Task | TaskDetail) => {
     const stages = [
-      { name: '音频提取', range: [0, 20], key: 'audio' },
-      { name: '语音识别', range: [20, 60], key: 'asr' },
-      { name: '翻译', range: [60, 90], key: 'translation' },
-      { name: '字幕生成', range: [90, 95], key: 'subtitle' },
-      { name: 'Emby 回写', range: [95, 100], key: 'emby' },
+      { name: '音频提取', range: [0, 20], key: 'audio', icon: <SoundOutlined /> },
+      { name: '语音识别', range: [20, 60], key: 'asr', icon: <PlayCircleOutlined /> },
+      { name: '翻译文本', range: [60, 90], key: 'translation', icon: <FileTextOutlined /> },
+      { name: '字幕生成', range: [90, 95], key: 'subtitle', icon: <FileTextOutlined /> },
+      { name: 'Emby 回写', range: [95, 100], key: 'emby', icon: <CheckCircleFilled /> },
     ];
 
     return stages.map((stage) => {
       let status: 'wait' | 'process' | 'finish' | 'error' = 'wait';
       if (task.status === 'failed' || task.status === 'cancelled') {
         if (task.progress >= stage.range[1]) {
-          status = 'finish';  // 已完成的阶段保持绿色
+          status = 'finish';
         } else if (task.progress >= stage.range[0]) {
-          status = 'error';   // 正在进行中的阶段标红（失败发生在此阶段）
+          status = 'error';
         }
-        // 其余保持 'wait'
       } else if (task.status === 'completed') {
         status = 'finish';
       } else if (task.progress >= stage.range[1]) {
@@ -151,7 +178,11 @@ const Tasks: React.FC = () => {
       } else if (task.progress >= stage.range[0]) {
         status = 'process';
       }
-      return { ...stage, status, progress: Math.min(100, Math.max(0, ((task.progress - stage.range[0]) / (stage.range[1] - stage.range[0])) * 100)) };
+      return { 
+        ...stage, 
+        status, 
+        progress: Math.min(100, Math.max(0, ((task.progress - stage.range[0]) / (stage.range[1] - stage.range[0])) * 100)) 
+      };
     });
   };
 
@@ -165,6 +196,14 @@ const Tasks: React.FC = () => {
     };
     const config = configs[status];
     return <Tag color={config.color} icon={config.icon} style={{ borderRadius: 6 }}>{config.text}</Tag>;
+  };
+
+  const formatDuration = (seconds?: number) => {
+    if (!seconds) return '-';
+    if (seconds < 60) return `${seconds.toFixed(1)} 秒`;
+    const mins = Math.floor(seconds / 60);
+    const secs = (seconds % 60).toFixed(0);
+    return `${mins} 分 ${secs} 秒`;
   };
 
   const columns: ColumnsType<Task> = [
@@ -211,7 +250,7 @@ const Tasks: React.FC = () => {
       render: (_, record: Task) => (
         <Space size="middle">
           <Tooltip title="查看详情">
-            <Button type="text" icon={<EyeOutlined />} onClick={() => { setSelectedTask(record); setDetailsVisible(true); }} />
+            <Button type="text" icon={<EyeOutlined />} onClick={() => handleViewDetail(record.id)} />
           </Tooltip>
           {record.status === 'processing' && (
             <Tooltip title="取消任务">
@@ -274,6 +313,7 @@ const Tasks: React.FC = () => {
               <div style={{ padding: '16px 24px', background: 'var(--error-bg)', borderLeft: '4px solid var(--accent-rose)' }}>
                 <Text type="danger" strong>错误详情：</Text>
                 <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{record.error_message}</div>
+                {record.error_stage && <div style={{ marginTop: 4, color: 'var(--text-secondary)', fontSize: 12 }}>错误阶段：{record.error_stage}</div>}
               </div>
             ),
             rowExpandable: (record) => !!record.error_message,
@@ -295,27 +335,122 @@ const Tasks: React.FC = () => {
       <Drawer
         title={<Space><EyeOutlined /> 任务详细信息</Space>}
         placement="right"
-        width={640}
+        width={720}
         onClose={() => setDetailsVisible(false)}
         open={detailsVisible}
+        loading={detailLoading}
       >
         {selectedTask && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            {/* 错误提示 */}
             {selectedTask.error_message && (
-              <Alert message="任务处理异常" description={selectedTask.error_message} type="error" showIcon style={{ borderRadius: 12 }} />
+              <Alert 
+                message="任务处理异常" 
+                description={
+                  <div>
+                    <div>{selectedTask.error_message}</div>
+                    {selectedTask.error_stage && <div style={{ marginTop: 8, fontSize: 12 }}>错误阶段：{selectedTask.error_stage}</div>}
+                  </div>
+                } 
+                type="error" 
+                showIcon 
+                style={{ borderRadius: 12 }} 
+              />
             )}
 
-            <Descriptions title="基本概览" bordered column={1} size="small" className="custom-descriptions">
-              <Descriptions.Item label="媒体标题">{selectedTask.media_item_title}</Descriptions.Item>
-              <Descriptions.Item label="当前状态">{getStatusTag(selectedTask.status)}</Descriptions.Item>
-              <Descriptions.Item label="当前总进度">
-                <Progress percent={selectedTask.progress} size="small" strokeColor={{ '0%': '#1677ff', '100%': '#722ed1' }} />
-              </Descriptions.Item>
-              <Descriptions.Item label="任务 ID"><Text copyable style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{selectedTask.id}</Text></Descriptions.Item>
-            </Descriptions>
+            {/* 基本信息卡片 */}
+            <Card size="small" title={<Space><FileTextOutlined /> 基本信息</Space>} style={{ borderRadius: 12 }}>
+              <Descriptions column={2} size="small">
+                <Descriptions.Item label="媒体标题" span={2}>{selectedTask.media_item_title || '未知媒体'}</Descriptions.Item>
+                <Descriptions.Item label="当前状态">{getStatusTag(selectedTask.status)}</Descriptions.Item>
+                <Descriptions.Item label="总进度">
+                  <Progress percent={selectedTask.progress} size="small" style={{ width: 120 }} />
+                </Descriptions.Item>
+                <Descriptions.Item label="任务 ID" span={2}>
+                  <Text copyable style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{selectedTask.id}</Text>
+                </Descriptions.Item>
+              </Descriptions>
+            </Card>
 
-            <div>
-              <Title level={5} style={{ marginBottom: 20 }}>处理流程分析</Title>
+            {/* 统计信息 */}
+            {(selectedTask.audio_duration || selectedTask.segment_count || selectedTask.processing_time) && (
+              <Card size="small" title={<Space><FieldTimeOutlined /> 处理统计</Space>} style={{ borderRadius: 12 }}>
+                <Row gutter={16}>
+                  {selectedTask.audio_duration && (
+                    <Col span={8}>
+                      <Statistic 
+                        title="音频时长" 
+                        value={formatDuration(selectedTask.audio_duration)} 
+                        prefix={<SoundOutlined />}
+                      />
+                    </Col>
+                  )}
+                  {selectedTask.segment_count && (
+                    <Col span={8}>
+                      <Statistic 
+                        title="字幕段落数" 
+                        value={selectedTask.segment_count} 
+                        prefix={<FileTextOutlined />}
+                      />
+                    </Col>
+                  )}
+                  {selectedTask.processing_time && (
+                    <Col span={8}>
+                      <Statistic 
+                        title="处理耗时" 
+                        value={formatDuration(selectedTask.processing_time)} 
+                        prefix={<FieldTimeOutlined />}
+                      />
+                    </Col>
+                  )}
+                </Row>
+              </Card>
+            )}
+
+            {/* 时间信息 */}
+            <Card size="small" title={<Space><ClockCircleOutlined /> 时间信息</Space>} style={{ borderRadius: 12 }}>
+              <Descriptions column={2} size="small">
+                <Descriptions.Item label="创建时间">
+                  {new Date(selectedTask.created_at).toLocaleString('zh-CN', { hour12: false })}
+                </Descriptions.Item>
+                {selectedTask.started_at && (
+                  <Descriptions.Item label="开始处理">
+                    {new Date(selectedTask.started_at).toLocaleString('zh-CN', { hour12: false })}
+                  </Descriptions.Item>
+                )}
+                {selectedTask.completed_at && (
+                  <Descriptions.Item label="完成时间">
+                    {new Date(selectedTask.completed_at).toLocaleString('zh-CN', { hour12: false })}
+                  </Descriptions.Item>
+                )}
+                {selectedTask.wait_time && (
+                  <Descriptions.Item label="等待时长">
+                    {formatDuration(selectedTask.wait_time)}
+                  </Descriptions.Item>
+                )}
+              </Descriptions>
+            </Card>
+
+            {/* 配置信息 */}
+            <Card size="small" title={<Space><SettingOutlined /> 任务配置</Space>} style={{ borderRadius: 12 }}>
+              <Descriptions column={2} size="small">
+                <Descriptions.Item label="ASR 引擎">
+                  {ASR_ENGINE_NAMES[selectedTask.asr_engine || ''] || selectedTask.asr_engine || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="ASR 模型">
+                  {selectedTask.asr_model_id || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="翻译服务">
+                  {TRANSLATION_SERVICE_NAMES[selectedTask.translation_service || ''] || selectedTask.translation_service || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="语言方向">
+                  {LANGUAGE_NAMES[selectedTask.source_language || ''] || selectedTask.source_language || '自动'} → {LANGUAGE_NAMES[selectedTask.target_language || ''] || selectedTask.target_language || '中文'}
+                </Descriptions.Item>
+              </Descriptions>
+            </Card>
+
+            {/* 处理流程 */}
+            <Card size="small" title={<Space><PlayCircleOutlined /> 处理流程</Space>} style={{ borderRadius: 12 }}>
               <Steps
                 direction="vertical"
                 size="small"
@@ -323,11 +458,22 @@ const Tasks: React.FC = () => {
                 items={getTaskStages(selectedTask).map(stage => ({
                   title: stage.name,
                   status: stage.status,
-                  icon: stage.status === 'process' ? <LoadingOutlined /> : (stage.status === 'finish' ? <CheckCircleFilled style={{ color: '#52c41a' }} /> : (stage.status === 'error' ? <CloseCircleFilled style={{ color: '#ff4d4f' }} /> : undefined)),
+                  icon: stage.status === 'process' ? <LoadingOutlined /> : (stage.status === 'finish' ? <CheckCircleFilled style={{ color: '#52c41a' }} /> : (stage.status === 'error' ? <CloseCircleFilled style={{ color: '#ff4d4f' }} /> : stage.icon)),
                   description: stage.status === 'process' ? <Progress percent={Math.round(stage.progress)} size="small" /> : null
                 }))}
               />
-            </div>
+            </Card>
+
+            {/* 结果信息 */}
+            {selectedTask.status === 'completed' && selectedTask.subtitle_path && (
+              <Card size="small" title={<Space><CheckCircleFilled style={{ color: '#52c41a' }} /> 生成结果</Space>} style={{ borderRadius: 12 }}>
+                <Descriptions column={1} size="small">
+                  <Descriptions.Item label="字幕文件">
+                    <Text copyable style={{ fontSize: 12 }}>{selectedTask.subtitle_path}</Text>
+                  </Descriptions.Item>
+                </Descriptions>
+              </Card>
+            )}
           </div>
         )}
       </Drawer>

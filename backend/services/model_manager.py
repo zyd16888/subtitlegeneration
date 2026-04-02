@@ -142,41 +142,182 @@ class ModelRegistry:
 
     # ── GitHub API ──
 
+    # 本地 JSON 文件路径（GitHub 访问失败时的备用）
+    LOCAL_MODELS_JSON = Path(__file__).parent.parent.parent / "models_registry.json"
+
     def _fetch_from_github(self) -> Dict[str, dict]:
-        """从 GitHub Releases API 获取并解析模型列表"""
+        """从 GitHub Releases API 获取并解析模型列表，失败时回退到本地 JSON 文件"""
         logger.info("正在从 GitHub 获取模型列表...")
-        resp = httpx.get(
-            self.GITHUB_API_URL,
-            headers={"Accept": "application/vnd.github.v3+json"},
-            timeout=30.0,
-        )
-        resp.raise_for_status()
-        release = resp.json()
-        assets = release.get("assets", [])
-
-        models: Dict[str, dict] = {}
-        for asset in assets:
-            parsed = self._parse_asset(asset)
-            if parsed:
-                model_id = parsed.pop("id")
-                models[model_id] = parsed
-
-        logger.info(f"从 GitHub 获取到 {len(models)} 个兼容模型")
-        return models
+        
+        # 尝试从 GitHub 获取
+        try:
+            resp = httpx.get(
+                self.GITHUB_API_URL,
+                headers={"Accept": "application/vnd.github.v3+json"},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            release = resp.json()
+            assets = release.get("assets", [])
+            
+            models: Dict[str, dict] = {}
+            for asset in assets:
+                parsed = self._parse_asset(asset)
+                if parsed:
+                    model_id = parsed.pop("id")
+                    models[model_id] = parsed
+            
+            logger.info(f"从 GitHub 获取到 {len(models)} 个兼容模型")
+            
+            # 保存到本地文件作为缓存
+            self._save_models_cache(models)
+            
+            return models
+            
+        except Exception as e:
+            logger.warning(f"从 GitHub 获取模型列表失败: {e}，尝试使用本地缓存...")
+            
+            # 回退到本地 JSON 文件
+            return self._fetch_from_local_json()
+    
+    def _fetch_from_local_json(self) -> Dict[str, dict]:
+        """从本地 JSON 文件加载模型列表（GitHub 不可用时使用）"""
+        if not self.LOCAL_MODELS_JSON.exists():
+            logger.warning(f"本地模型缓存文件不存在: {self.LOCAL_MODELS_JSON}")
+            # 返回预定义的常用模型列表
+            return self._get_builtin_models()
+        
+        try:
+            import json
+            data = json.loads(self.LOCAL_MODELS_JSON.read_text(encoding="utf-8"))
+            assets = data.get("assets", [])
+            
+            models: Dict[str, dict] = {}
+            for asset in assets:
+                parsed = self._parse_asset(asset)
+                if parsed:
+                    model_id = parsed.pop("id")
+                    models[model_id] = parsed
+            
+            logger.info(f"从本地缓存获取到 {len(models)} 个兼容模型")
+            return models
+            
+        except Exception as e:
+            logger.warning(f"从本地缓存加载失败: {e}，使用内置模型列表")
+            return self._get_builtin_models()
+    
+    def _save_models_cache(self, models: Dict[str, dict]) -> None:
+        """保存模型列表到本地缓存"""
+        try:
+            import json
+            # 只保存元数据，不保存完整 asset
+            cache_data = {
+                "fetched_at": str(Path()),
+                "count": len(models),
+                "models": models,
+            }
+            self.LOCAL_MODELS_JSON.parent.mkdir(parents=True, exist_ok=True)
+            self.LOCAL_MODELS_JSON.write_text(
+                json.dumps(cache_data, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            logger.warning(f"保存模型缓存失败: {e}")
+    
+    def _get_builtin_models(self) -> Dict[str, dict]:
+        """获取内置的预定义模型列表（VAD + 常用 ASR 模型）"""
+        # 基于 GitHub 仓库中的实际模型
+        return {
+            "silero_vad": {
+                "name": "Silero VAD",
+                "type": "vad",
+                "model_type": "silero_vad",
+                "category": "vad",
+                "languages": [],
+                "size": "~2MB",
+                "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+                "archive_dir": "silero_vad",
+                "download_count": 0,
+            },
+            "silero_vad_v4": {
+                "name": "Silero VAD V4",
+                "type": "vad",
+                "model_type": "silero_vad",
+                "category": "vad",
+                "languages": [],
+                "size": "~2MB",
+                "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad_v4.onnx",
+                "archive_dir": "silero_vad_v4",
+                "download_count": 0,
+            },
+            "silero_vad_v5": {
+                "name": "Silero VAD V5",
+                "type": "vad",
+                "model_type": "silero_vad",
+                "category": "vad",
+                "languages": [],
+                "size": "~2MB",
+                "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad_v5.onnx",
+                "archive_dir": "silero_vad_v5",
+                "download_count": 0,
+            },
+            "ten-vad": {
+                "name": "Tencent VAD",
+                "type": "vad",
+                "model_type": "ten_vad",
+                "category": "vad",
+                "languages": [],
+                "size": "~3MB",
+                "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/ten-vad.onnx",
+                "archive_dir": "ten-vad",
+                "download_count": 0,
+            },
+        }
 
     def _parse_asset(self, asset: dict) -> Optional[dict]:
         """从 GitHub asset 解析模型元数据，不兼容的返回 None"""
         name: str = asset.get("name", "")
+        name_lower = name.lower()
+        size_bytes = asset.get("size", 0)
+        size_str = self._format_size(size_bytes)
+        download_url = asset.get("browser_download_url", "")
 
-        # 只处理 tar.bz2
+        # 检查是否 VAD 模型（可以是 .onnx 直接文件或 .tar.bz2 压缩包）
+        is_vad_onnx = name_lower.endswith(".onnx") and any(kw in name_lower for kw in _VAD_KEYWORDS)
+        is_vad_archive = name.endswith(".tar.bz2") and any(kw in name_lower for kw in _VAD_KEYWORDS)
+
+        if is_vad_onnx or is_vad_archive:
+            # VAD 模型处理
+            if is_vad_onnx:
+                model_id = name[:-len(".onnx")]  # 直接是 .onnx 文件
+                archive_dir = model_id
+                # 生成可读的显示名称
+                display_name = " ".join(p.capitalize() for p in model_id.replace("_", "-").split("-") if p)
+            else:
+                model_id = name[len("sherpa-onnx-"):-len(".tar.bz2")]
+                archive_dir = name[:-len(".tar.bz2")]
+                display_name = self._make_display_name(model_id, "vad", [])
+
+            return {
+                "id": model_id,
+                "name": display_name,
+                "type": "vad",
+                "model_type": "silero_vad",
+                "category": "vad",
+                "languages": [],
+                "size": size_str,
+                "url": download_url,
+                "archive_dir": archive_dir,
+                "download_count": asset.get("download_count", 0),
+            }
+
+        # 非 VAD 模型：只处理 tar.bz2
         if not name.endswith(".tar.bz2"):
             return None
 
         # 必须以 sherpa-onnx- 开头
         if not name.startswith("sherpa-onnx-"):
             return None
-
-        name_lower = name.lower()
 
         # 排除非 ASR 资产
         for kw in _NON_ASR_KEYWORDS:
@@ -186,25 +327,7 @@ class ModelRegistry:
         # 去掉前缀 "sherpa-onnx-" 和后缀 ".tar.bz2"
         stem = name[len("sherpa-onnx-"):-len(".tar.bz2")]
         archive_dir = name[:-len(".tar.bz2")]
-        size_bytes = asset.get("size", 0)
-        size_str = self._format_size(size_bytes)
         model_id = self._make_model_id(stem)
-
-        # VAD 模型单独处理
-        is_vad = any(kw in name_lower for kw in _VAD_KEYWORDS)
-        if is_vad:
-            return {
-                "id": model_id,
-                "name": self._make_display_name(stem, "vad", []),
-                "type": "vad",
-                "model_type": "silero_vad",
-                "category": "vad",
-                "languages": [],
-                "size": size_str,
-                "url": asset.get("browser_download_url", ""),
-                "archive_dir": archive_dir,
-                "download_count": asset.get("download_count", 0),
-            }
 
         # 排除不兼容 ASR 模型
         for kw in _INCOMPATIBLE_KEYWORDS:
@@ -222,7 +345,7 @@ class ModelRegistry:
             "category": "asr",
             "languages": languages,
             "size": size_str,
-            "url": asset.get("browser_download_url", ""),
+            "url": download_url,
             "archive_dir": archive_dir,
             "download_count": asset.get("download_count", 0),
         }
@@ -643,7 +766,14 @@ class ModelManager:
         """后台下载 + 解压 + 自动检测文件 + 写入 meta"""
         url = meta["url"]
         target_dir = self.models_dir / model_id
-        tmp_file = self.models_dir / f"{model_id}.tmp.tar.bz2"
+        is_vad = meta.get("category") == "vad"
+        
+        # VAD 模型（.onnx 文件）不需要解压
+        if is_vad and url.endswith(".onnx"):
+            tmp_file = self.models_dir / f"{model_id}.tmp.onnx"
+        else:
+            tmp_file = self.models_dir / f"{model_id}.tmp.tar.bz2"
+        
         extract_tmp = self.models_dir / f"_extract_{model_id}"
 
         try:
@@ -651,12 +781,41 @@ class ModelManager:
             logger.info(f"开始下载模型 {model_id}: {url}")
             self._download_with_resume(model_id, url, tmp_file)
 
-            logger.info(f"模型 {model_id} 下载完成，开始解压...")
-            self._set_progress(model_id, 91, DownloadStatus.EXTRACTING)
-
             # 清理旧目录
             if target_dir.exists():
                 shutil.rmtree(target_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            # VAD .onnx 文件直接移动，不需要解压
+            if is_vad and url.endswith(".onnx"):
+                logger.info(f"模型 {model_id} 是直接的 .onnx 文件，直接移动到目标目录")
+                onnx_file = tmp_file.name.replace(".tmp.onnx", ".onnx")
+                # 从 URL 获取文件名
+                import os
+                onnx_filename = os.path.basename(url)
+                shutil.move(str(tmp_file), str(target_dir / onnx_filename))
+                
+                # 写入 meta
+                file_map = {"model": onnx_filename}
+                model_meta = {
+                    "type": "vad",
+                    "model_type": "silero_vad",
+                    "category": "vad",
+                    "languages": [],
+                    "files": file_map,
+                    "name": meta.get("name", model_id),
+                    "size": meta.get("size", "unknown"),
+                }
+                (target_dir / self.MODEL_META_FILE).write_text(
+                    json.dumps(model_meta, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                self._set_progress(model_id, 100, DownloadStatus.COMPLETED)
+                logger.info(f"VAD 模型 {model_id} 安装完成: {target_dir / onnx_filename}")
+                return
+
+            logger.info(f"模型 {model_id} 下载完成，开始解压...")
+            self._set_progress(model_id, 91, DownloadStatus.EXTRACTING)
+
             if extract_tmp.exists():
                 shutil.rmtree(extract_tmp)
             extract_tmp.mkdir(parents=True)
@@ -666,7 +825,7 @@ class ModelManager:
                 tar.extractall(path=extract_tmp)
 
             # 找到包含模型文件的目录
-            source_dir = self._find_model_dir(extract_tmp, is_vad=meta.get("category") == "vad")
+            source_dir = self._find_model_dir(extract_tmp, is_vad=is_vad)
 
             if source_dir is None:
                 contents = list(extract_tmp.rglob("*"))[:30]

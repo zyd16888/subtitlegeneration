@@ -57,13 +57,13 @@ class Settings(BaseSettings):
     deepl_api_key: Optional[str] = None
     deeplx_url: Optional[str] = None
     
-    # VAD 配置
-    enable_vad: bool = False
+    # VAD 配置（参考官方 generate-subtitles.py 推荐）
+    enable_vad: bool = True  # 默认启用 VAD，获得精确时间戳
     vad_model_id: Optional[str] = None
-    vad_threshold: float = 0.5
-    vad_min_silence_duration: float = 0.5
-    vad_min_speech_duration: float = 0.25
-    vad_max_speech_duration: float = 20.0
+    vad_threshold: float = 0.2  # 官方推荐：更敏感，检测更多语音
+    vad_min_silence_duration: float = 0.25  # 官方推荐：更短，分割更细
+    vad_min_speech_duration: float = 0.25  # 官方推荐
+    vad_max_speech_duration: float = 5.0  # 官方推荐：避免单段太长
 
     # 任务配置
     max_concurrent_tasks: int = 2

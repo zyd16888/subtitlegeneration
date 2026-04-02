@@ -10,6 +10,7 @@ import type {
   MediaItem,
   PaginatedMediaResponse,
   Task,
+  TaskDetail,
   PaginatedTaskResponse,
   CreateTaskRequest,
   SystemConfig,
@@ -152,8 +153,8 @@ class ApiClient {
     /**
      * 获取任务详情
      */
-    getTask: async (taskId: string): Promise<Task> => {
-      const response = await this.client.get<Task>(`/api/tasks/${taskId}`);
+    getTask: async (taskId: string): Promise<TaskDetail> => {
+      const response = await this.client.get<TaskDetail>(`/api/tasks/${taskId}`);
       return response.data;
     },
 

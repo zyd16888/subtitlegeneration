@@ -4,8 +4,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
+from enum import Enum
 
 from models.base import get_db
 from models.task import Task, TaskStatus
@@ -16,6 +17,8 @@ from tasks.subtitle_tasks import generate_subtitle_task
 
 router = APIRouter(prefix="/api", tags=["tasks"])
 
+
+# ── 请求模型 ────────────────────────────────────────────────────────────────
 
 class TaskConfigRequest(BaseModel):
     """单个任务配置"""
@@ -34,20 +37,57 @@ class CreateTaskRequest(BaseModel):
     library_id: Optional[str] = None  # 当前浏览的媒体库 ID（用于路径映射匹配）
 
 
+# ── 响应模型 ────────────────────────────────────────────────────────────────
+
 class TaskResponse(BaseModel):
     """任务响应模型"""
     id: str
     media_item_id: str
     media_item_title: Optional[str] = None
     video_path: Optional[str] = None
+    
+    # 状态信息
     status: TaskStatus
-    progress: int
+    progress: int = Field(description="任务进度 (0-100)")
+    
+    # 时间信息
     created_at: datetime
+    started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    processing_time: Optional[float] = Field(None, description="处理耗时（秒）")
+    
+    # 错误信息
     error_message: Optional[str] = None
+    error_stage: Optional[str] = Field(None, description="错误发生的阶段")
+    
+    # 配置信息
+    asr_engine: Optional[str] = None
+    asr_model_id: Optional[str] = None
+    translation_service: Optional[str] = None
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
+    
+    # 结果信息
+    subtitle_path: Optional[str] = None
+    segment_count: Optional[int] = Field(None, description="识别的字幕段落数")
+    audio_duration: Optional[float] = Field(None, description="音频时长（秒）")
     
     class Config:
         from_attributes = True
+
+
+class TaskDetailResponse(TaskResponse):
+    """任务详情响应模型（包含更多细节）"""
+    extra_info: Optional[dict] = Field(None, description="扩展信息")
+    
+    # 计算字段
+    wait_time: Optional[float] = Field(None, description="等待时间（秒）")
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # 计算等待时间
+        if self.started_at and self.created_at:
+            self.wait_time = (self.started_at - self.created_at).total_seconds()
 
 
 class PaginatedTaskResponse(BaseModel):
@@ -57,6 +97,8 @@ class PaginatedTaskResponse(BaseModel):
     limit: int
     offset: int
 
+
+# ── 辅助函数 ────────────────────────────────────────────────────────────────
 
 async def get_emby_connector(db: Session = Depends(get_db)) -> EmbyConnector:
     """获取 Emby 连接器实例"""
@@ -71,6 +113,34 @@ async def get_emby_connector(db: Session = Depends(get_db)) -> EmbyConnector:
     
     return EmbyConnector(config.emby_url, config.emby_api_key)
 
+
+def task_to_response(task: Task) -> TaskResponse:
+    """将 Task 模型转换为响应模型"""
+    return TaskResponse(
+        id=task.id,
+        media_item_id=task.media_item_id,
+        media_item_title=task.media_item_title,
+        video_path=task.video_path,
+        status=task.status,
+        progress=task.progress,
+        created_at=task.created_at,
+        started_at=task.started_at,
+        completed_at=task.completed_at,
+        processing_time=task.processing_time,
+        error_message=task.error_message,
+        error_stage=task.error_stage,
+        asr_engine=task.asr_engine,
+        asr_model_id=task.asr_model_id,
+        translation_service=task.translation_service,
+        source_language=task.source_language,
+        target_language=task.target_language,
+        subtitle_path=task.subtitle_path,
+        segment_count=task.segment_count,
+        audio_duration=task.audio_duration,
+    )
+
+
+# ── API 端点 ────────────────────────────────────────────────────────────────
 
 @router.post("/tasks", response_model=List[TaskResponse])
 async def create_tasks(
@@ -98,6 +168,8 @@ async def create_tasks(
         )
     
     task_manager = TaskManager(db)
+    config_manager = ConfigManager(db)
+    config = await config_manager.get_config()
     created_tasks = []
     
     try:
@@ -122,11 +194,16 @@ async def create_tasks(
                             detail=f"获取媒体项 {media_item_id} 失败: {str(e)}"
                         )
                     
-                    # 创建任务
+                    # 创建任务（记录配置信息）
                     task = await task_manager.create_task(
                         media_item_id=media_item_id,
                         media_item_title=media_item.name,
-                        video_path=audio_url  # 存储音频流 URL
+                        video_path=audio_url,
+                        asr_engine=config.asr_engine,
+                        asr_model_id=config.asr_model_id,
+                        translation_service=config.translation_service,
+                        source_language=config.source_language,
+                        target_language=config.target_language,
                     )
                     
                     # 提交 Celery 任务（使用全局配置）
@@ -138,7 +215,7 @@ async def create_tasks(
                         source_language=None,  # 使用全局配置的语言
                     )
 
-                    created_tasks.append(TaskResponse.model_validate(task))
+                    created_tasks.append(task_to_response(task))
 
             # 处理单独配置的任务
             if request.tasks:
@@ -160,11 +237,21 @@ async def create_tasks(
                             detail=f"获取媒体项 {task_config.media_item_id} 失败: {str(e)}"
                         )
 
+                    # 确定使用的配置
+                    task_asr_engine = task_config.asr_engine or config.asr_engine
+                    task_translation_service = task_config.translation_service or config.translation_service
+                    task_source_language = task_config.source_language or config.source_language
+
                     # 创建任务
                     task = await task_manager.create_task(
                         media_item_id=task_config.media_item_id,
                         media_item_title=media_item.name,
-                        video_path=audio_url  # 存储音频流 URL
+                        video_path=audio_url,
+                        asr_engine=task_asr_engine,
+                        asr_model_id=config.asr_model_id,
+                        translation_service=task_translation_service,
+                        source_language=task_source_language,
+                        target_language=config.target_language,
                     )
 
                     # 提交 Celery 任务（使用自定义配置）
@@ -177,10 +264,10 @@ async def create_tasks(
                         openai_model=task_config.openai_model,
                         library_id=request.library_id,
                         path_mapping_index=task_config.path_mapping_index,
-                        source_language=task_config.source_language,  # 语音识别语言
+                        source_language=task_config.source_language,
                     )
                     
-                    created_tasks.append(TaskResponse.model_validate(task))
+                    created_tasks.append(task_to_response(task))
         
         return created_tasks
         
@@ -226,7 +313,7 @@ async def get_tasks(
         total = len(all_tasks)
         
         return PaginatedTaskResponse(
-            items=[TaskResponse.model_validate(task) for task in tasks],
+            items=[task_to_response(task) for task in tasks],
             total=total,
             limit=limit,
             offset=offset
@@ -239,7 +326,7 @@ async def get_tasks(
         )
 
 
-@router.get("/tasks/{task_id}", response_model=TaskResponse)
+@router.get("/tasks/{task_id}", response_model=TaskDetailResponse)
 async def get_task(
     task_id: str,
     db: Session = Depends(get_db)
@@ -251,7 +338,7 @@ async def get_task(
         task_id: 任务 ID
         
     Returns:
-        任务详情
+        任务详情（包含更多细节）
     """
     task_manager = TaskManager(db)
     
@@ -264,7 +351,35 @@ async def get_task(
                 detail=f"任务 {task_id} 不存在"
             )
         
-        return TaskResponse.model_validate(task)
+        # 计算等待时间
+        wait_time = None
+        if task.started_at and task.created_at:
+            wait_time = (task.started_at - task.created_at).total_seconds()
+        
+        return TaskDetailResponse(
+            id=task.id,
+            media_item_id=task.media_item_id,
+            media_item_title=task.media_item_title,
+            video_path=task.video_path,
+            status=task.status,
+            progress=task.progress,
+            created_at=task.created_at,
+            started_at=task.started_at,
+            completed_at=task.completed_at,
+            processing_time=task.processing_time,
+            error_message=task.error_message,
+            error_stage=task.error_stage,
+            asr_engine=task.asr_engine,
+            asr_model_id=task.asr_model_id,
+            translation_service=task.translation_service,
+            source_language=task.source_language,
+            target_language=task.target_language,
+            subtitle_path=task.subtitle_path,
+            segment_count=task.segment_count,
+            audio_duration=task.audio_duration,
+            extra_info=task.extra_info,
+            wait_time=wait_time,
+        )
         
     except HTTPException:
         raise
@@ -311,7 +426,7 @@ async def cancel_task(
         
         # 获取更新后的任务
         task = await task_manager.get_task(task_id)
-        return TaskResponse.model_validate(task)
+        return task_to_response(task)
         
     except HTTPException:
         raise
@@ -360,10 +475,13 @@ async def retry_task(
         generate_subtitle_task.delay(
             task_id=new_task.id,
             media_item_id=new_task.media_item_id,
-            video_path=new_task.video_path
+            video_path=new_task.video_path,
+            asr_engine=new_task.asr_engine,
+            translation_service=new_task.translation_service,
+            source_language=new_task.source_language,
         )
         
-        return TaskResponse.model_validate(new_task)
+        return task_to_response(new_task)
         
     except HTTPException:
         raise

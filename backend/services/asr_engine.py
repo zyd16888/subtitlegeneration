@@ -5,6 +5,8 @@ Supports:
 - SherpaOnnxOnlineEngine  — 流式识别 (OnlineRecognizer)
 - SherpaOnnxOfflineEngine — 离线识别 (OfflineRecognizer, 包括 whisper / transducer)
 - CloudASREngine          — 云端 ASR API
+
+参考官方示例优化：https://github.com/k2-fsa/sherpa-onnx/blob/master/python-api-examples/generate-subtitles.py
 """
 
 import asyncio
@@ -21,8 +23,12 @@ import sherpa_onnx
 logger = logging.getLogger(__name__)
 
 
-def _read_wave(audio_path: str) -> Tuple[List[float], int]:
-    """读取 WAV 文件，返回 (float32 samples list, sample_rate)"""
+def _read_wave(audio_path: str) -> Tuple[np.ndarray, int]:
+    """
+    读取 WAV 文件，返回 (float32 numpy array, sample_rate)
+    
+    与官方示例一致，返回 numpy array 而非 list
+    """
     with wave.open(audio_path, "rb") as wf:
         sample_rate = wf.getframerate()
         num_channels = wf.getnchannels()
@@ -40,7 +46,7 @@ def _read_wave(audio_path: str) -> Tuple[List[float], int]:
     if num_channels > 1:
         samples = samples[::num_channels]  # 取第一声道
 
-    return samples.tolist(), sample_rate
+    return samples, sample_rate
 
 
 @dataclass
@@ -49,6 +55,10 @@ class Segment:
     start: float
     end: float
     text: str
+    
+    @property
+    def duration(self) -> float:
+        return self.end - self.start
 
 
 class ASREngine(ABC):
@@ -132,15 +142,15 @@ class SherpaOnnxOnlineEngine(ASREngine):
         return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
 
     def _transcribe_sync(self, audio_path: str) -> List[Segment]:
-        wave, sample_rate = _read_wave(audio_path)
+        samples, sample_rate = _read_wave(audio_path)
         stream = self.recognizer.create_stream()
 
         chunk_size = int(0.1 * sample_rate)
         segments: List[Segment] = []
         current_time = 0.0
 
-        for i in range(0, len(wave), chunk_size):
-            chunk = wave[i : i + chunk_size]
+        for i in range(0, len(samples), chunk_size):
+            chunk = samples[i : i + chunk_size]
             stream.accept_waveform(sample_rate, chunk)
             while self.recognizer.is_ready(stream):
                 self.recognizer.decode_stream(stream)
@@ -159,7 +169,7 @@ class SherpaOnnxOnlineEngine(ASREngine):
         if text:
             segments.append(
                 Segment(
-                    start=current_time - len(wave[-chunk_size:]) / sample_rate,
+                    start=current_time - len(samples[-chunk_size:]) / sample_rate,
                     end=current_time,
                     text=text,
                 )
@@ -179,6 +189,8 @@ class SherpaOnnxOfflineEngine(ASREngine):
     - whisper:    whisper 系列模型 (encoder + decoder)
 
     Whisper 模型支持运行时指定语言（通过 transcribe 的 language 参数）。
+    
+    注意：此引擎不提供精确时间戳，建议使用 SherpaOnnxVadOfflineEngine 获得更好的效果。
     """
 
     def __init__(
@@ -187,6 +199,8 @@ class SherpaOnnxOfflineEngine(ASREngine):
         model_type: str = "transducer",
         file_map: Optional[Dict[str, str]] = None,
         language: str = "",
+        num_threads: int = 4,
+        debug: bool = False,
     ):
         """
         Args:
@@ -194,6 +208,8 @@ class SherpaOnnxOfflineEngine(ASREngine):
             model_type: "transducer" 或 "whisper"
             file_map:   各文件的映射
             language:   默认语言代码 (如 "ja", "zh", "en")，空字符串表示自动检测
+            num_threads: 线程数
+            debug:      是否输出调试信息
         """
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model path not found: {model_path}")
@@ -202,8 +218,9 @@ class SherpaOnnxOfflineEngine(ASREngine):
         self.model_type = model_type
         self.default_language = language
         self.file_map = file_map or self._default_file_map()
+        self.num_threads = num_threads
+        self.debug = debug
         self.recognizer: Optional[sherpa_onnx.OfflineRecognizer] = None
-        self._runtime_language: Optional[str] = None  # 运行时语言覆盖
         self._initialize_recognizer(language)
 
     def _default_file_map(self) -> Dict[str, str]:
@@ -247,8 +264,9 @@ class SherpaOnnxOfflineEngine(ASREngine):
                     tokens=tokens_path,
                     language=language or "",  # 空字符串表示自动检测
                     task="transcribe",
-                    num_threads=4,
+                    num_threads=self.num_threads,
                     decoding_method="greedy_search",
+                    debug=self.debug,
                 )
             else:
                 joiner_path = os.path.join(self.model_path, self.file_map["joiner"])
@@ -259,8 +277,9 @@ class SherpaOnnxOfflineEngine(ASREngine):
                     decoder=decoder_path,
                     joiner=joiner_path,
                     tokens=tokens_path,
-                    num_threads=4,
+                    num_threads=self.num_threads,
                     decoding_method="greedy_search",
+                    debug=self.debug,
                 )
 
             logger.info("OfflineRecognizer initialized successfully")
@@ -296,19 +315,20 @@ class SherpaOnnxOfflineEngine(ASREngine):
         return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
 
     def _transcribe_sync(self, audio_path: str) -> List[Segment]:
-        wave, sample_rate = _read_wave(audio_path)
+        samples, sample_rate = _read_wave(audio_path)
 
         stream = self.recognizer.create_stream()
-        stream.accept_waveform(sample_rate, wave)
+        stream.accept_waveform(sample_rate, samples)
         self.recognizer.decode_stream(stream)
 
         text = stream.result.text.strip()
         if not text:
             return []
 
-        duration = len(wave) / sample_rate
+        duration = len(samples) / sample_rate
 
         # OfflineRecognizer 不提供时间戳，按固定长度切分
+        # 建议：使用 SherpaOnnxVadOfflineEngine 获得精确时间戳
         sentences = self._split_text(text)
         segments: List[Segment] = []
         avg_duration = duration / max(len(sentences), 1)
@@ -346,16 +366,29 @@ class SherpaOnnxOfflineEngine(ASREngine):
         return result if result else [text]
 
 
-# ── VAD + Offline Engine ───────────────────────────────────────────────────
+# ── VAD + Offline Engine (优化版，参考官方示例) ────────────────────────────
 
 
 class SherpaOnnxVadOfflineEngine(ASREngine):
     """
-    VAD + 离线 ASR 引擎。
+    VAD + 离线 ASR 引擎（参考官方 generate-subtitles.py 优化）。
 
     先用 silero_vad 检测语音段获得精确时间戳，再逐段用 OfflineRecognizer 识别。
-    相比 SherpaOnnxOfflineEngine，字幕时间戳更准确。
+    
+    改进点：
+    1. VAD 参数优化（参考官方示例）：
+       - threshold: 0.2（更敏感）
+       - min_silence_duration: 0.25（更短的静音检测）
+       - max_speech_duration: 5.0（避免单段太长）
+    2. 批量处理 VAD 段落（官方示例的优化方式）
+    3. 过滤无意义的识别结果
     """
+
+    # 官方示例的默认 VAD 参数
+    DEFAULT_VAD_THRESHOLD = 0.2
+    DEFAULT_VAD_MIN_SILENCE_DURATION = 0.25
+    DEFAULT_VAD_MIN_SPEECH_DURATION = 0.25
+    DEFAULT_VAD_MAX_SPEECH_DURATION = 5.0
 
     def __init__(
         self,
@@ -364,10 +397,12 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
         file_map: Optional[Dict[str, str]] = None,
         language: str = "",
         vad_model_path: str = "",
-        vad_threshold: float = 0.5,
-        vad_min_silence_duration: float = 0.5,
-        vad_min_speech_duration: float = 0.25,
-        vad_max_speech_duration: float = 20.0,
+        vad_threshold: float = DEFAULT_VAD_THRESHOLD,
+        vad_min_silence_duration: float = DEFAULT_VAD_MIN_SILENCE_DURATION,
+        vad_min_speech_duration: float = DEFAULT_VAD_MIN_SPEECH_DURATION,
+        vad_max_speech_duration: float = DEFAULT_VAD_MAX_SPEECH_DURATION,
+        num_threads: int = 4,
+        debug: bool = False,
     ):
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model path not found: {model_path}")
@@ -376,17 +411,33 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
 
         self.model_path = model_path
         self.model_type = model_type
-        self.default_language = language  # 默认语言
-        self.file_map = file_map or SherpaOnnxOfflineEngine(model_path, model_type)._default_file_map()
+        self.default_language = language
+        self.file_map = file_map or self._default_file_map()
         self.vad_model_path = vad_model_path
         self.vad_threshold = vad_threshold
         self.vad_min_silence_duration = vad_min_silence_duration
         self.vad_min_speech_duration = vad_min_speech_duration
         self.vad_max_speech_duration = vad_max_speech_duration
+        self.num_threads = num_threads
+        self.debug = debug
 
         self.recognizer: Optional[sherpa_onnx.OfflineRecognizer] = None
         self.vad: Optional[sherpa_onnx.VoiceActivityDetector] = None
         self._initialize()
+
+    def _default_file_map(self) -> Dict[str, str]:
+        if self.model_type == "whisper":
+            return {
+                "tokens": "tokens.txt",
+                "encoder": "encoder.onnx",
+                "decoder": "decoder.onnx",
+            }
+        return {
+            "tokens": "tokens.txt",
+            "encoder": "encoder.onnx",
+            "decoder": "decoder.onnx",
+            "joiner": "joiner.onnx",
+        }
 
     def _initialize(self, language: str = None):
         """
@@ -409,8 +460,9 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
                     tokens=tokens_path,
                     language=lang or "",
                     task="transcribe",
-                    num_threads=4,
+                    num_threads=self.num_threads,
                     decoding_method="greedy_search",
+                    debug=self.debug,
                 )
             else:
                 joiner_path = os.path.join(self.model_path, self.file_map["joiner"])
@@ -419,23 +471,33 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
                     decoder=decoder_path,
                     joiner=joiner_path,
                     tokens=tokens_path,
-                    num_threads=4,
+                    num_threads=self.num_threads,
                     decoding_method="greedy_search",
+                    debug=self.debug,
                 )
 
             # 创建 VAD（只在首次初始化时创建）
             if self.vad is None:
                 vad_config = sherpa_onnx.VadModelConfig()
                 vad_config.silero_vad.model = self.vad_model_path
+                # 使用官方示例推荐的参数
                 vad_config.silero_vad.threshold = self.vad_threshold
                 vad_config.silero_vad.min_silence_duration = self.vad_min_silence_duration
                 vad_config.silero_vad.min_speech_duration = self.vad_min_speech_duration
+                # If the current segment is larger than this value, then it increases
+                # the threshold to 0.9 internally. After detecting this segment,
+                # it resets the threshold to its original value.
                 vad_config.silero_vad.max_speech_duration = self.vad_max_speech_duration
                 vad_config.sample_rate = 16000
-                vad_config.num_threads = 4
-                self.vad = sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=30)
+                vad_config.num_threads = self.num_threads
+                
+                # buffer_size_in_seconds=100 参考官方示例
+                self.vad = sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=100)
 
             logger.info(f"VadOfflineEngine initialized (VAD + OfflineRecognizer, language={lang or 'auto'})")
+            logger.info(f"  VAD params: threshold={self.vad_threshold}, "
+                       f"min_silence={self.vad_min_silence_duration}s, "
+                       f"max_speech={self.vad_max_speech_duration}s")
         except Exception as e:
             logger.error(f"Failed to initialize VadOfflineEngine: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize VadOfflineEngine: {e}")
@@ -464,41 +526,68 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
         return await loop.run_in_executor(None, self._transcribe_sync, audio_path)
 
     def _transcribe_sync(self, audio_path: str) -> List[Segment]:
+        """
+        转录音频（参考官方示例优化）。
+        
+        改进：
+        1. 批量处理 VAD 段落
+        2. 过滤无意义的识别结果
+        """
         samples, sample_rate = _read_wave(audio_path)
-        window_size = self.vad.config.silero_vad.window_size  # 512 for 16kHz
+        
+        # 官方示例：window_size = config.silero_vad.window_size (512 for 16kHz)
+        window_size = self.vad.config.silero_vad.window_size
 
-        segments: List[Segment] = []
-
-        # 逐窗口喂入 VAD
-        for i in range(0, len(samples), window_size):
-            chunk = samples[i: i + window_size]
+        # 逐窗口喂入 VAD（参考官方示例）
+        buffer = samples
+        for i in range(0, len(buffer), window_size):
+            chunk = buffer[i: i + window_size]
             if len(chunk) < window_size:
                 break
             self.vad.accept_waveform(chunk)
-            self._process_vad_segments(sample_rate, segments)
 
         # 处理剩余音频
         self.vad.flush()
-        self._process_vad_segments(sample_rate, segments)
 
-        logger.info(f"VAD+ASR transcription complete: {len(segments)} segments")
-        return segments
+        # 批量处理 VAD 段落（参考官方示例的优化方式）
+        segments: List[Segment] = []
+        streams = []
+        vad_segments = []
 
-    def _process_vad_segments(self, sample_rate: int, segments: List[Segment]):
+        # 收集所有 VAD 段落
         while not self.vad.empty():
             start_time = self.vad.front.start / sample_rate
             seg_samples = self.vad.front.samples
             duration = len(seg_samples) / sample_rate
 
+            # 创建 stream 并接受波形
             stream = self.recognizer.create_stream()
-            stream.accept_waveform(sample_rate, list(seg_samples))
-            self.recognizer.decode_stream(stream)
-            text = stream.result.text.strip()
-
-            if text:
-                segments.append(Segment(start=start_time, end=start_time + duration, text=text))
+            stream.accept_waveform(sample_rate, seg_samples)
+            streams.append(stream)
+            vad_segments.append((start_time, duration))
 
             self.vad.pop()
+
+        # 批量解码
+        for s in streams:
+            self.recognizer.decode_stream(s)
+
+        # 收集结果并过滤
+        for (start_time, duration), stream in zip(vad_segments, streams):
+            text = stream.result.text.strip()
+            
+            # 过滤无意义的识别结果（参考官方示例）
+            if not text or text in (".", "The.", "。"):
+                continue
+                
+            segments.append(Segment(
+                start=start_time,
+                end=start_time + duration,
+                text=text,
+            ))
+
+        logger.info(f"VAD+ASR transcription complete: {len(segments)} segments")
+        return segments
 
 
 # ── Cloud ASR Engine ────────────────────────────────────────────────────────

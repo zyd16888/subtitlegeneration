@@ -7,13 +7,7 @@
 /**
  * 任务状态枚举
  */
-export enum TaskStatus {
-  PENDING = 'pending',
-  PROCESSING = 'processing',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-  CANCELLED = 'cancelled',
-}
+export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 /**
  * 媒体库类型
@@ -54,11 +48,40 @@ export interface Task {
   media_item_id: string;
   media_item_title?: string;
   video_path?: string;
+  
+  // 状态信息
   status: TaskStatus;
   progress: number;
+  
+  // 时间信息
   created_at: string;
+  started_at?: string;
   completed_at?: string;
+  processing_time?: number;  // 处理耗时（秒）
+  
+  // 错误信息
   error_message?: string;
+  error_stage?: string;  // 错误发生的阶段
+  
+  // 配置信息
+  asr_engine?: string;
+  asr_model_id?: string;
+  translation_service?: string;
+  source_language?: string;
+  target_language?: string;
+  
+  // 结果信息
+  subtitle_path?: string;
+  segment_count?: number;  // 识别的字幕段落数
+  audio_duration?: number;  // 音频时长（秒）
+}
+
+/**
+ * 任务详情（包含更多细节）
+ */
+export interface TaskDetail extends Task {
+  extra_info?: Record<string, any>;
+  wait_time?: number;  // 等待时间（秒）
 }
 
 /**
@@ -87,7 +110,7 @@ export interface PathMapping {
 export interface TaskConfig {
   media_item_id: string;
   asr_engine?: 'sherpa-onnx' | 'cloud';
-  translation_service?: 'openai' | 'deepseek' | 'local';
+  translation_service?: 'openai' | 'deepseek' | 'local' | 'google' | 'microsoft' | 'baidu' | 'deepl';
   openai_model?: string;
   path_mapping_index?: number;
   source_language?: string; // 语音识别语言，覆盖全局配置
@@ -271,3 +294,44 @@ export interface ConfigValidationResult {
   missing_fields: string[];
   message: string;
 }
+
+/**
+ * 语言代码到名称的映射
+ */
+export const LANGUAGE_NAMES: Record<string, string> = {
+  'ja': '日语',
+  'zh': '中文',
+  'en': '英语',
+  'ko': '韩语',
+  'fr': '法语',
+  'de': '德语',
+  'es': '西班牙语',
+  'ru': '俄语',
+  'pt': '葡萄牙语',
+  'it': '意大利语',
+  'th': '泰语',
+  'vi': '越南语',
+  'ar': '阿拉伯语',
+  'yue': '粤语',
+};
+
+/**
+ * 翻译服务名称映射
+ */
+export const TRANSLATION_SERVICE_NAMES: Record<string, string> = {
+  'openai': 'OpenAI',
+  'deepseek': 'DeepSeek',
+  'local': '本地 LLM',
+  'google': 'Google 翻译',
+  'microsoft': '微软翻译',
+  'baidu': '百度翻译',
+  'deepl': 'DeepL',
+};
+
+/**
+ * ASR 引擎名称映射
+ */
+export const ASR_ENGINE_NAMES: Record<string, string> = {
+  'sherpa-onnx': 'Sherpa-ONNX (本地)',
+  'cloud': '云端 ASR',
+};

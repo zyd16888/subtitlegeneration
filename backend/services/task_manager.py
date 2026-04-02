@@ -3,7 +3,7 @@
 
 负责管理字幕生成任务的生命周期，包括创建、查询、更新、取消和重试任务。
 """
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
@@ -56,7 +56,12 @@ class TaskManager:
         self,
         media_item_id: str,
         media_item_title: str,
-        video_path: str
+        video_path: str,
+        asr_engine: str = None,
+        asr_model_id: str = None,
+        translation_service: str = None,
+        source_language: str = None,
+        target_language: str = None,
     ) -> Task:
         """
         创建新的字幕生成任务
@@ -65,6 +70,11 @@ class TaskManager:
             media_item_id: Emby 媒体项 ID
             media_item_title: 媒体项标题
             video_path: 视频文件路径
+            asr_engine: ASR 引擎类型
+            asr_model_id: ASR 模型 ID
+            translation_service: 翻译服务
+            source_language: 源语言
+            target_language: 目标语言
             
         Returns:
             创建的任务对象
@@ -76,7 +86,12 @@ class TaskManager:
             video_path=video_path,
             status=TaskStatus.PENDING,
             progress=0,
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
+            asr_engine=asr_engine,
+            asr_model_id=asr_model_id,
+            translation_service=translation_service,
+            source_language=source_language,
+            target_language=target_language,
         )
         
         self.db.add(task)
@@ -129,7 +144,8 @@ class TaskManager:
         task_id: str,
         status: TaskStatus,
         progress: Optional[int] = None,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
+        error_stage: Optional[str] = None,
     ) -> Optional[Task]:
         """
         更新任务状态和进度
@@ -139,6 +155,7 @@ class TaskManager:
             status: 新的任务状态
             progress: 可选的进度值 (0-100)
             error_message: 可选的错误信息
+            error_stage: 错误发生的阶段
             
         Returns:
             更新后的任务对象，如果任务不存在则返回 None
@@ -156,9 +173,97 @@ class TaskManager:
         if error_message is not None:
             task.error_message = error_message
         
+        if error_stage is not None:
+            task.error_stage = error_stage
+        
+        # 如果任务开始处理，设置开始时间
+        if status == TaskStatus.PROCESSING and task.started_at is None:
+            task.started_at = datetime.utcnow()
+        
         # 如果任务完成或失败，设置完成时间
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
             task.completed_at = datetime.utcnow()
+            # 计算处理耗时
+            if task.started_at:
+                task.processing_time = (task.completed_at - task.started_at).total_seconds()
+        
+        self.db.commit()
+        self.db.refresh(task)
+        
+        return task
+    
+    async def update_task_progress(
+        self,
+        task_id: str,
+        progress: int,
+        stage: str = None,
+    ) -> Optional[Task]:
+        """
+        更新任务进度（不改变状态）
+        
+        Args:
+            task_id: 任务 ID
+            progress: 进度值 (0-100)
+            stage: 当前阶段名称
+            
+        Returns:
+            更新后的任务对象
+        """
+        task = await self.get_task(task_id)
+        
+        if task is None:
+            return None
+        
+        task.progress = max(0, min(100, progress))
+        
+        # 更新扩展信息中的当前阶段
+        if stage:
+            if task.extra_info is None:
+                task.extra_info = {}
+            task.extra_info['current_stage'] = stage
+        
+        self.db.commit()
+        self.db.refresh(task)
+        
+        return task
+    
+    async def update_task_result(
+        self,
+        task_id: str,
+        subtitle_path: str = None,
+        segment_count: int = None,
+        audio_duration: float = None,
+        extra_info: Dict[str, Any] = None,
+    ) -> Optional[Task]:
+        """
+        更新任务结果信息
+        
+        Args:
+            task_id: 任务 ID
+            subtitle_path: 生成的字幕文件路径
+            segment_count: 识别的字幕段落数
+            audio_duration: 音频时长
+            extra_info: 扩展信息
+            
+        Returns:
+            更新后的任务对象
+        """
+        task = await self.get_task(task_id)
+        
+        if task is None:
+            return None
+        
+        if subtitle_path is not None:
+            task.subtitle_path = subtitle_path
+        if segment_count is not None:
+            task.segment_count = segment_count
+        if audio_duration is not None:
+            task.audio_duration = audio_duration
+        if extra_info is not None:
+            if task.extra_info:
+                task.extra_info.update(extra_info)
+            else:
+                task.extra_info = extra_info
         
         self.db.commit()
         self.db.refresh(task)
@@ -197,7 +302,7 @@ class TaskManager:
         """
         重试失败的任务
         
-        创建一个新任务，复制原任务的媒体项信息
+        创建一个新任务，复制原任务的媒体项信息和配置
         
         Args:
             task_id: 原任务 ID
@@ -214,11 +319,16 @@ class TaskManager:
         if original_task.status != TaskStatus.FAILED:
             return None
         
-        # 创建新任务
+        # 创建新任务，复制原任务的配置
         new_task = await self.create_task(
             media_item_id=original_task.media_item_id,
             media_item_title=original_task.media_item_title,
-            video_path=original_task.video_path
+            video_path=original_task.video_path,
+            asr_engine=original_task.asr_engine,
+            asr_model_id=original_task.asr_model_id,
+            translation_service=original_task.translation_service,
+            source_language=original_task.source_language,
+            target_language=original_task.target_language,
         )
         
         return new_task

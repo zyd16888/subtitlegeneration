@@ -20,6 +20,9 @@ const Settings: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(true);
   const [savingAll, setSavingAll] = useState(false);
+  const [savingEmby, setSavingEmby] = useState(false);
+  const [savingTranslation, setSavingTranslation] = useState(false);
+  const [savingEngine, setSavingEngine] = useState(false);
   const [testingEmby, setTestingEmby] = useState(false);
   const [testingTranslation, setTestingTranslation] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -221,6 +224,82 @@ const Settings: React.FC = () => {
     } finally { setSavingAll(false); }
   };
 
+  // 分区保存函数
+  const handleSaveEmby = async () => {
+    try {
+      const values = {
+        emby_url: form.getFieldValue('emby_url'),
+        emby_api_key: form.getFieldValue('emby_api_key'),
+      };
+      setSavingEmby(true);
+      await api.config.partialUpdateConfig(values);
+      message.success('Emby 配置已保存');
+    } catch (err: any) {
+      message.error(err.message || '保存失败');
+    } finally { setSavingEmby(false); }
+  };
+
+  const handleSaveTranslation = async () => {
+    try {
+      const service = form.getFieldValue('translation_service');
+      const values: any = { translation_service: service };
+      
+      if (service === 'openai') {
+        values.openai_api_key = form.getFieldValue('openai_api_key');
+        values.openai_model = form.getFieldValue('openai_model');
+      } else if (service === 'deepseek') {
+        values.deepseek_api_key = form.getFieldValue('deepseek_api_key');
+      } else if (service === 'local') {
+        values.local_llm_url = form.getFieldValue('local_llm_url');
+      } else if (service === 'google') {
+        values.google_translate_mode = form.getFieldValue('google_translate_mode');
+        values.google_api_key = form.getFieldValue('google_api_key');
+      } else if (service === 'microsoft') {
+        values.microsoft_translate_mode = form.getFieldValue('microsoft_translate_mode');
+        values.microsoft_api_key = form.getFieldValue('microsoft_api_key');
+        values.microsoft_region = form.getFieldValue('microsoft_region');
+      } else if (service === 'baidu') {
+        values.baidu_app_id = form.getFieldValue('baidu_app_id');
+        values.baidu_secret_key = form.getFieldValue('baidu_secret_key');
+      } else if (service === 'deepl') {
+        values.deepl_mode = form.getFieldValue('deepl_mode');
+        values.deepl_api_key = form.getFieldValue('deepl_api_key');
+        values.deeplx_url = form.getFieldValue('deeplx_url');
+      }
+      
+      setSavingTranslation(true);
+      await api.config.partialUpdateConfig(values);
+      message.success('翻译配置已保存');
+    } catch (err: any) {
+      message.error(err.message || '保存失败');
+    } finally { setSavingTranslation(false); }
+  };
+
+  const handleSaveEngine = async () => {
+    try {
+      const values = {
+        asr_engine: form.getFieldValue('asr_engine'),
+        asr_model_id: form.getFieldValue('asr_model_id'),
+        source_language: form.getFieldValue('source_language'),
+        target_language: form.getFieldValue('target_language'),
+        enable_vad: form.getFieldValue('enable_vad'),
+        vad_model_id: form.getFieldValue('vad_model_id'),
+        vad_threshold: form.getFieldValue('vad_threshold'),
+        vad_min_silence_duration: form.getFieldValue('vad_min_silence_duration'),
+        vad_min_speech_duration: form.getFieldValue('vad_min_speech_duration'),
+        vad_max_speech_duration: form.getFieldValue('vad_max_speech_duration'),
+        max_concurrent_tasks: form.getFieldValue('max_concurrent_tasks'),
+        cloud_asr_url: form.getFieldValue('cloud_asr_url'),
+        cloud_asr_api_key: form.getFieldValue('cloud_asr_api_key'),
+      };
+      setSavingEngine(true);
+      await api.config.partialUpdateConfig(values);
+      message.success('引擎配置已保存');
+    } catch (err: any) {
+      message.error(err.message || '保存失败');
+    } finally { setSavingEngine(false); }
+  };
+
   const testEmby = async () => {
     setTestingEmby(true);
     try {
@@ -419,9 +498,14 @@ const Settings: React.FC = () => {
                 <div style={{ background: 'var(--accent-cyan-bg)', padding: 8, borderRadius: 8, color: 'var(--accent-cyan)' }}><CloudServerOutlined /></div>
                 Emby 核心节点
               </div>
-              <Button onClick={testEmby} loading={testingEmby} style={{ borderRadius: 20 }}>
-                测试连通性
-              </Button>
+              <Space>
+                <Button onClick={testEmby} loading={testingEmby} style={{ borderRadius: 20 }}>
+                  测试连通性
+                </Button>
+                <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveEmby} loading={savingEmby} style={{ borderRadius: 20, background: 'var(--accent-cyan)' }}>
+                  保存
+                </Button>
+              </Space>
             </div>
             
             <Row gutter={24}>
@@ -556,11 +640,16 @@ const Settings: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
                 <div style={{ background: 'var(--accent-emerald-bg)', padding: 8, borderRadius: 8, color: 'var(--accent-emerald)' }}><TranslationOutlined /></div>
-                神经翻译管线
+                翻译服务
               </div>
-              <Button onClick={testTranslation} loading={testingTranslation} style={{ borderRadius: 20 }}>
-                测试通道
-              </Button>
+              <Space>
+                <Button onClick={testTranslation} loading={testingTranslation} style={{ borderRadius: 20 }}>
+                  测试通道
+                </Button>
+                <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveTranslation} loading={savingTranslation} style={{ borderRadius: 20, background: 'var(--accent-emerald)' }}>
+                  保存
+                </Button>
+              </Space>
             </div>
             
             <Form.Item name="translation_service" label="主理翻译引擎">
@@ -690,9 +779,14 @@ const Settings: React.FC = () => {
                 <div style={{ background: 'var(--accent-amber-bg)', padding: 8, borderRadius: 8, color: 'var(--accent-amber)' }}><RocketOutlined /></div>
                 ASR 识别引擎配置
               </div>
-              <Button icon={<ReloadOutlined />} onClick={loadModels} loading={modelsLoading} style={{ borderRadius: 20 }} type="text">
-                刷新模型列表
-              </Button>
+              <Space>
+                <Button icon={<ReloadOutlined />} onClick={() => { loadModels(); loadVadModels(); }} loading={modelsLoading} style={{ borderRadius: 20 }} type="text">
+                  刷新模型列表
+                </Button>
+                <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveEngine} loading={savingEngine} style={{ borderRadius: 20, background: 'var(--accent-amber)' }}>
+                  保存
+                </Button>
+              </Space>
             </div>
             
             <Row gutter={24} style={{ marginBottom: 24 }}>
@@ -817,7 +911,21 @@ const Settings: React.FC = () => {
                     </Row>
 
                     {/* VAD 模型下载列表 */}
-                    {vadModels.length > 0 && (
+                          {vadModelsLoading ? (
+                            <div style={{ textAlign: 'center', padding: 16 }}>
+                              <LoadingOutlined spin style={{ fontSize: 20, color: 'var(--accent-cyan)' }} />
+                              <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 12 }}>加载中...</div>
+                            </div>
+                          ) : vadModels.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: 16 }}>
+                              <Text type='secondary' style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                                暂无 VAD 模型，点击刷新按钮加载
+                              </Text>
+                              <Button size='small' icon={<ReloadOutlined />} onClick={() => { api.models.refreshModels().then(loadModels); loadVadModels(); }} loading={vadModelsLoading}>
+                                加载 VAD 模型
+                              </Button>
+                            </div>
+                          ) : vadModels.length > 0 && (
                       <div style={{ marginBottom: 12 }}>
                         {vadModels.map(m => {
                           const progress = downloadProgress[m.id];
