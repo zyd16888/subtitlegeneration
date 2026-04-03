@@ -172,6 +172,13 @@ export interface SystemConfig {
   // 路径映射配置
   path_mappings: PathMapping[];
 
+  // Telegram Bot 配置
+  telegram_bot_enabled?: boolean;
+  telegram_bot_token?: string;
+  telegram_admin_ids?: string;
+  telegram_daily_task_limit?: number;
+  telegram_max_concurrent_per_user?: number;
+
   // 任务配置
   max_concurrent_tasks: number;
   temp_dir: string;
@@ -305,6 +312,15 @@ export interface TempDiskUsage {
   total_mb: number;
   task_count: number;
   details: { task_id: string; bytes: number; mb: number }[];
+}
+
+/**
+ * Bot 状态类型
+ */
+export interface BotStatus {
+  running: boolean;
+  uptime_seconds?: number;
+  message: string;
 }
 
 /**

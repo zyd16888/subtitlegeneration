@@ -460,6 +460,61 @@ async def cleanup_temp_files(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"清理失败: {str(e)}")
 
 
+class BotStatusResponse(BaseModel):
+    """Bot 状态响应"""
+    running: bool
+    uptime_seconds: Optional[float] = None
+    message: str = ""
+
+
+@router.get("/config/bot-status", response_model=BotStatusResponse)
+async def get_bot_status():
+    """获取 Telegram Bot 运行状态"""
+    from tgbot.bot import get_status
+    status = get_status()
+    return BotStatusResponse(
+        running=status["running"],
+        uptime_seconds=status.get("uptime_seconds"),
+        message="运行中" if status["running"] else "未启动",
+    )
+
+
+@router.post("/config/bot-start", response_model=BotStatusResponse)
+async def start_telegram_bot(db: Session = Depends(get_db)):
+    """启动 Telegram Bot"""
+    from tgbot.bot import start_bot
+    # 标记为启用
+    config_manager = ConfigManager(db)
+    current = await config_manager.get_config()
+    if not current.telegram_bot_token:
+        raise HTTPException(status_code=400, detail="请先配置 Bot Token")
+    merged = current.model_copy(update={"telegram_bot_enabled": True})
+    await config_manager.partial_update_config(merged, {"telegram_bot_enabled"})
+
+    result = await start_bot()
+    return BotStatusResponse(
+        running=result["running"],
+        message=result["message"],
+    )
+
+
+@router.post("/config/bot-stop", response_model=BotStatusResponse)
+async def stop_telegram_bot(db: Session = Depends(get_db)):
+    """停止 Telegram Bot"""
+    from tgbot.bot import stop_bot
+    # 标记为禁用
+    config_manager = ConfigManager(db)
+    current = await config_manager.get_config()
+    merged = current.model_copy(update={"telegram_bot_enabled": False})
+    await config_manager.partial_update_config(merged, {"telegram_bot_enabled"})
+
+    result = await stop_bot()
+    return BotStatusResponse(
+        running=result["running"],
+        message=result["message"],
+    )
+
+
 @router.get("/config/temp-disk-usage", response_model=dict)
 async def get_temp_disk_usage(db: Session = Depends(get_db)):
     """

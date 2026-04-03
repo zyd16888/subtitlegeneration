@@ -25,6 +25,9 @@ openai==1.10.0
 googletrans==4.0.0rc1
 deepl==1.18.0
 
+# Telegram Bot
+python-telegram-bot[job-queue]>=21.0
+
 # Utilities
 python-dotenv==1.0.0
 pydantic==2.5.3

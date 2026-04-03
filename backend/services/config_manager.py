@@ -56,6 +56,13 @@ class SystemConfigData(BaseModel):
     # 格式: [{"name": "映射名称", "emby_prefix": "/me/matched", "local_prefix": "/mnt/drive/matched", "library_ids": []}]
     path_mappings: list = []
 
+    # Telegram Bot 配置
+    telegram_bot_enabled: bool = False  # Bot 启用开关（UI 控制）
+    telegram_bot_token: Optional[str] = None
+    telegram_admin_ids: Optional[str] = None
+    telegram_daily_task_limit: int = 10
+    telegram_max_concurrent_per_user: int = 2
+
     # 任务配置
     max_concurrent_tasks: int = 2
     temp_dir: str = "./data"

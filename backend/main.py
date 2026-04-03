@@ -186,6 +186,21 @@ async def startup_event():
         logger.error(f"数据库初始化失败: {e}")
         raise
     
+    # 恢复 Telegram Bot（仅在 UI 中标记为启用时自动启动）
+    try:
+        from models.base import SessionLocal
+        from services.config_manager import ConfigManager
+        db = SessionLocal()
+        try:
+            config = await ConfigManager(db).get_config()
+            if config.telegram_bot_enabled and config.telegram_bot_token:
+                from tgbot.bot import start_bot
+                await start_bot()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"Telegram Bot 恢复启动失败（服务继续运行）: {e}")
+
     logger.info("服务启动完成")
 
 
@@ -196,6 +211,13 @@ async def shutdown_event():
     应用关闭时执行
     """
     logger.info("正在关闭 Emby AI 中文字幕生成服务...")
+
+    # 停止 Telegram Bot
+    try:
+        from tgbot.bot import stop_bot
+        await stop_bot()
+    except Exception as e:
+        logger.warning(f"Telegram Bot 停止失败: {e}")
 
 
 # 注册路由

@@ -25,6 +25,7 @@ import type {
   LanguageInfo,
   CleanupResult,
   TempDiskUsage,
+  BotStatus,
 } from '../types/api';
 
 /**
@@ -271,6 +272,30 @@ class ApiClient {
      */
     getTempDiskUsage: async (): Promise<TempDiskUsage> => {
       const response = await this.client.get<TempDiskUsage>('/api/config/temp-disk-usage');
+      return response.data;
+    },
+
+    /**
+     * 获取 Telegram Bot 状态
+     */
+    getBotStatus: async (): Promise<BotStatus> => {
+      const response = await this.client.get<BotStatus>('/api/config/bot-status');
+      return response.data;
+    },
+
+    /**
+     * 启动 Telegram Bot
+     */
+    startBot: async (): Promise<BotStatus> => {
+      const response = await this.client.post<BotStatus>('/api/config/bot-start');
+      return response.data;
+    },
+
+    /**
+     * 停止 Telegram Bot
+     */
+    stopBot: async (): Promise<BotStatus> => {
+      const response = await this.client.post<BotStatus>('/api/config/bot-stop');
       return response.data;
     },
   };

@@ -9,7 +9,7 @@ import {
   InfoCircleOutlined, ReloadOutlined, SyncOutlined,
   LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined,
   PlusOutlined, DeleteOutlined, SwapOutlined,
-  AimOutlined, ClearOutlined,
+  AimOutlined, ClearOutlined, SendOutlined,
 } from '@ant-design/icons';
 import { api } from '../services/api';
 import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo, Library } from '../types/api';
@@ -17,7 +17,7 @@ import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo, Libra
 const { Option } = Select;
 const { Text } = Typography;
 
-type CategoryKey = 'emby' | 'path' | 'translation' | 'asr' | 'cleanup';
+type CategoryKey = 'emby' | 'path' | 'translation' | 'asr' | 'telegram' | 'cleanup';
 
 interface CategoryDef {
   key: CategoryKey;
@@ -33,6 +33,7 @@ const CATEGORIES: CategoryDef[] = [
   { key: 'path',       icon: <SwapOutlined />,       label: '路径映射',           description: '媒体库路径 · 挂载规则',     colorVar: '--accent-amber',    colorBgVar: '--accent-amber-bg' },
   { key: 'translation',icon: <TranslationOutlined />, label: '翻译服务',         description: 'API 配置 · 引擎切换',      colorVar: '--accent-emerald',  colorBgVar: '--accent-emerald-bg' },
   { key: 'asr',        icon: <AimOutlined />,        label: 'ASR 引擎',           description: '模型管理 · VAD 配置',      colorVar: '--accent-amber',    colorBgVar: '--accent-amber-bg' },
+  { key: 'telegram',   icon: <SendOutlined />,       label: 'Telegram 机器人',     description: 'Bot Token · 配额控制',     colorVar: '--accent-cyan',     colorBgVar: '--accent-cyan-bg' },
   { key: 'cleanup',    icon: <ClearOutlined />,      label: '临时文件管理',       description: '自动清理 · 磁盘占用',      colorVar: '--accent-rose',     colorBgVar: '--accent-rose-bg' },
 ];
 
@@ -44,6 +45,9 @@ const Settings: React.FC = () => {
   const [savingTranslation, setSavingTranslation] = useState(false);
   const [savingEngine, setSavingEngine] = useState(false);
   const [savingCleanup, setSavingCleanup] = useState(false);
+  const [savingTelegram, setSavingTelegram] = useState(false);
+  const [botStatus, setBotStatus] = useState<{ running: boolean; uptime_seconds?: number } | null>(null);
+  const [botLoading, setBotLoading] = useState(false);
   const [testingEmby, setTestingEmby] = useState(false);
   const [testingTranslation, setTestingTranslation] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -96,6 +100,10 @@ const Settings: React.FC = () => {
 
   const loadDiskUsage = useCallback(async () => {
     try { const data = await api.config.getTempDiskUsage(); setDiskUsage({ total_mb: data.total_mb, task_count: data.task_count }); } catch {}
+  }, []);
+
+  const loadBotStatus = useCallback(async () => {
+    try { const s = await api.config.getBotStatus(); setBotStatus({ running: s.running, uptime_seconds: s.uptime_seconds }); } catch {}
   }, []);
 
   useEffect(() => { return () => { Object.values(pollTimers.current).forEach(clearInterval); }; }, []);
@@ -152,7 +160,7 @@ const Settings: React.FC = () => {
     const s = new Set<string>(); models.forEach(m => m.languages.forEach(l => s.add(l))); return Array.from(s).sort();
   }, [models]);
 
-  useEffect(() => { loadConfig(); loadModels(); loadVadModels(); loadLanguages(); loadEmbyLibraries(); loadDiskUsage(); }, []);
+  useEffect(() => { loadConfig(); loadModels(); loadVadModels(); loadLanguages(); loadEmbyLibraries(); loadDiskUsage(); loadBotStatus(); }, []);
 
   const handleValuesChange = () => { setIsDirty(true); };
 
@@ -218,6 +226,43 @@ const Settings: React.FC = () => {
     try { setSavingCleanup(true); await api.config.partialUpdateConfig({ cleanup_temp_files_on_success: form.getFieldValue('cleanup_temp_files_on_success') }); message.success('清理配置已保存'); }
     catch (err: any) { message.error(err.message || '保存失败'); }
     finally { setSavingCleanup(false); }
+  };
+
+  const handleSaveTelegram = async () => {
+    try {
+      setSavingTelegram(true);
+      await api.config.partialUpdateConfig({
+        telegram_bot_token: form.getFieldValue('telegram_bot_token'),
+        telegram_admin_ids: form.getFieldValue('telegram_admin_ids'),
+        telegram_daily_task_limit: form.getFieldValue('telegram_daily_task_limit'),
+        telegram_max_concurrent_per_user: form.getFieldValue('telegram_max_concurrent_per_user'),
+      });
+      message.success('Telegram 配置已保存');
+    } catch (err: any) { message.error(err.message || '保存失败'); }
+    finally { setSavingTelegram(false); }
+  };
+
+  const handleBotToggle = async () => {
+    setBotLoading(true);
+    try {
+      if (botStatus?.running) {
+        const r = await api.config.stopBot();
+        setBotStatus({ running: r.running, uptime_seconds: r.uptime_seconds });
+        message.success(r.message);
+      } else {
+        // 先保存配置再启动
+        await api.config.partialUpdateConfig({
+          telegram_bot_token: form.getFieldValue('telegram_bot_token'),
+          telegram_admin_ids: form.getFieldValue('telegram_admin_ids'),
+          telegram_daily_task_limit: form.getFieldValue('telegram_daily_task_limit'),
+          telegram_max_concurrent_per_user: form.getFieldValue('telegram_max_concurrent_per_user'),
+        });
+        const r = await api.config.startBot();
+        setBotStatus({ running: r.running, uptime_seconds: r.uptime_seconds });
+        if (r.running) { message.success(r.message); } else { message.error(r.message); }
+      }
+    } catch (err: any) { message.error(err.message || '操作失败'); }
+    finally { setBotLoading(false); }
   };
 
   const handleCleanupTemp = async () => {
@@ -592,6 +637,91 @@ const Settings: React.FC = () => {
             <Space>
               <Button icon={<ReloadOutlined />} onClick={async () => { setModelsLoading(true); try { const data = await api.models.refreshModels(); setModels(data); } catch {} finally { setModelsLoading(false); } loadVadModels(); }} loading={modelsLoading} type="text">刷新模型列表</Button>
               <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveEngine} loading={savingEngine} style={{ background: 'var(--accent-amber)', borderColor: 'var(--accent-amber)' }}>保存配置</Button>
+            </Space>
+          </div>
+        </div>
+      );
+
+      case 'telegram': return (
+        <div className="cat-panel">
+          <div className="cat-hero">
+            <div className="cat-icon" style={{ background: 'var(' + activeCat.colorBgVar + ')', color: 'var(' + activeCat.colorVar + ')' }}>{activeCat.icon}</div>
+            <div>
+              <h2 className="cat-title">Telegram 机器人</h2>
+              <p className="cat-sub">配置 Bot Token、管理员和用户配额，通过 Telegram 发起字幕任务</p>
+            </div>
+          </div>
+          <div className="cat-section">
+            {/* Bot 运行状态 */}
+            <div style={{ marginBottom: 20, padding: 14, background: 'var(--bg-input)', borderRadius: 8, border: '1px solid var(--glass-border)' }}>
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: botStatus?.running ? '#22c55e' : '#6b7280' }} />
+                    <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+                      {botStatus?.running ? 'Bot 运行中' : 'Bot 未启动'}
+                    </span>
+                    {botStatus?.running && botStatus.uptime_seconds != null && (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        已运行 {botStatus.uptime_seconds >= 3600
+                          ? Math.floor(botStatus.uptime_seconds / 3600) + '小时'
+                          : botStatus.uptime_seconds >= 60
+                            ? Math.floor(botStatus.uptime_seconds / 60) + '分钟'
+                            : Math.floor(botStatus.uptime_seconds) + '秒'}
+                      </Text>
+                    )}
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {botStatus?.running
+                      ? '点击停止按钮可关闭 Bot，配置修改后需重启生效'
+                      : '填写 Token 后点击启动按钮开启 Bot 服务'}
+                  </Text>
+                </Col>
+                <Col>
+                  <Button
+                    type={botStatus?.running ? 'default' : 'primary'}
+                    danger={botStatus?.running}
+                    loading={botLoading}
+                    onClick={handleBotToggle}
+                    icon={botStatus?.running ? <CloseCircleOutlined /> : <RocketOutlined />}
+                    style={!botStatus?.running ? { background: 'var(--accent-cyan)', borderColor: 'var(--accent-cyan)' } : {}}
+                  >
+                    {botStatus?.running ? '停止 Bot' : '启动 Bot'}
+                  </Button>
+                </Col>
+              </Row>
+            </div>
+
+            <div className="cat-info-banner" style={{ marginBottom: 16 }}>
+              <InfoCircleOutlined style={{ marginRight: 8 }} />
+              <span>从 <a href="https://t.me/BotFather" target="_blank" rel="noreferrer">@BotFather</a> 创建 Bot 并获取 Token，启用内联模式请使用 /setinline 命令。</span>
+            </div>
+            <Row gutter={24}>
+              <Col span={12}>
+                <Form.Item name="telegram_bot_token" label="Bot Token"><Input.Password placeholder="123456789:ABCdefGHIjklmnoPQRstUVwxyz..." /></Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="telegram_admin_ids" label="管理员 Telegram ID" tooltip="逗号分隔多个 ID，可通过 @userinfobot 获取"><Input placeholder="123456789,987654321" /></Form.Item>
+              </Col>
+            </Row>
+            <div style={{ marginTop: 8, marginBottom: 8, fontWeight: 500, color: 'var(--text-primary)' }}>配额控制</div>
+            <Row gutter={24}>
+              <Col span={12}>
+                <Form.Item name="telegram_daily_task_limit" label="每用户每日任务上限" tooltip="每个用户每天最多可提交的字幕生成任务数">
+                  <InputNumber min={1} max={100} style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="telegram_max_concurrent_per_user" label="每用户最大并发任务" tooltip="每个用户同时进行中的任务数上限">
+                  <InputNumber min={1} max={10} style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
+          <div className="cat-footer">
+            <Space>
+              <Button icon={<ReloadOutlined />} onClick={loadBotStatus} type="text">刷新状态</Button>
+              <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveTelegram} loading={savingTelegram} style={{ background: 'var(--accent-cyan)', borderColor: 'var(--accent-cyan)' }}>保存配置</Button>
             </Space>
           </div>
         </div>
