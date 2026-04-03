@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 import httpx
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("subtitle_service.model_manager")
 
 
 # ── 支持的语言 ──────────────────────────────────────────────────────────────
@@ -123,24 +123,25 @@ class ModelRegistry:
             if cached is not None:
                 asr_count = sum(1 for m in cached.values() if m.get("category") != "vad")
                 vad_count = len(cached) - asr_count
-                logger.debug(f"使用缓存: {len(cached)} 个模型 (ASR={asr_count}, VAD={vad_count})")
+                print(f"[model_manager] 缓存命中: {len(cached)} 个模型 (ASR={asr_count}, VAD={vad_count})")
                 if asr_count == 0:
-                    logger.warning("缓存中无 ASR 模型，强制刷新")
+                    print("[model_manager] 缓存中无 ASR 模型，强制刷新")
                 else:
                     return cached
+            else:
+                print("[model_manager] 缓存未命中（不存在或已过期），将从 GitHub 获取")
 
         try:
             models = self._fetch_from_github()
             self._write_cache(models)
             asr_count = sum(1 for m in models.values() if m.get("category") != "vad")
-            logger.info(f"模型列表已更新: {len(models)} 个模型 (ASR={asr_count})")
+            print(f"[model_manager] 模型列表已更新: {len(models)} 个模型 (ASR={asr_count})")
             return models
         except Exception as e:
-            logger.error(f"从 GitHub 获取模型列表失败: {e}")
-            # 回退到过期缓存
+            print(f"[model_manager] 获取失败: {type(e).__name__}: {e}")
             cached = self._read_cache(ignore_ttl=True)
             if cached is not None:
-                logger.info("使用过期缓存作为回退")
+                print("[model_manager] 使用过期缓存作为回退")
                 return cached
             return {}
 
@@ -157,6 +158,7 @@ class ModelRegistry:
         """从 GitHub Releases API 获取并解析模型列表，失败时回退到本地 JSON 文件"""
         from config.settings import settings as app_settings
 
+        print(f"[model_manager] 正在从 GitHub 获取模型列表: {self.GITHUB_API_URL}")
         logger.info(f"正在从 GitHub 获取模型列表: {self.GITHUB_API_URL}")
 
         # 尝试从 GitHub 获取
@@ -213,6 +215,7 @@ class ModelRegistry:
             return models
 
         except Exception as e:
+            print(f"[model_manager] GitHub 请求异常: {type(e).__name__}: {e}")
             logger.warning(f"从 GitHub 获取模型列表失败: {type(e).__name__}: {e}")
 
             # 回退到本地 JSON 文件
@@ -523,11 +526,14 @@ class ModelManager:
     def list_models(self, active_model_id: Optional[str] = None) -> List[dict]:
         """返回所有 ASR 模型及其安装状态（排除 VAD 模型）"""
         registry_models = self.registry.get_models()
-        logger.debug(f"注册表返回 {len(registry_models)} 个模型, 分类: {set(m.get('category', 'unknown') for m in registry_models.values())}")
+        seen_ids: set = set()
         result = []
+
+        # 1) 注册表中的模型
         for model_id, meta in registry_models.items():
             if meta.get("category") == "vad":
                 continue
+            seen_ids.add(model_id)
             installed = self._is_installed(model_id)
             result.append({
                 "id": model_id,
@@ -540,16 +546,51 @@ class ModelManager:
                 "active": model_id == active_model_id,
                 "download_count": meta.get("download_count", 0),
             })
+
+        # 2) 扫描本地已安装但不在注册表中的模型
+        local_added = 0
+        if self.models_dir.exists():
+            for sub in self.models_dir.iterdir():
+                if not sub.is_dir() or sub.name in seen_ids:
+                    continue
+                meta_path = sub / self.MODEL_META_FILE
+                if not meta_path.exists():
+                    continue
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if meta.get("category") == "vad":
+                    continue
+                model_id = sub.name
+                result.append({
+                    "id": model_id,
+                    "name": meta.get("name", model_id),
+                    "type": meta.get("type", "offline"),
+                    "model_type": meta.get("model_type", "transducer"),
+                    "languages": meta.get("languages", []),
+                    "size": meta.get("size", "unknown"),
+                    "installed": True,
+                    "active": model_id == active_model_id,
+                    "download_count": meta.get("download_count", 0),
+                })
+                local_added += 1
+        if local_added:
+            print(f"[model_manager] 从本地磁盘补充 {local_added} 个不在注册表中的已安装模型")
+
         result.sort(key=lambda m: (not m["installed"], -m.get("download_count", 0)))
         return result
 
     def list_vad_models(self, active_vad_model_id: Optional[str] = None) -> List[dict]:
         """返回所有 VAD 模型及其安装状态"""
         registry_models = self.registry.get_models()
+        seen_ids: set = set()
         result = []
+
         for model_id, meta in registry_models.items():
             if meta.get("category") != "vad":
                 continue
+            seen_ids.add(model_id)
             installed = self._is_installed_vad(model_id)
             result.append({
                 "id": model_id,
@@ -562,6 +603,34 @@ class ModelManager:
                 "active": model_id == active_vad_model_id,
                 "download_count": meta.get("download_count", 0),
             })
+
+        # 扫描本地已安装但不在注册表中的 VAD 模型
+        if self.models_dir.exists():
+            for sub in self.models_dir.iterdir():
+                if not sub.is_dir() or sub.name in seen_ids:
+                    continue
+                meta_path = sub / self.MODEL_META_FILE
+                if not meta_path.exists():
+                    continue
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if meta.get("category") != "vad":
+                    continue
+                model_id = sub.name
+                result.append({
+                    "id": model_id,
+                    "name": meta.get("name", model_id),
+                    "type": "vad",
+                    "model_type": meta.get("model_type", "silero_vad"),
+                    "languages": [],
+                    "size": meta.get("size", "unknown"),
+                    "installed": True,
+                    "active": model_id == active_vad_model_id,
+                    "download_count": meta.get("download_count", 0),
+                })
+
         result.sort(key=lambda m: (not m["installed"], -m.get("download_count", 0)))
         return result
 

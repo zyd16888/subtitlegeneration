@@ -1,6 +1,8 @@
 """
 模型管理 API 端点
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
@@ -10,6 +12,8 @@ from models.base import get_db
 from services.model_manager import ModelManager, DownloadProgress, DownloadStatus, SUPPORTED_LANGUAGES
 from services.config_manager import ConfigManager
 from config.settings import settings
+
+logger = logging.getLogger("subtitle_service")
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -53,17 +57,22 @@ async def list_models(db: Session = Depends(get_db)):
     config_manager = ConfigManager(db)
     config = await config_manager.get_config()
     models = manager.list_models(active_model_id=config.asr_model_id)
+    logger.info(f"[models] list_models 返回 {len(models)} 个模型")
     return models
 
 
 @router.post("/refresh", response_model=List[ModelInfo])
 async def refresh_models(db: Session = Depends(get_db)):
     """从 GitHub 刷新模型列表"""
+    logger.info("[models] 开始从 GitHub 强制刷新模型列表...")
     manager = _get_model_manager()
-    manager.registry.refresh()
+    registry_models = manager.registry.refresh()
+    asr_count = sum(1 for m in registry_models.values() if m.get("category") != "vad")
+    logger.info(f"[models] registry.refresh 返回 {len(registry_models)} 个模型 (ASR={asr_count})")
     config_manager = ConfigManager(db)
     config = await config_manager.get_config()
     models = manager.list_models(active_model_id=config.asr_model_id)
+    logger.info(f"[models] refresh 最终返回 {len(models)} 个模型")
     return models
 
 

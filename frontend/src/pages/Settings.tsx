@@ -157,7 +157,15 @@ const Settings: React.FC = () => {
   const handleValuesChange = () => { setIsDirty(true); };
 
   const handleSaveAll = async () => {
-    try { const values = await form.validateFields(); setSavingAll(true); await api.config.updateConfig(values as SystemConfig); message.success('核心配置库同步完成'); setIsDirty(false); }
+    try {
+      await form.validateFields();
+      setSavingAll(true);
+      // form.getFieldsValue(true) 获取所有字段（包括未挂载的），避免分 tab 导致字段丢失
+      const values = form.getFieldsValue(true);
+      await api.config.partialUpdateConfig(values);
+      message.success('核心配置库同步完成');
+      setIsDirty(false);
+    }
     catch (err: any) { message.error(err.message || '参数校验未通过'); }
     finally { setSavingAll(false); }
   };
@@ -582,7 +590,7 @@ const Settings: React.FC = () => {
           </div>
           <div className="cat-footer">
             <Space>
-              <Button icon={<ReloadOutlined />} onClick={() => { loadModels(); loadVadModels(); }} loading={modelsLoading} type="text">刷新模型列表</Button>
+              <Button icon={<ReloadOutlined />} onClick={async () => { setModelsLoading(true); try { const data = await api.models.refreshModels(); setModels(data); } catch {} finally { setModelsLoading(false); } loadVadModels(); }} loading={modelsLoading} type="text">刷新模型列表</Button>
               <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveEngine} loading={savingEngine} style={{ background: 'var(--accent-amber)', borderColor: 'var(--accent-amber)' }}>保存配置</Button>
             </Space>
           </div>

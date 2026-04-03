@@ -38,6 +38,7 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = 'ApiError';
+    this.message = message;
   }
 }
 
@@ -70,15 +71,23 @@ class ApiClient {
    */
   private handleError(error: AxiosError): ApiError {
     if (error.response) {
-      // 服务器返回错误响应
       const { status, data } = error.response;
-      const message = (data as any)?.detail || error.message;
-      return new ApiError(message, status, data);
+      const d = data as any;
+      const detail = d?.detail || d?.message;
+      let msg: string;
+      if (typeof detail === 'string') {
+        msg = detail;
+      } else if (Array.isArray(detail)) {
+        msg = detail.map((item: any) => item.msg || JSON.stringify(item)).join('; ');
+      } else if (typeof data === 'string') {
+        msg = data;
+      } else {
+        msg = `请求失败 (${status})`;
+      }
+      return new ApiError(msg, status, data);
     } else if (error.request) {
-      // 请求已发送但没有收到响应
       return new ApiError('网络错误，请检查服务器连接', undefined, error);
     } else {
-      // 请求配置错误
       return new ApiError(error.message, undefined, error);
     }
   }
