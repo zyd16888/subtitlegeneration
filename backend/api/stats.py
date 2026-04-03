@@ -83,7 +83,7 @@ async def get_statistics(db: Session = Depends(get_db)):
         )
         
         # 2. 获取最近完成的任务（最多 10 个）
-        completed_tasks = await task_manager.list_tasks(
+        completed_tasks, _ = await task_manager.list_tasks(
             status=TaskStatus.COMPLETED,
             limit=10,
             offset=0

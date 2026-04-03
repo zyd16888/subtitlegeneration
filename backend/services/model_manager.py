@@ -111,9 +111,10 @@ class ModelRegistry:
         "https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/tags/asr-models"
     )
 
-    def __init__(self, models_dir: Path):
+    def __init__(self, models_dir: Path, github_token: Optional[str] = None):
         self.models_dir = models_dir
         self.cache_path = models_dir / self.CACHE_FILE
+        self.github_token = github_token
         self._lock = threading.Lock()
 
     def get_models(self, force_refresh: bool = False) -> Dict[str, dict]:
@@ -164,8 +165,9 @@ class ModelRegistry:
         # 尝试从 GitHub 获取
         try:
             headers = {"Accept": "application/vnd.github.v3+json"}
-            if app_settings.github_token:
-                headers["Authorization"] = f"token {app_settings.github_token}"
+            github_token = self.github_token or app_settings.github_token
+            if github_token:
+                headers["Authorization"] = f"token {github_token}"
                 logger.debug("使用 GitHub Token 认证请求")
 
             resp = httpx.get(
@@ -509,10 +511,11 @@ class ModelManager:
 
     MODEL_META_FILE = "model_meta.json"
 
-    def __init__(self, models_dir: Optional[str] = None):
+    def __init__(self, models_dir: Optional[str] = None, github_token: Optional[str] = None):
         self.models_dir = Path(models_dir) if models_dir else self._default_models_dir()
         self.models_dir.mkdir(parents=True, exist_ok=True)
-        self.registry = ModelRegistry(self.models_dir)
+        self.github_token = github_token
+        self.registry = ModelRegistry(self.models_dir, github_token=github_token)
 
     # ── 跨平台默认目录 ──
 

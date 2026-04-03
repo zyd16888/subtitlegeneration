@@ -18,8 +18,18 @@ logger = logging.getLogger("subtitle_service")
 router = APIRouter(prefix="/api/models", tags=["models"])
 
 
-def _get_model_manager() -> ModelManager:
-    return ModelManager(models_dir=settings.model_storage_dir)
+async def _get_model_manager(db: Session = None) -> ModelManager:
+    """创建 ModelManager，优先使用 DB 配置的 model_storage_dir 和 github_token"""
+    models_dir = settings.model_storage_dir
+    github_token = settings.github_token
+    if db:
+        config_manager = ConfigManager(db)
+        config = await config_manager.get_config()
+        if config.model_storage_dir:
+            models_dir = config.model_storage_dir
+        if config.github_token:
+            github_token = config.github_token
+    return ModelManager(models_dir=models_dir, github_token=github_token)
 
 
 class ModelInfo(BaseModel):
@@ -53,7 +63,7 @@ class LanguageInfo(BaseModel):
 @router.get("", response_model=List[ModelInfo])
 async def list_models(db: Session = Depends(get_db)):
     """列出所有可用模型（含安装状态和激活状态）"""
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
     config_manager = ConfigManager(db)
     config = await config_manager.get_config()
     models = manager.list_models(active_model_id=config.asr_model_id)
@@ -65,7 +75,7 @@ async def list_models(db: Session = Depends(get_db)):
 async def refresh_models(db: Session = Depends(get_db)):
     """从 GitHub 刷新模型列表"""
     logger.info("[models] 开始从 GitHub 强制刷新模型列表...")
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
     registry_models = manager.registry.refresh()
     asr_count = sum(1 for m in registry_models.values() if m.get("category") != "vad")
     logger.info(f"[models] registry.refresh 返回 {len(registry_models)} 个模型 (ASR={asr_count})")
@@ -77,9 +87,9 @@ async def refresh_models(db: Session = Depends(get_db)):
 
 
 @router.post("/{model_id}/download", response_model=ModelDownloadProgressResponse)
-async def download_model(model_id: str):
+async def download_model(model_id: str, db: Session = Depends(get_db)):
     """开始下载指定模型"""
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
     progress = manager.start_download(model_id)
     if progress.status == DownloadStatus.FAILED:
         raise HTTPException(status_code=400, detail=progress.error)
@@ -92,9 +102,9 @@ async def download_model(model_id: str):
 
 
 @router.get("/{model_id}/progress", response_model=ModelDownloadProgressResponse)
-async def get_download_progress(model_id: str):
+async def get_download_progress(model_id: str, db: Session = Depends(get_db)):
     """查询模型下载进度"""
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
     progress = manager.get_download_progress(model_id)
     return ModelDownloadProgressResponse(
         model_id=progress.model_id,
@@ -107,7 +117,7 @@ async def get_download_progress(model_id: str):
 @router.post("/{model_id}/delete")
 async def delete_model(model_id: str, db: Session = Depends(get_db)):
     """删除已下载的模型"""
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
 
     # 如果正在使用该模型，先清除配置
     config_manager = ConfigManager(db)
@@ -126,7 +136,7 @@ async def delete_model(model_id: str, db: Session = Depends(get_db)):
 @router.post("/{model_id}/activate")
 async def activate_model(model_id: str, db: Session = Depends(get_db)):
     """激活（启用）指定模型为当前 ASR 模型"""
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
     if not manager._is_installed(model_id):
         raise HTTPException(status_code=400, detail="模型未安装，请先下载")
 
@@ -151,7 +161,7 @@ async def activate_model(model_id: str, db: Session = Depends(get_db)):
 @router.get("/vad", response_model=List[ModelInfo])
 async def list_vad_models(db: Session = Depends(get_db)):
     """列出所有可用 VAD 模型"""
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
     config_manager = ConfigManager(db)
     config = await config_manager.get_config()
     models = manager.list_vad_models(active_vad_model_id=config.vad_model_id)
@@ -159,9 +169,9 @@ async def list_vad_models(db: Session = Depends(get_db)):
 
 
 @router.post("/vad/{model_id}/download", response_model=ModelDownloadProgressResponse)
-async def download_vad_model(model_id: str):
+async def download_vad_model(model_id: str, db: Session = Depends(get_db)):
     """下载 VAD 模型"""
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
     progress = manager.start_download(model_id)
     if progress.status == DownloadStatus.FAILED:
         raise HTTPException(status_code=400, detail=progress.error)
@@ -176,7 +186,7 @@ async def download_vad_model(model_id: str):
 @router.post("/vad/{model_id}/activate")
 async def activate_vad_model(model_id: str, db: Session = Depends(get_db)):
     """激活 VAD 模型"""
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
     if not manager._is_installed_vad(model_id):
         raise HTTPException(status_code=400, detail="VAD 模型未安装，请先下载")
 
@@ -189,9 +199,9 @@ async def activate_vad_model(model_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/storage-info")
-async def get_storage_info():
+async def get_storage_info(db: Session = Depends(get_db)):
     """诊断端点：查看模型存储路径和目录内容"""
-    manager = _get_model_manager()
+    manager = await _get_model_manager(db)
     models_dir = manager.models_dir
 
     contents = []

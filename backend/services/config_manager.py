@@ -67,6 +67,12 @@ class SystemConfigData(BaseModel):
     max_concurrent_tasks: int = 2
     temp_dir: str = "./data"
     cleanup_temp_files_on_success: bool = True  # 任务成功后自动清理临时文件
+
+    # 模型存储目录
+    model_storage_dir: Optional[str] = None
+
+    # GitHub Token（可选，用于提高模型下载 API 速率限制）
+    github_token: Optional[str] = None
     
     @field_validator('emby_url', 'cloud_asr_url', 'local_llm_url', 'deeplx_url')
     @classmethod

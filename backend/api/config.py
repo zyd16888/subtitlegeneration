@@ -414,10 +414,12 @@ async def cleanup_temp_files(db: Session = Depends(get_db)):
     删除 data/tasks/ 下所有任务目录，释放磁盘空间
     """
     import os
-    from config.settings import settings
+    from services.config_manager import ConfigManager
 
     try:
-        tasks_dir = os.path.join(settings.temp_dir, "tasks")
+        config_manager = ConfigManager(db)
+        config = await config_manager.get_config()
+        tasks_dir = os.path.join(config.temp_dir, "tasks")
         if not os.path.isdir(tasks_dir):
             return CleanupResult(
                 success=True,
@@ -521,10 +523,12 @@ async def get_temp_disk_usage(db: Session = Depends(get_db)):
     查询任务临时目录占用的磁盘空间
     """
     import os
-    from config.settings import settings
+    from services.config_manager import ConfigManager
 
     try:
-        tasks_dir = os.path.join(settings.temp_dir, "tasks")
+        config_manager = ConfigManager(db)
+        config = await config_manager.get_config()
+        tasks_dir = os.path.join(config.temp_dir, "tasks")
         if not os.path.isdir(tasks_dir):
             return {"total_bytes": 0, "task_count": 0, "details": []}
 

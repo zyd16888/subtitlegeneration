@@ -51,7 +51,9 @@ class SubtitleGenerationTask(Task):
 
 def _resolve_vad_model_path(config) -> str:
     """解析 VAD 模型的 .onnx 文件路径"""
-    manager = ModelManager(models_dir=settings.model_storage_dir)
+    models_dir = getattr(config, 'model_storage_dir', None) or settings.model_storage_dir
+    github_token = getattr(config, 'github_token', None) or settings.github_token
+    manager = ModelManager(models_dir=models_dir, github_token=github_token)
     vad_path = manager.get_model_path(config.vad_model_id)
     if not vad_path:
         raise ValueError(f"VAD 模型 {config.vad_model_id} 未安装")
@@ -102,7 +104,9 @@ def _get_asr_engine(config, source_language: str = None) -> ASREngine:
         # 优先使用 model_id
         if config.asr_model_id:
             logger.info(f"Using model_id: {config.asr_model_id}")
-            manager = ModelManager(models_dir=settings.model_storage_dir)
+            models_dir = getattr(config, 'model_storage_dir', None) or settings.model_storage_dir
+            github_token = getattr(config, 'github_token', None) or settings.github_token
+            manager = ModelManager(models_dir=models_dir, github_token=github_token)
             meta = manager.get_model_meta(config.asr_model_id)
             if not meta:
                 raise ValueError(f"模型 {config.asr_model_id} 元数据不存在，请重新下载")

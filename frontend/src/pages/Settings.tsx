@@ -216,6 +216,8 @@ const Settings: React.FC = () => {
         max_concurrent_tasks: form.getFieldValue('max_concurrent_tasks'),
         cloud_asr_url: form.getFieldValue('cloud_asr_url'),
         cloud_asr_api_key: form.getFieldValue('cloud_asr_api_key'),
+        model_storage_dir: form.getFieldValue('model_storage_dir'),
+        github_token: form.getFieldValue('github_token'),
       };
       setSavingEngine(true); await api.config.partialUpdateConfig(values); message.success('引擎配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
@@ -632,6 +634,21 @@ const Settings: React.FC = () => {
               </Row>
             </div>
             <Table columns={columns} dataSource={filteredModels} rowKey="id" pagination={{ pageSize: 10, showSizeChanger: false, showTotal: (total) => '共 ' + total + ' 个模型', style: { marginRight: 16 } }} loading={modelsLoading} className="custom-table" style={{ background: 'transparent' }} />
+            <div className="engine-block local" style={{ marginTop: 16 }}>
+              <div className="engine-label"><CloudServerOutlined style={{ marginRight: 6 }} />模型存储配置</div>
+              <Row gutter={24}>
+                <Col span={12}>
+                  <Form.Item name="model_storage_dir" label="模型存储目录" tooltip="ASR/VAD 模型的本地存储路径，留空使用默认路径 ./data/models">
+                    <Input placeholder="./data/models" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="github_token" label="GitHub Token" tooltip="可选，用于提高模型下载 API 速率限制（匿名 60次/小时 → 认证 5000次/小时）">
+                    <Input.Password placeholder="ghp_xxxxxxxxxxxx" visibilityToggle />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </div>
           </div>
           <div className="cat-footer">
             <Space>

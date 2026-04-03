@@ -183,6 +183,10 @@ export interface SystemConfig {
   max_concurrent_tasks: number;
   temp_dir: string;
   cleanup_temp_files_on_success: boolean;
+
+  // 模型存储与下载
+  model_storage_dir?: string;
+  github_token?: string;
 }
 
 /**
