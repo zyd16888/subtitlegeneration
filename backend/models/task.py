@@ -1,7 +1,7 @@
 """
 任务数据模型
 """
-from sqlalchemy import Column, String, Integer, DateTime, Enum as SQLEnum, Text, Float, JSON
+from sqlalchemy import Column, String, Integer, BigInteger, DateTime, Enum as SQLEnum, Text, Float, JSON
 from enum import Enum
 from .base import Base
 from config.time_utils import utc_now, ensure_utc
@@ -29,6 +29,12 @@ class Task(Base):
     media_item_id = Column(String, nullable=False, index=True, comment="Emby 媒体项 ID")
     media_item_title = Column(String, nullable=True, comment="媒体项标题")
     video_path = Column(String, nullable=True, comment="视频文件路径或 URL")
+    
+    # 用户追踪信息
+    telegram_user_id = Column(BigInteger, nullable=True, index=True, comment="提交任务的 Telegram 用户 ID")
+    telegram_username = Column(String, nullable=True, comment="Telegram 用户名")
+    telegram_display_name = Column(String, nullable=True, comment="Telegram 显示名称")
+    emby_username = Column(String, nullable=True, comment="关联的 Emby 用户名")
     
     # 状态信息
     status = Column(
@@ -75,6 +81,10 @@ class Task(Base):
             "media_item_id": self.media_item_id,
             "media_item_title": self.media_item_title,
             "video_path": self.video_path,
+            "telegram_user_id": self.telegram_user_id,
+            "telegram_username": self.telegram_username,
+            "telegram_display_name": self.telegram_display_name,
+            "emby_username": self.emby_username,
             "status": self.status.value if isinstance(self.status, TaskStatus) else self.status,
             "progress": self.progress,
             "created_at": ensure_utc(self.created_at).isoformat() if self.created_at else None,

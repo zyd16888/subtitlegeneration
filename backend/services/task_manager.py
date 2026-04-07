@@ -62,6 +62,10 @@ class TaskManager:
         translation_service: str = None,
         source_language: str = None,
         target_language: str = None,
+        telegram_user_id: int = None,
+        telegram_username: str = None,
+        telegram_display_name: str = None,
+        emby_username: str = None,
     ) -> Task:
         """
         创建新的字幕生成任务
@@ -75,6 +79,10 @@ class TaskManager:
             translation_service: 翻译服务
             source_language: 源语言
             target_language: 目标语言
+            telegram_user_id: Telegram 用户 ID
+            telegram_username: Telegram 用户名
+            telegram_display_name: Telegram 显示名称
+            emby_username: Emby 用户名
             
         Returns:
             创建的任务对象
@@ -92,6 +100,10 @@ class TaskManager:
             translation_service=translation_service,
             source_language=source_language,
             target_language=target_language,
+            telegram_user_id=telegram_user_id,
+            telegram_username=telegram_username,
+            telegram_display_name=telegram_display_name,
+            emby_username=emby_username,
         )
         
         self.db.add(task)
@@ -326,7 +338,7 @@ class TaskManager:
         if original_task.status != TaskStatus.FAILED:
             return None
         
-        # 创建新任务，复制原任务的配置
+        # 创建新任务，复制原任务的配置（包括用户信息）
         new_task = await self.create_task(
             media_item_id=original_task.media_item_id,
             media_item_title=original_task.media_item_title,
@@ -336,6 +348,10 @@ class TaskManager:
             translation_service=original_task.translation_service,
             source_language=original_task.source_language,
             target_language=original_task.target_language,
+            telegram_user_id=original_task.telegram_user_id,
+            telegram_username=original_task.telegram_username,
+            telegram_display_name=original_task.telegram_display_name,
+            emby_username=original_task.emby_username,
         )
         
         return new_task

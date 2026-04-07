@@ -49,6 +49,12 @@ export interface Task {
   media_item_title?: string;
   video_path?: string;
   
+  // 用户追踪信息
+  telegram_user_id?: number;
+  telegram_username?: string;
+  telegram_display_name?: string;
+  emby_username?: string;
+  
   // 状态信息
   status: TaskStatus;
   progress: number;

@@ -216,6 +216,28 @@ const Tasks: React.FC = () => {
       render: (title: string) => <Text strong style={{ color: 'var(--text-primary)' }}>{title || '未知媒体'}</Text>,
     },
     {
+      title: '提交用户',
+      key: 'user',
+      width: 180,
+      render: (_, record: Task) => {
+        if (record.telegram_user_id) {
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Text style={{ fontSize: 13 }}>
+                {record.telegram_display_name || record.telegram_username || `User ${record.telegram_user_id}`}
+              </Text>
+              {record.emby_username && (
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  Emby: {record.emby_username}
+                </Text>
+              )}
+            </div>
+          );
+        }
+        return <Text type="secondary" style={{ fontSize: 12 }}>网页端</Text>;
+      },
+    },
+    {
       title: '当前状态',
       dataIndex: 'status',
       key: 'status',
@@ -367,6 +389,21 @@ const Tasks: React.FC = () => {
                 <Descriptions.Item label="总进度">
                   <Progress percent={selectedTask.progress} size="small" style={{ width: 120 }} />
                 </Descriptions.Item>
+                {selectedTask.telegram_user_id && (
+                  <>
+                    <Descriptions.Item label="提交用户">
+                      {selectedTask.telegram_display_name || selectedTask.telegram_username || `User ${selectedTask.telegram_user_id}`}
+                    </Descriptions.Item>
+                    {selectedTask.emby_username && (
+                      <Descriptions.Item label="Emby 账号">
+                        {selectedTask.emby_username}
+                      </Descriptions.Item>
+                    )}
+                    <Descriptions.Item label="Telegram ID">
+                      <Text copyable style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{selectedTask.telegram_user_id}</Text>
+                    </Descriptions.Item>
+                  </>
+                )}
                 <Descriptions.Item label="任务 ID" span={2}>
                   <Text copyable style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{selectedTask.id}</Text>
                 </Descriptions.Item>

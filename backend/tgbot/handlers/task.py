@@ -86,9 +86,13 @@ async def _create_subtitle_task(
             translation_service=config.translation_service,
             source_language=config.source_language,
             target_language=config.target_language,
+            telegram_user_id=user.telegram_id,
+            telegram_username=user.telegram_username,
+            telegram_display_name=user.telegram_display_name,
+            emby_username=user.emby_username,
         )
 
-        # 记录来源
+        # 记录来源（保留用于兼容性）
         task.extra_info = {"telegram_user_id": user_telegram_id}
         db.commit()
 
