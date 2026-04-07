@@ -14,7 +14,7 @@ RUN corepack enable && corepack prepare pnpm@8.15.0 --activate
 COPY frontend/package.json frontend/pnpm-lock.yaml* ./
 
 # 安装依赖
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 # 复制前端源码
 COPY frontend/ .
