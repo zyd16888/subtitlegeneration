@@ -3,9 +3,11 @@
 
 协调音频提取、ASR、翻译、字幕生成、Emby 回写的完整流程
 """
+import asyncio
 import logging
 import os
 import shutil
+import threading
 from typing import List, Optional
 from celery import Task
 
@@ -40,6 +42,23 @@ from config.settings import settings
 from models.base import SessionLocal
 
 logger = logging.getLogger(__name__)
+
+
+# ── 线程本地的持久 event loop ────────────────────────────────────────
+# 多线程 worker 池下，反复 _run_async() 会不停建毁 loop，对 httpx /
+# SQLAlchemy 等持久化资源极不友好（偶发卡死、连接池泄漏）。
+# 这里给每个 worker 线程绑定一个长期存活的 loop，全程复用。
+_thread_local = threading.local()
+
+
+def _run_async(coro):
+    """在当前线程的持久 event loop 上同步执行一个协程。"""
+    loop = getattr(_thread_local, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        _thread_local.loop = loop
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
 
 
 class SubtitleGenerationTask(Task):
@@ -351,12 +370,11 @@ def generate_subtitle_task(
     4. 生成字幕文件 (95%)
     5. 回写 Emby (100%)
     """
-    import asyncio
-
     db = SessionLocal()
     task_manager = TaskManager(db)
     config_manager = ConfigManager(db)
     audio_path = None
+    subtitle_path = None  # finally 安全网用，跟踪是否生成了字幕文件
 
     # 挂载任务日志捕获器，将处理过程中的所有 logging 输出收集起来供前端展示
     log_capture = TaskLogCapture()
@@ -380,7 +398,7 @@ def generate_subtitle_task(
         return summary
 
     try:
-        config = asyncio.run(config_manager.get_config())
+        config = _run_async(config_manager.get_config())
 
         # 应用自定义配置覆盖
         if asr_engine:
@@ -395,7 +413,7 @@ def generate_subtitle_task(
         target_lang = config.target_language
         logger.info(f"[{task_id}] 使用语音识别语言: {source_lang} (任务指定: {source_language}, 全局: {config.source_language})")
 
-        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
+        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
         logger.info(f"开始处理任务 {task_id}: {video_path}")
         logger.info(
             f"[{task_id}] 配置: ASR={config.asr_engine}, model_id={config.asr_model_id}, "
@@ -417,7 +435,7 @@ def generate_subtitle_task(
         logger.info(f"[{task_id}] 视频路径: {video_path}")
         audio_extractor = AudioExtractor(task_work_dir)
         try:
-            audio_path = asyncio.run(audio_extractor.extract_audio(video_path))
+            audio_path = _run_async(audio_extractor.extract_audio(video_path))
             logger.info(f"[{task_id}] 音频提取成功: {audio_path}")
         except Exception as e:
             logger.error(f"[{task_id}] 音频提取失败: {e}", exc_info=True)
@@ -427,8 +445,8 @@ def generate_subtitle_task(
             "audio",
             f"输入: {video_path}\n输出: {audio_path}\n音频大小: {audio_size / 1024 / 1024:.1f} MB",
         )
-        asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})))
-        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 20))
+        _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})))
+        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 20))
 
         # 2. 语音识别
         _mark_step_start("asr")
@@ -443,10 +461,10 @@ def generate_subtitle_task(
         
         logger.info(f"[{task_id}] 开始转录音频: {audio_path}")
         # Whisper 模型支持 transcribe 时指定语言，其他模型忽略
-        segments = asyncio.run(
+        segments = _run_async(
             asr_engine_instance.transcribe(audio_path, language=source_lang)
         )
-        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 60))
+        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 60))
         logger.info(f"[{task_id}] 语音识别完成，识别到 {len(segments)} 个片段")
         step_logs["asr"] = _format_step_log(
             "asr",
@@ -456,7 +474,7 @@ def generate_subtitle_task(
                 f"语言: {source_lang}"
             ),
         )
-        asyncio.run(task_manager.update_task_result(task_id, segment_count=len(segments), extra_info=_persist_logs_extra({"step_logs": step_logs})))
+        _run_async(task_manager.update_task_result(task_id, segment_count=len(segments), extra_info=_persist_logs_extra({"step_logs": step_logs})))
 
         # 保存 ASR 原始识别结果
         import json
@@ -479,10 +497,10 @@ def generate_subtitle_task(
             ]
         else:
             translation_service_instance = _get_translation_service(config)
-            subtitle_segments = asyncio.run(
+            subtitle_segments = _run_async(
                 _translate_segments(segments, translation_service_instance, source_lang, target_lang)
             )
-        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
+        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
         if source_lang == target_lang:
             step_logs["translation"] = _format_step_log(
                 "translation", f"源语言与目标语言相同 ({source_lang})，已跳过翻译"
@@ -498,14 +516,14 @@ def generate_subtitle_task(
                     f"成功翻译: {translated_count}/{len(subtitle_segments)} 段"
                 ),
             )
-        asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs, "skipped_steps": skipped_steps})))
+        _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs, "skipped_steps": skipped_steps})))
 
         # 4. 生成字幕文件
         _mark_step_start("subtitle")
         logger.info(f"[{task_id}] 步骤 4/5: 生成字幕文件")
         subtitle_generator = SubtitleGenerator()
         subtitle_path = subtitle_generator.generate_srt(subtitle_segments, video_path, target_lang, output_dir=task_work_dir)
-        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 95))
+        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 95))
         logger.info(f"[{task_id}] 字幕文件生成完成: {subtitle_path}")
         srt_size = os.path.getsize(subtitle_path) if os.path.exists(subtitle_path) else 0
         step_logs["subtitle"] = _format_step_log(
@@ -516,7 +534,7 @@ def generate_subtitle_task(
                 f"字幕段落: {len(subtitle_segments)} 段"
             ),
         )
-        asyncio.run(task_manager.update_task_result(task_id, subtitle_path=subtitle_path, extra_info=_persist_logs_extra({"step_logs": step_logs})))
+        _run_async(task_manager.update_task_result(task_id, subtitle_path=subtitle_path, extra_info=_persist_logs_extra({"step_logs": step_logs})))
 
         # 5. 复制字幕到视频目录 + 刷新 Emby
         _mark_step_start("emby")
@@ -531,7 +549,7 @@ def generate_subtitle_task(
 
             # 获取视频在 Emby 服务器上的真实路径
             try:
-                emby_video_path = asyncio.run(get_video_real_path())
+                emby_video_path = _run_async(get_video_real_path())
                 logger.info(f"[{task_id}] Emby 视频真实路径: {emby_video_path}")
                 emby_log_lines.append(f"Emby 视频路径: {emby_video_path}")
             except Exception as e:
@@ -592,7 +610,7 @@ def generate_subtitle_task(
                 async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
                     return await emby.refresh_metadata(media_item_id)
 
-            success = asyncio.run(refresh_emby())
+            success = _run_async(refresh_emby())
             if success:
                 logger.info(f"[{task_id}] Emby 元数据刷新成功")
                 emby_log_lines.append("Emby 元数据刷新: 成功")
@@ -607,11 +625,11 @@ def generate_subtitle_task(
         # 判断 Emby 回写是否实质性跳过（未配置 Emby / 获取路径失败 / 路径映射未匹配或未配置）
         if not (config.emby_url and config.emby_api_key) or emby_copy_skipped:
             skipped_steps.append("emby")
-        asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs, "skipped_steps": skipped_steps})))
+        _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs, "skipped_steps": skipped_steps})))
 
-        asyncio.run(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
+        _run_async(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
         # 任务完成后再写一次，捕获完成日志
-        asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
+        _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
         logger.info(f"[{task_id}] 任务完成")
 
         # 按配置决定是否清理临时文件
@@ -627,21 +645,65 @@ def generate_subtitle_task(
     except Exception as e:
         error_message = str(e)
         logger.error(f"[{task_id}] 任务失败: {error_message}", exc_info=True)
-        asyncio.run(
+        _run_async(
             task_manager.update_task_status(task_id, TaskStatus.FAILED, error_message=error_message)
         )
         # 失败时也持久化捕获到的日志，便于排查
         try:
-            asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
+            _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
         except Exception:
             pass
         raise
 
     finally:
+        # ── 安全网：保证任务一定离开 PROCESSING 状态 ─────────────────
+        # 重新读取一次 DB（用独立 session 避免被前面的异常污染），
+        # 如果发现状态仍是 PROCESSING/PENDING，根据 subtitle_path 是否
+        # 已生成强制改成 COMPLETED 或 FAILED。这一层兜底独立于上面所有
+        # 逻辑，无论 asyncio loop / SQLite 锁 / 第三方库出什么状况，
+        # 任务都不会再卡在 95%。
+        try:
+            from models.task import Task as _TaskModel
+            safety_db = SessionLocal()
+            try:
+                row = safety_db.query(_TaskModel).filter(_TaskModel.id == task_id).first()
+                if row is not None and row.status in (TaskStatus.PROCESSING, TaskStatus.PENDING):
+                    from config.time_utils import utc_now
+                    if subtitle_path and os.path.exists(subtitle_path):
+                        row.status = TaskStatus.COMPLETED
+                        row.progress = 100
+                        row.completed_at = utc_now()
+                        if row.started_at:
+                            from config.time_utils import ensure_utc
+                            started = ensure_utc(row.started_at)
+                            completed = ensure_utc(row.completed_at)
+                            row.processing_time = (completed - started).total_seconds()
+                        logger.warning(
+                            f"[{task_id}] 安全网：任务退出时状态仍为 {row.status.value}，"
+                            f"检测到字幕文件已生成，强制标记为 COMPLETED"
+                        )
+                    else:
+                        row.status = TaskStatus.FAILED
+                        row.completed_at = utc_now()
+                        if not row.error_message:
+                            row.error_message = "任务异常退出，未生成字幕文件"
+                        logger.warning(
+                            f"[{task_id}] 安全网：任务退出时状态仍为 {row.status.value}，"
+                            f"未检测到字幕文件，强制标记为 FAILED"
+                        )
+                    safety_db.commit()
+            finally:
+                safety_db.close()
+        except Exception as e:
+            logger.error(f"[{task_id}] 安全网状态修正失败: {e}", exc_info=True)
+
         # 卸载日志捕获器
         try:
             root_logger.removeHandler(log_capture)
         except Exception:
             pass
         # 中间产物保留在 task_work_dir 中，不清理，方便调试
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass

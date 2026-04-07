@@ -5,7 +5,7 @@
 """
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
-from config.time_utils import utc_now
+from config.time_utils import utc_now, ensure_utc
 from sqlalchemy import func, desc
 import uuid
 
@@ -187,9 +187,11 @@ class TaskManager:
         # 如果任务完成或失败，设置完成时间
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
             task.completed_at = utc_now()
-            # 计算处理耗时
+            # 计算处理耗时，确保两个时间都是 aware datetime
             if task.started_at:
-                task.processing_time = (task.completed_at - task.started_at).total_seconds()
+                started = ensure_utc(task.started_at)
+                completed = ensure_utc(task.completed_at)
+                task.processing_time = (completed - started).total_seconds()
         
         self.db.commit()
         self.db.refresh(task)
