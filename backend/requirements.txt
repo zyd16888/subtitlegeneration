@@ -15,6 +15,7 @@ alembic==1.13.1
 ffmpeg-python==0.2.0
 
 # ASR Engine
+numpy>=1.24.0
 sherpa-onnx==1.10.45
 
 # Translation Services
