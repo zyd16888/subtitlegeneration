@@ -373,12 +373,12 @@ async def admin_broadcast(
 
 def register(app: Application, admin_ids: list[int]) -> None:
     """注册管理员命令 handlers"""
-    app.add_handler(CommandHandler("admin_stats", admin_stats))
-    app.add_handler(CommandHandler("admin_tasks", admin_tasks))
-    app.add_handler(CommandHandler("admin_users", admin_users))
-    app.add_handler(CommandHandler("admin_ban", admin_ban))
-    app.add_handler(CommandHandler("admin_unban", admin_unban))
-    app.add_handler(CommandHandler("admin_set_limit", admin_set_limit))
-    app.add_handler(CommandHandler("admin_reset_limit", admin_reset_limit))
-    app.add_handler(CommandHandler("admin_cancel_all", admin_cancel_all))
-    app.add_handler(CommandHandler("admin_broadcast", admin_broadcast))
+    app.add_handler(CommandHandler("stat", admin_stats))
+    app.add_handler(CommandHandler("task", admin_tasks))
+    app.add_handler(CommandHandler("user", admin_users))
+    app.add_handler(CommandHandler("ban", admin_ban))
+    app.add_handler(CommandHandler("unban", admin_unban))
+    app.add_handler(CommandHandler("set_limit", admin_set_limit))
+    app.add_handler(CommandHandler("reset_limit", admin_reset_limit))
+    app.add_handler(CommandHandler("cancel_all", admin_cancel_all))
+    app.add_handler(CommandHandler("broadcast", admin_broadcast))

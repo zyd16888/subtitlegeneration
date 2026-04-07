@@ -62,6 +62,57 @@ def get_status() -> dict:
     }
 
 
+async def _register_commands(app: Application, admin_ids: list[int]) -> None:
+    """注册 Bot 命令到 Telegram"""
+    from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
+    from telegram.error import TelegramError
+
+    # 普通用户命令
+    user_commands = [
+        BotCommand("start", "开始使用"),
+        BotCommand("help", "帮助信息"),
+        BotCommand("me", "查看我的信息"),
+        BotCommand("login", "绑定账号"),
+        BotCommand("logout", "解除绑定"),
+        BotCommand("tasks", "查看我的任务"),
+        BotCommand("cancel", "取消任务 (用法: /cancel 任务ID)"),
+        BotCommand("retry", "重试任务 (用法: /retry 任务ID)"),
+        BotCommand("browse", "浏览媒体资源"),
+        BotCommand("search", "搜索媒体 (用法: /search 关键词)"),
+    ]
+
+    # 管理员命令（去掉 admin_ 前缀）
+    admin_commands = [
+        BotCommand("stat", "系统统计"),
+        BotCommand("task", "任务管理"),
+        BotCommand("user", "用户管理"),
+        BotCommand("ban", "封禁用户 (用法: /ban 用户ID)"),
+        BotCommand("unban", "解封用户 (用法: /unban 用户ID)"),
+        BotCommand("set_limit", "设置配额 (用法: /set_limit 用户ID 数量)"),
+        BotCommand("reset_limit", "重置配额 (用法: /reset_limit 用户ID)"),
+        BotCommand("cancel_all", "取消所有任务"),
+        BotCommand("broadcast", "广播消息 (用法: /broadcast 消息内容)"),
+    ]
+
+    try:
+        # 注册普通用户命令（所有用户可见）
+        await app.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
+        logger.info(f"已注册 {len(user_commands)} 个普通用户命令")
+
+        # 为管理员额外注册管理员命令
+        # 管理员的命令列表 = 普通命令 + 管理员命令
+        all_admin_commands = user_commands + admin_commands
+        for admin_id in admin_ids:
+            await app.bot.set_my_commands(
+                all_admin_commands,
+                scope=BotCommandScopeChat(chat_id=admin_id)
+            )
+        logger.info(f"已为 {len(admin_ids)} 个管理员注册 {len(all_admin_commands)} 个命令")
+
+    except TelegramError as e:
+        logger.warning(f"注册命令失败: {e}")
+
+
 async def start_bot() -> dict:
     """
     启动 Telegram Bot。
@@ -105,6 +156,9 @@ async def start_bot() -> dict:
             drop_pending_updates=True,
             allowed_updates=Update.ALL_TYPES,
         )
+
+        # 注册命令
+        await _register_commands(_application, admin_ids)
 
         _started_at = time.time()
         logger.info("Telegram Bot 已启动")
