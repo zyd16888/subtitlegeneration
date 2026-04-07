@@ -100,6 +100,14 @@ class SystemConfigData(BaseModel):
         if v not in ['openai', 'deepseek', 'local', 'google', 'microsoft', 'baidu', 'deepl']:
             raise ValueError('翻译服务必须是 openai, deepseek, local, google, microsoft, baidu 或 deepl')
         return v
+    
+    @field_validator('telegram_admin_ids', mode='before')
+    @classmethod
+    def validate_telegram_admin_ids(cls, v: Any) -> Optional[str]:
+        """处理 telegram_admin_ids，可能是 int 或 str"""
+        if v is None:
+            return None
+        return str(v)
 
 
 class ValidationResult(BaseModel):
