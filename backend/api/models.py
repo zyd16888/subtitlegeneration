@@ -12,10 +12,11 @@ from models.base import get_db
 from services.model_manager import ModelManager, DownloadProgress, DownloadStatus, SUPPORTED_LANGUAGES
 from services.config_manager import ConfigManager
 from config.settings import settings
+from services.auth import require_auth
 
 logger = logging.getLogger("subtitle_service")
 
-router = APIRouter(prefix="/api/models", tags=["models"])
+router = APIRouter(prefix="/api/models", tags=["models"], dependencies=[Depends(require_auth)])
 
 
 async def _get_model_manager(db: Session = None) -> ModelManager:

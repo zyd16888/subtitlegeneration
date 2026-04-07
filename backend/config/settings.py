@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     app_name: str = "Emby AI 中文字幕生成服务"
     debug: bool = False
 
+    # 认证配置
+    auth_enabled: bool = True
+    auth_username: str = "admin"
+    auth_password: str = "admin123"  # 生产环境请修改
+    jwt_secret_key: str = "change-this-to-a-random-secret-key-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60 * 24 * 7  # 7 天
+
     # 数据库配置
     database_url: str = "sqlite:///./subtitle_service.db"
 

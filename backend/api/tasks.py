@@ -15,8 +15,9 @@ from services.task_manager import TaskManager
 from services.emby_connector import EmbyConnector
 from services.config_manager import ConfigManager
 from tasks.subtitle_tasks import generate_subtitle_task
+from services.auth import require_auth
 
-router = APIRouter(prefix="/api", tags=["tasks"])
+router = APIRouter(prefix="/api", tags=["tasks"], dependencies=[Depends(require_auth)])
 
 
 # ── 请求模型 ────────────────────────────────────────────────────────────────

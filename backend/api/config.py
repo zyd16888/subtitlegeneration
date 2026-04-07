@@ -14,6 +14,9 @@ from models.base import get_db
 logger = logging.getLogger(__name__)
 from services.config_manager import ConfigManager, SystemConfigData
 from services.emby_connector import EmbyConnector
+from services.auth import require_auth
+
+router = APIRouter(prefix="/api", tags=["config"], dependencies=[Depends(require_auth)])
 from services.translation_service import (
     OpenAITranslator,
     DeepSeekTranslator,

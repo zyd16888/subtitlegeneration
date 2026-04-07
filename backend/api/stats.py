@@ -13,8 +13,9 @@ from models.task import Task, TaskStatus
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
 from services.emby_connector import EmbyConnector
+from services.auth import require_auth
 
-router = APIRouter(prefix="/api", tags=["stats"])
+router = APIRouter(prefix="/api", tags=["stats"], dependencies=[Depends(require_auth)])
 
 
 class TaskStatisticsResponse(BaseModel):

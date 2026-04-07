@@ -12,7 +12,7 @@ import time
 import os
 from pathlib import Path
 
-from api import media, tasks, config, stats, models, worker
+from api import media, tasks, config, stats, models, worker, auth
 from models.base import init_db
 from utils.logger import setup_logger, get_logger
 from config.settings import settings
@@ -238,7 +238,10 @@ async def shutdown_event():
         logger.warning(f"Celery worker 停止失败: {e}")
 
 
-# 注册路由
+# 注册路由（auth 不需要保护）
+app.include_router(auth.router)
+
+# 需要认证保护的路由
 app.include_router(media.router)
 app.include_router(tasks.router)
 app.include_router(config.router)

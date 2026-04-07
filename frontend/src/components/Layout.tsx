@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Layout as AntLayout, Menu, Button, Tooltip } from 'antd';
+import { Layout as AntLayout, Menu, Button, Tooltip, Modal } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   DashboardOutlined,
@@ -10,12 +10,17 @@ import {
   MenuUnfoldOutlined,
   SunOutlined,
   MoonOutlined,
+  LogoutOutlined,
 } from '@ant-design/icons';
 import { useTheme } from '../contexts/ThemeContext';
 
 const { Header, Sider, Content } = AntLayout;
 
-const Layout: React.FC = () => {
+interface LayoutProps {
+  onLogout?: () => void;
+}
+
+const Layout: React.FC<LayoutProps> = ({ onLogout }) => {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -151,7 +156,7 @@ const Layout: React.FC = () => {
           <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: 'var(--text-primary)' }}>
             {menuItems.find(item => item.key === location.pathname)?.label || 'Dashboard'}
           </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div className="status-dot active"></div>
             <span style={{ color: 'var(--accent-cyan)', fontSize: 13, fontWeight: 500, letterSpacing: '0.5px' }}>
               System Online
@@ -161,6 +166,36 @@ const Layout: React.FC = () => {
                 type="text"
                 icon={isDark ? <SunOutlined /> : <MoonOutlined />}
                 onClick={toggleTheme}
+                style={{
+                  color: 'var(--text-secondary)',
+                  fontSize: 18,
+                  width: 40,
+                  height: 40,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '50%',
+                  background: 'var(--bg-subtle)',
+                  border: '1px solid var(--glass-border)',
+                }}
+              />
+            </Tooltip>
+            <Tooltip title="退出登录">
+              <Button
+                type="text"
+                icon={<LogoutOutlined />}
+                onClick={() => {
+                  Modal.confirm({
+                    title: '确认退出',
+                    content: '确定要退出登录吗？',
+                    okText: '退出',
+                    cancelText: '取消',
+                    onOk: () => {
+                      localStorage.removeItem('token');
+                      onLogout?.();
+                    },
+                  });
+                }}
                 style={{
                   color: 'var(--text-secondary)',
                   fontSize: 18,

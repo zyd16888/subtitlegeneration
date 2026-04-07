@@ -9,8 +9,9 @@ from pydantic import BaseModel
 from models.base import get_db
 from services.emby_connector import EmbyConnector, Library, MediaItem
 from services.config_manager import ConfigManager
+from services.auth import require_auth
 
-router = APIRouter(prefix="/api", tags=["media"])
+router = APIRouter(prefix="/api", tags=["media"], dependencies=[Depends(require_auth)])
 
 
 class LibraryResponse(BaseModel):

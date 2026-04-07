@@ -2,6 +2,7 @@
  * API 服务层
  * 
  * 封装所有后端 API 调用，提供统一的接口和错误处理
+ * 支持自动 Token 认证
  */
 
 import axios, { AxiosInstance, AxiosError } from 'axios';
@@ -45,12 +46,19 @@ export class ApiError extends Error {
 }
 
 /**
+ * 获取认证 Token
+ */
+function getToken(): string | null {
+  return localStorage.getItem('token');
+}
+
+/**
  * API 客户端类
  */
 class ApiClient {
   private client: AxiosInstance;
 
-  constructor(baseURL: string = 'http://localhost:8000') {
+  constructor(baseURL: string = '') {
     this.client = axios.create({
       baseURL,
       timeout: 30000,
@@ -59,10 +67,27 @@ class ApiClient {
       },
     });
 
-    // 响应拦截器：统一错误处理
+    // 请求拦截器：自动添加 Token
+    this.client.interceptors.request.use(
+      (config) => {
+        const token = getToken();
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+        return config;
+      },
+      (error) => Promise.reject(error)
+    );
+
+    // 响应拦截器：统一错误处理 + 401 自动跳转登录
     this.client.interceptors.response.use(
       (response: any) => response,
       (error: AxiosError) => {
+        // 401 未授权时跳转到登录页
+        if (error.response?.status === 401) {
+          localStorage.removeItem('token');
+          window.location.href = '/login';
+        }
         return Promise.reject(this.handleError(error));
       }
     );

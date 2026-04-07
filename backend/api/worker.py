@@ -5,12 +5,13 @@ Celery Worker 控制 API
 """
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from services.worker_manager import get_worker_manager
+from services.auth import require_auth
 
-router = APIRouter(prefix="/api/worker", tags=["worker"])
+router = APIRouter(prefix="/api/worker", tags=["worker"], dependencies=[Depends(require_auth)])
 
 
 class WorkerStatusResponse(BaseModel):

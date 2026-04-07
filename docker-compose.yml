@@ -40,6 +40,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # 认证配置（生产环境请修改）
+      - AUTH_ENABLED=true
+      - AUTH_USERNAME=admin
+      - AUTH_PASSWORD=your_secure_password
+      - JWT_SECRET_KEY=change-this-to-a-random-secret-key
     depends_on:
       - redis
     restart: unless-stopped
