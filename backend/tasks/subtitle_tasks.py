@@ -385,6 +385,10 @@ def generate_subtitle_task(
         os.makedirs(task_work_dir, exist_ok=True)
         logger.info(f"[{task_id}] 任务工作目录: {task_work_dir}")
 
+        # 用于收集每个步骤的详细日志
+        step_logs = {}
+        skipped_steps = []
+
         # 1. 提取音频
         logger.info(f"[{task_id}] 步骤 1/5: 提取音频")
         logger.info(f"[{task_id}] 视频路径: {video_path}")
@@ -395,6 +399,9 @@ def generate_subtitle_task(
         except Exception as e:
             logger.error(f"[{task_id}] 音频提取失败: {e}", exc_info=True)
             raise
+        audio_size = os.path.getsize(audio_path) if os.path.exists(audio_path) else 0
+        step_logs["audio"] = f"输入: {video_path}\n输出: {audio_path}\n音频大小: {audio_size / 1024 / 1024:.1f} MB"
+        asyncio.run(task_manager.update_task_result(task_id, extra_info={"step_logs": step_logs}))
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 20))
 
         # 2. 语音识别
@@ -414,6 +421,12 @@ def generate_subtitle_task(
         )
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 60))
         logger.info(f"[{task_id}] 语音识别完成，识别到 {len(segments)} 个片段")
+        step_logs["asr"] = (
+            f"引擎: {type(asr_engine_instance).__name__}\n"
+            f"识别片段数: {len(segments)}\n"
+            f"语言: {source_lang}"
+        )
+        asyncio.run(task_manager.update_task_result(task_id, segment_count=len(segments), extra_info={"step_logs": step_logs}))
 
         # 保存 ASR 原始识别结果
         import json
@@ -439,6 +452,17 @@ def generate_subtitle_task(
                 _translate_segments(segments, translation_service_instance, source_lang, target_lang)
             )
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
+        if source_lang == target_lang:
+            step_logs["translation"] = f"源语言与目标语言相同 ({source_lang})，已跳过翻译"
+            skipped_steps.append("translation")
+        else:
+            translated_count = sum(1 for s in subtitle_segments if s.is_translated)
+            step_logs["translation"] = (
+                f"翻译服务: {config.translation_service}\n"
+                f"方向: {source_lang} → {target_lang}\n"
+                f"成功翻译: {translated_count}/{len(subtitle_segments)} 段"
+            )
+        asyncio.run(task_manager.update_task_result(task_id, extra_info={"step_logs": step_logs, "skipped_steps": skipped_steps}))
 
         # 4. 生成字幕文件
         logger.info(f"[{task_id}] 步骤 4/5: 生成字幕文件")
@@ -446,9 +470,18 @@ def generate_subtitle_task(
         subtitle_path = subtitle_generator.generate_srt(subtitle_segments, video_path, target_lang, output_dir=task_work_dir)
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 95))
         logger.info(f"[{task_id}] 字幕文件生成完成: {subtitle_path}")
+        srt_size = os.path.getsize(subtitle_path) if os.path.exists(subtitle_path) else 0
+        step_logs["subtitle"] = (
+            f"输出: {subtitle_path}\n"
+            f"文件大小: {srt_size / 1024:.1f} KB\n"
+            f"字幕段落: {len(subtitle_segments)} 段"
+        )
+        asyncio.run(task_manager.update_task_result(task_id, subtitle_path=subtitle_path, extra_info={"step_logs": step_logs}))
 
         # 5. 复制字幕到视频目录 + 刷新 Emby
         logger.info(f"[{task_id}] 步骤 5/6: 复制字幕到视频目录")
+        emby_log_lines = []
+        emby_copy_skipped = False
         if config.emby_url and config.emby_api_key:
 
             async def get_video_real_path():
@@ -459,9 +492,12 @@ def generate_subtitle_task(
             try:
                 emby_video_path = asyncio.run(get_video_real_path())
                 logger.info(f"[{task_id}] Emby 视频真实路径: {emby_video_path}")
+                emby_log_lines.append(f"Emby 视频路径: {emby_video_path}")
             except Exception as e:
                 logger.warning(f"[{task_id}] 获取视频真实路径失败: {e}，跳过字幕文件复制")
                 emby_video_path = None
+                emby_log_lines.append(f"获取视频路径失败: {e}")
+                emby_copy_skipped = True
 
             if emby_video_path and config.path_mappings:
                 local_video_path = _apply_path_mapping(
@@ -471,15 +507,26 @@ def generate_subtitle_task(
                     library_id=library_id,
                 )
                 if local_video_path:
+                    emby_log_lines.append(f"本地映射路径: {local_video_path}")
+                    if not os.path.exists(local_video_path):
+                        logger.error(
+                            f"[{task_id}] 本地视频文件不存在: {local_video_path}，"
+                            f"请检查路径映射配置是否正确 (Emby 路径: {emby_video_path})"
+                        )
+                        emby_log_lines.append(f"本地视频文件不存在，路径映射可能配置错误")
+                        raise RuntimeError(
+                            f"本地视频文件不存在: {local_video_path}，"
+                            f"请检查路径映射配置 (Emby 路径: {emby_video_path})"
+                        )
                     # 生成目标字幕路径：与视频同目录同名
                     video_basename = os.path.splitext(os.path.basename(local_video_path))[0]
                     video_dir = os.path.dirname(local_video_path)
                     target_srt = os.path.join(video_dir, f"{video_basename}.{target_lang}.srt")
 
                     try:
-                        os.makedirs(video_dir, exist_ok=True)
                         shutil.copy2(subtitle_path, target_srt)
                         logger.info(f"[{task_id}] 字幕文件已复制: {subtitle_path} → {target_srt}")
+                        emby_log_lines.append(f"字幕已复制到: {target_srt}")
                     except Exception as e:
                         logger.error(f"[{task_id}] 复制字幕文件失败: {e}", exc_info=True)
                         raise RuntimeError(f"复制字幕文件到视频目录失败: {e}")
@@ -488,8 +535,14 @@ def generate_subtitle_task(
                         f"[{task_id}] 路径映射未匹配，Emby 路径: {emby_video_path}，"
                         f"已配置 {len(config.path_mappings)} 条映射规则，跳过复制"
                     )
+                    emby_log_lines.append(
+                        f"路径映射未匹配 (已配置 {len(config.path_mappings)} 条规则)，跳过复制"
+                    )
+                    emby_copy_skipped = True
             elif emby_video_path and not config.path_mappings:
                 logger.warning(f"[{task_id}] 未配置路径映射规则，跳过字幕文件复制到视频目录")
+                emby_log_lines.append("未配置路径映射规则，跳过复制")
+                emby_copy_skipped = True
 
             # 6. 刷新 Emby 元数据
             logger.info(f"[{task_id}] 步骤 6/6: 刷新 Emby 元数据")
@@ -501,10 +554,19 @@ def generate_subtitle_task(
             success = asyncio.run(refresh_emby())
             if success:
                 logger.info(f"[{task_id}] Emby 元数据刷新成功")
+                emby_log_lines.append("Emby 元数据刷新: 成功")
             else:
                 logger.warning(f"[{task_id}] Emby 元数据刷新失败，但字幕文件已生成")
+                emby_log_lines.append("Emby 元数据刷新: 失败")
         else:
             logger.warning(f"[{task_id}] 未配置 Emby 连接，跳过字幕回写")
+            emby_log_lines.append("未配置 Emby 连接，跳过回写")
+
+        step_logs["emby"] = "\n".join(emby_log_lines)
+        # 判断 Emby 回写是否实质性跳过（未配置 Emby / 获取路径失败 / 路径映射未匹配或未配置）
+        if not (config.emby_url and config.emby_api_key) or emby_copy_skipped:
+            skipped_steps.append("emby")
+        asyncio.run(task_manager.update_task_result(task_id, extra_info={"step_logs": step_logs, "skipped_steps": skipped_steps}))
 
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
         logger.info(f"[{task_id}] 任务完成")

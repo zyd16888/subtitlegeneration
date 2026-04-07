@@ -38,6 +38,7 @@ import {
   SettingOutlined,
   FieldTimeOutlined,
   PlayCircleOutlined,
+  MinusCircleOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { api } from '../services/api';
@@ -455,12 +456,43 @@ const Tasks: React.FC = () => {
                 direction="vertical"
                 size="small"
                 current={getTaskStages(selectedTask).findIndex(s => s.status === 'process')}
-                items={getTaskStages(selectedTask).map(stage => ({
-                  title: stage.name,
-                  status: stage.status,
-                  icon: stage.status === 'process' ? <LoadingOutlined /> : (stage.status === 'finish' ? <CheckCircleFilled style={{ color: '#52c41a' }} /> : (stage.status === 'error' ? <CloseCircleFilled style={{ color: '#ff4d4f' }} /> : stage.icon)),
-                  description: stage.status === 'process' ? <Progress percent={Math.round(stage.progress)} size="small" /> : null
-                }))}
+                items={getTaskStages(selectedTask).map(stage => {
+                  const stepLog = selectedTask.extra_info?.step_logs?.[stage.key] as string | undefined;
+                  const skippedSteps = (selectedTask.extra_info?.skipped_steps ?? []) as string[];
+                  const isSkipped = skippedSteps.includes(stage.key);
+                  let description: React.ReactNode = null;
+                  if (stage.status === 'process') {
+                    description = <Progress percent={Math.round(stage.progress)} size="small" />;
+                  } else if ((stage.status === 'finish' || isSkipped) && stepLog) {
+                    description = (
+                      <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'pre-line' }}>
+                        {stepLog}
+                      </Text>
+                    );
+                  }
+
+                  let icon: React.ReactNode;
+                  if (isSkipped && stage.status === 'finish') {
+                    icon = <MinusCircleOutlined style={{ color: '#d9d9d9' }} />;
+                  } else if (stage.status === 'process') {
+                    icon = <LoadingOutlined />;
+                  } else if (stage.status === 'finish') {
+                    icon = <CheckCircleFilled style={{ color: '#52c41a' }} />;
+                  } else if (stage.status === 'error') {
+                    icon = <CloseCircleFilled style={{ color: '#ff4d4f' }} />;
+                  } else {
+                    icon = stage.icon;
+                  }
+
+                  return {
+                    title: isSkipped && stage.status === 'finish'
+                      ? <Text type="secondary">{stage.name}<Tag color="default" style={{ marginLeft: 8, fontSize: 11 }}>已跳过</Tag></Text>
+                      : stage.name,
+                    status: stage.status,
+                    icon,
+                    description,
+                  };
+                })}
               />
             </Card>
 
