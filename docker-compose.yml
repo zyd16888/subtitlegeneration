@@ -1,0 +1,48 @@
+version: '3.8'
+
+# ========================================
+# 单镜像部署：前端 + 后端 + Celery 一体
+#
+# 快速启动:
+#   docker-compose up -d
+#
+# 首次拉取镜像（私有仓库需登录）:
+#   echo $GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+#   docker-compose pull
+#   docker-compose up -d
+#
+# 注意: 将下方镜像地址替换为实际的 GitHub 仓库地址
+# ========================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: subtitle-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  app:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/subtitlegeneration:${IMAGE_TAG:-latest}
+    container_name: subtitle-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./subtitle-data:/data
+      - ./subtitle_service:/tmp/subtitle_service
+      # 字幕回写需挂载 Emby 媒体目录，例如:
+      # - /your/emby/media:/mnt/media
+    environment:
+      - DATABASE_URL=sqlite:////data/subtitle_service.db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+
+

@@ -3,11 +3,14 @@ FastAPI 应用入口
 """
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import traceback
 import time
+import os
+from pathlib import Path
 
 from api import media, tasks, config, stats, models, worker
 from models.base import init_db
@@ -244,15 +247,50 @@ app.include_router(models.router)
 app.include_router(worker.router)
 
 
-# 根路径
+# ========== 托管前端静态文件 ==========
+# 静态文件目录（Docker 构建时从 frontend/dist 复制）
+STATIC_DIR = Path(__file__).parent / "static"
+
+if STATIC_DIR.exists():
+    # 挂载静态资源目录（JS、CSS、图片等）
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+
+# 根路径：返回前端 index.html
 @app.get("/")
 async def root():
-    """健康检查端点"""
+    """返回前端页面或健康检查"""
+    if STATIC_DIR.exists():
+        return FileResponse(STATIC_DIR / "index.html")
     return {
         "status": "ok",
         "message": "Emby AI 中文字幕生成服务正在运行",
         "version": "1.0.0"
     }
+
+
+# SPA 路由回退：所有非 API 路由返回 index.html
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    """
+    SPA 路由回退
+    
+    非 API 路由和静态资源的请求返回 index.html，让前端路由处理
+    """
+    # API 路由由各自的 router 处理，这里不应该匹配到
+    if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("redoc"):
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    # 检查是否是静态文件请求
+    file_path = STATIC_DIR / full_path
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path)
+    
+    # SPA 回退到 index.html
+    if STATIC_DIR.exists():
+        return FileResponse(STATIC_DIR / "index.html")
+    
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 @app.get("/health")
