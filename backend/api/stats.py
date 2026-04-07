@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
+from config.time_utils import ensure_utc
 from models.base import get_db
 from models.task import Task, TaskStatus
 from services.task_manager import TaskManager
@@ -93,7 +94,7 @@ async def get_statistics(db: Session = Depends(get_db)):
                 id=task.id,
                 media_item_title=task.media_item_title,
                 status=task.status,
-                completed_at=task.completed_at
+                completed_at=ensure_utc(task.completed_at)
             )
             for task in completed_tasks
         ]

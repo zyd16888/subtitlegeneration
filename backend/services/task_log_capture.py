@@ -8,6 +8,8 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any
 
+from config.time_utils import UTC
+
 
 class TaskLogCapture(logging.Handler):
     """捕获日志记录到内存列表，按任务隔离使用"""
@@ -22,7 +24,7 @@ class TaskLogCapture(logging.Handler):
         try:
             msg = self.format(record)
             entry = {
-                "timestamp": datetime.fromtimestamp(record.created).isoformat(timespec="milliseconds"),
+                "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(timespec="milliseconds"),
                 "level": record.levelname,
                 "logger": record.name,
                 "message": msg,

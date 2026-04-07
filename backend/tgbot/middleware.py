@@ -3,11 +3,11 @@
 """
 import functools
 import logging
-from datetime import datetime
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from config.time_utils import utc_now
 from models.base import SessionLocal
 from tgbot.services.user_service import get_or_create_user
 
@@ -21,7 +21,7 @@ async def update_last_active(update: Update) -> None:
     db = SessionLocal()
     try:
         user = get_or_create_user(db, update.effective_user)
-        user.last_active_at = datetime.utcnow()
+        user.last_active_at = utc_now()
         db.commit()
     except Exception:
         pass

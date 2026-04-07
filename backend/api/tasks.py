@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
 
+from config.time_utils import ensure_utc
 from models.base import get_db
 from models.task import Task, TaskStatus
 from services.task_manager import TaskManager
@@ -127,9 +128,9 @@ def task_to_response(task: Task) -> TaskResponse:
         video_path=task.video_path,
         status=task.status,
         progress=task.progress,
-        created_at=task.created_at,
-        started_at=task.started_at,
-        completed_at=task.completed_at,
+        created_at=ensure_utc(task.created_at),
+        started_at=ensure_utc(task.started_at),
+        completed_at=ensure_utc(task.completed_at),
         processing_time=task.processing_time,
         error_message=task.error_message,
         error_stage=task.error_stage,
@@ -350,11 +351,15 @@ async def get_task(
                 detail=f"任务 {task_id} 不存在"
             )
         
+        created_at_utc = ensure_utc(task.created_at)
+        started_at_utc = ensure_utc(task.started_at)
+        completed_at_utc = ensure_utc(task.completed_at)
+
         # 计算等待时间
         wait_time = None
-        if task.started_at and task.created_at:
-            wait_time = (task.started_at - task.created_at).total_seconds()
-        
+        if started_at_utc and created_at_utc:
+            wait_time = (started_at_utc - created_at_utc).total_seconds()
+
         return TaskDetailResponse(
             id=task.id,
             media_item_id=task.media_item_id,
@@ -362,9 +367,9 @@ async def get_task(
             video_path=task.video_path,
             status=task.status,
             progress=task.progress,
-            created_at=task.created_at,
-            started_at=task.started_at,
-            completed_at=task.completed_at,
+            created_at=created_at_utc,
+            started_at=started_at_utc,
+            completed_at=completed_at_utc,
             processing_time=task.processing_time,
             error_message=task.error_message,
             error_stage=task.error_stage,

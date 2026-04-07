@@ -2,12 +2,12 @@
 Telegram 用户 CRUD 和配额管理
 """
 import logging
-from datetime import datetime, date
 from typing import Optional
 
 from sqlalchemy.orm import Session
 from telegram import User as TgUser
 
+from config.time_utils import utc_now, to_local
 from tgbot.models import TelegramUser
 
 logger = logging.getLogger(__name__)
@@ -24,8 +24,8 @@ def get_or_create_user(db: Session, tg_user: TgUser) -> TelegramUser:
             telegram_id=tg_user.id,
             telegram_username=tg_user.username,
             telegram_display_name=tg_user.full_name,
-            created_at=datetime.utcnow(),
-            last_active_at=datetime.utcnow(),
+            created_at=utc_now(),
+            last_active_at=utc_now(),
         )
         db.add(user)
         db.commit()
@@ -63,12 +63,17 @@ def get_all_users(db: Session) -> list[TelegramUser]:
 
 
 def get_daily_task_count(db: Session, user: TelegramUser) -> int:
-    """获取用户今日任务数，自动重置跨天计数"""
-    today = date.today()
+    """获取用户今日任务数，按本地时区（Asia/Shanghai）自动重置跨天计数"""
+    today_local = to_local(utc_now()).date()
+    reset_local_date = (
+        to_local(user.daily_count_reset_at).date()
+        if user.daily_count_reset_at is not None
+        else None
+    )
 
-    if user.daily_count_reset_at is None or user.daily_count_reset_at.date() != today:
+    if reset_local_date != today_local:
         user.daily_task_count = 0
-        user.daily_count_reset_at = datetime.utcnow()
+        user.daily_count_reset_at = utc_now()
         db.commit()
 
     return user.daily_task_count

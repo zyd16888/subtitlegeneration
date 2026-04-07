@@ -4,8 +4,8 @@
 负责管理字幕生成任务的生命周期，包括创建、查询、更新、取消和重试任务。
 """
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 from sqlalchemy.orm import Session
+from config.time_utils import utc_now
 from sqlalchemy import func, desc
 import uuid
 
@@ -86,7 +86,7 @@ class TaskManager:
             video_path=video_path,
             status=TaskStatus.PENDING,
             progress=0,
-            created_at=datetime.utcnow(),
+            created_at=utc_now(),
             asr_engine=asr_engine,
             asr_model_id=asr_model_id,
             translation_service=translation_service,
@@ -182,11 +182,11 @@ class TaskManager:
         
         # 如果任务开始处理，设置开始时间
         if status == TaskStatus.PROCESSING and task.started_at is None:
-            task.started_at = datetime.utcnow()
-        
+            task.started_at = utc_now()
+
         # 如果任务完成或失败，设置完成时间
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
-            task.completed_at = datetime.utcnow()
+            task.completed_at = utc_now()
             # 计算处理耗时
             if task.started_at:
                 task.processing_time = (task.completed_at - task.started_at).total_seconds()
@@ -297,10 +297,10 @@ class TaskManager:
             return False
         
         task.status = TaskStatus.CANCELLED
-        task.completed_at = datetime.utcnow()
-        
+        task.completed_at = utc_now()
+
         self.db.commit()
-        
+
         return True
     
     async def retry_task(self, task_id: str) -> Optional[Task]:

@@ -4,6 +4,8 @@
 from datetime import datetime
 from typing import Optional
 
+from config.time_utils import utc_now, ensure_utc
+
 
 def format_duration(seconds: Optional[float]) -> str:
     """格式化时长"""
@@ -40,8 +42,8 @@ def format_time_ago(dt: Optional[datetime]) -> str:
     if dt is None:
         return "未知"
 
-    now = datetime.utcnow()
-    diff = now - dt
+    now = utc_now()
+    diff = now - ensure_utc(dt)
     seconds = int(diff.total_seconds())
 
     if seconds < 60:

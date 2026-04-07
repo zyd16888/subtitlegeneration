@@ -2,9 +2,9 @@
 Telegram 用户数据模型
 """
 from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime
-from datetime import datetime
 
 from models.base import Base
+from config.time_utils import utc_now
 
 
 class TelegramUser(Base):
@@ -27,15 +27,15 @@ class TelegramUser(Base):
     # 配额
     daily_task_limit = Column(Integer, nullable=True)  # null=使用全局默认值
     daily_task_count = Column(Integer, default=0)
-    daily_count_reset_at = Column(DateTime, nullable=True)
+    daily_count_reset_at = Column(DateTime(timezone=True), nullable=True)
 
     # 通知偏好
     notify_on_complete = Column(Boolean, default=True)
     notify_on_failure = Column(Boolean, default=True)
 
     # 时间
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_active_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    last_active_at = Column(DateTime(timezone=True), default=utc_now)
 
     def __repr__(self):
         return (
