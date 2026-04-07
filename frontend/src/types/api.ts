@@ -328,6 +328,16 @@ export interface BotStatus {
 }
 
 /**
+ * Celery Worker 状态类型
+ */
+export interface WorkerStatus {
+  running: boolean;
+  pid?: number;
+  uptime_seconds?: number;
+  message?: string;
+}
+
+/**
  * 配置验证结果类型
  */
 export interface ConfigValidationResult {

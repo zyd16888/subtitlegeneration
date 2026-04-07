@@ -26,6 +26,7 @@ import type {
   CleanupResult,
   TempDiskUsage,
   BotStatus,
+  WorkerStatus,
 } from '../types/api';
 
 /**
@@ -296,6 +297,28 @@ class ApiClient {
      */
     stopBot: async (): Promise<BotStatus> => {
       const response = await this.client.post<BotStatus>('/api/config/bot-stop');
+      return response.data;
+    },
+  };
+
+  /**
+   * Celery Worker 管理相关 API
+   */
+  worker = {
+    getStatus: async (): Promise<WorkerStatus> => {
+      const response = await this.client.get<WorkerStatus>('/api/worker/status');
+      return response.data;
+    },
+    start: async (): Promise<WorkerStatus> => {
+      const response = await this.client.post<WorkerStatus>('/api/worker/start');
+      return response.data;
+    },
+    stop: async (): Promise<WorkerStatus> => {
+      const response = await this.client.post<WorkerStatus>('/api/worker/stop');
+      return response.data;
+    },
+    restart: async (): Promise<WorkerStatus> => {
+      const response = await this.client.post<WorkerStatus>('/api/worker/restart');
       return response.data;
     },
   };

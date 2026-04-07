@@ -9,7 +9,7 @@ import {
   InfoCircleOutlined, ReloadOutlined, SyncOutlined,
   LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined,
   PlusOutlined, DeleteOutlined, SwapOutlined,
-  AimOutlined, ClearOutlined, SendOutlined,
+  AimOutlined, ClearOutlined, SendOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { api } from '../services/api';
 import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo, Library } from '../types/api';
@@ -17,7 +17,7 @@ import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo, Libra
 const { Option } = Select;
 const { Text } = Typography;
 
-type CategoryKey = 'emby' | 'path' | 'translation' | 'asr' | 'telegram' | 'cleanup';
+type CategoryKey = 'emby' | 'path' | 'translation' | 'asr' | 'worker' | 'telegram' | 'cleanup';
 
 interface CategoryDef {
   key: CategoryKey;
@@ -33,6 +33,7 @@ const CATEGORIES: CategoryDef[] = [
   { key: 'path',       icon: <SwapOutlined />,       label: '路径映射',           description: '媒体库路径 · 挂载规则',     colorVar: '--accent-amber',    colorBgVar: '--accent-amber-bg' },
   { key: 'translation',icon: <TranslationOutlined />, label: '翻译服务',         description: 'API 配置 · 引擎切换',      colorVar: '--accent-emerald',  colorBgVar: '--accent-emerald-bg' },
   { key: 'asr',        icon: <AimOutlined />,        label: 'ASR 引擎',           description: '模型管理 · VAD 配置',      colorVar: '--accent-amber',    colorBgVar: '--accent-amber-bg' },
+  { key: 'worker',     icon: <ThunderboltOutlined />, label: '任务 Worker',        description: '后台进程 · 并发控制',      colorVar: '--accent-emerald',  colorBgVar: '--accent-emerald-bg' },
   { key: 'telegram',   icon: <SendOutlined />,       label: 'Telegram 机器人',     description: 'Bot Token · 配额控制',     colorVar: '--accent-cyan',     colorBgVar: '--accent-cyan-bg' },
   { key: 'cleanup',    icon: <ClearOutlined />,      label: '临时文件管理',       description: '自动清理 · 磁盘占用',      colorVar: '--accent-rose',     colorBgVar: '--accent-rose-bg' },
 ];
@@ -48,6 +49,8 @@ const Settings: React.FC = () => {
   const [savingTelegram, setSavingTelegram] = useState(false);
   const [botStatus, setBotStatus] = useState<{ running: boolean; uptime_seconds?: number } | null>(null);
   const [botLoading, setBotLoading] = useState(false);
+  const [workerStatus, setWorkerStatus] = useState<{ running: boolean; pid?: number; uptime_seconds?: number } | null>(null);
+  const [workerLoading, setWorkerLoading] = useState(false);
   const [testingEmby, setTestingEmby] = useState(false);
   const [testingTranslation, setTestingTranslation] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -106,6 +109,23 @@ const Settings: React.FC = () => {
     try { const s = await api.config.getBotStatus(); setBotStatus({ running: s.running, uptime_seconds: s.uptime_seconds }); } catch {}
   }, []);
 
+  const loadWorkerStatus = useCallback(async () => {
+    try { const s = await api.worker.getStatus(); setWorkerStatus({ running: s.running, pid: s.pid, uptime_seconds: s.uptime_seconds }); } catch {}
+  }, []);
+
+  const handleWorkerAction = useCallback(async (action: 'start' | 'stop' | 'restart') => {
+    setWorkerLoading(true);
+    try {
+      const s = await api.worker[action]();
+      setWorkerStatus({ running: s.running, pid: s.pid, uptime_seconds: s.uptime_seconds });
+      message.success(s.message || '操作成功');
+    } catch (err: any) {
+      message.error(err.message || '操作失败');
+    } finally {
+      setWorkerLoading(false);
+    }
+  }, []);
+
   useEffect(() => { return () => { Object.values(pollTimers.current).forEach(clearInterval); }; }, []);
 
   const stopPolling = useCallback((modelId: string) => {
@@ -160,7 +180,13 @@ const Settings: React.FC = () => {
     const s = new Set<string>(); models.forEach(m => m.languages.forEach(l => s.add(l))); return Array.from(s).sort();
   }, [models]);
 
-  useEffect(() => { loadConfig(); loadModels(); loadVadModels(); loadLanguages(); loadEmbyLibraries(); loadDiskUsage(); loadBotStatus(); }, []);
+  useEffect(() => { loadConfig(); loadModels(); loadVadModels(); loadLanguages(); loadEmbyLibraries(); loadDiskUsage(); loadBotStatus(); loadWorkerStatus(); }, []);
+
+  // Worker 状态轮询（每 5 秒）
+  useEffect(() => {
+    const t = setInterval(() => { loadWorkerStatus(); }, 5000);
+    return () => clearInterval(t);
+  }, [loadWorkerStatus]);
 
   const handleValuesChange = () => { setIsDirty(true); };
 
@@ -523,7 +549,7 @@ const Settings: React.FC = () => {
                   <Text type="secondary" style={{ fontSize: 12 }}>在下方模型列表中下载并激活模型后自动应用</Text>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name="max_concurrent_tasks" label="并行处理线程数"><InputNumber min={1} max={16} style={{ width: '100%' }} /></Form.Item>
+                  <Form.Item name="max_concurrent_tasks" label="并行处理线程数" tooltip="修改并保存后会自动重启 Celery Worker"><InputNumber min={1} max={16} style={{ width: '100%' }} /></Form.Item>
                 </Col>
               </Row>
               <Row gutter={24} style={{ marginTop: 16 }}>
@@ -655,6 +681,95 @@ const Settings: React.FC = () => {
               <Button icon={<ReloadOutlined />} onClick={async () => { setModelsLoading(true); try { const data = await api.models.refreshModels(); setModels(data); } catch {} finally { setModelsLoading(false); } loadVadModels(); }} loading={modelsLoading} type="text">刷新模型列表</Button>
               <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveEngine} loading={savingEngine} style={{ background: 'var(--accent-amber)', borderColor: 'var(--accent-amber)' }}>保存配置</Button>
             </Space>
+          </div>
+        </div>
+      );
+
+      case 'worker': return (
+        <div className="cat-panel">
+          <div className="cat-hero">
+            <div className="cat-icon" style={{ background: 'var(' + activeCat.colorBgVar + ')', color: 'var(' + activeCat.colorVar + ')' }}>{activeCat.icon}</div>
+            <div>
+              <h2 className="cat-title">任务 Worker</h2>
+              <p className="cat-sub">后台字幕生成进程，由主后端托管启动。修改并发数后会自动重启以应用新配置</p>
+            </div>
+          </div>
+          <div className="cat-section">
+            <div style={{ marginBottom: 20, padding: 16, background: 'var(--bg-input)', borderRadius: 10, border: '1px solid var(--glass-border)' }}>
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: workerStatus?.running ? '#22c55e' : '#6b7280', boxShadow: workerStatus?.running ? '0 0 8px #22c55e' : 'none' }} />
+                    <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 15 }}>
+                      {workerStatus?.running ? 'Worker 运行中' : 'Worker 未运行'}
+                    </span>
+                    {workerStatus?.running && (
+                      <Tag color="success" style={{ marginLeft: 4 }}>PID {workerStatus.pid ?? '-'}</Tag>
+                    )}
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {workerStatus?.running
+                      ? `已运行 ${workerStatus.uptime_seconds != null
+                          ? (workerStatus.uptime_seconds >= 3600
+                              ? Math.floor(workerStatus.uptime_seconds / 3600) + ' 小时 ' + Math.floor((workerStatus.uptime_seconds % 3600) / 60) + ' 分钟'
+                              : workerStatus.uptime_seconds >= 60
+                                ? Math.floor(workerStatus.uptime_seconds / 60) + ' 分钟 ' + (workerStatus.uptime_seconds % 60) + ' 秒'
+                                : workerStatus.uptime_seconds + ' 秒')
+                          : '-'}`
+                      : '后台 Worker 未启动，字幕任务不会被处理'}
+                  </Text>
+                </Col>
+                <Col>
+                  <Space>
+                    <Button
+                      type="primary"
+                      icon={<CheckCircleOutlined />}
+                      disabled={workerStatus?.running}
+                      loading={workerLoading}
+                      onClick={() => handleWorkerAction('start')}
+                      style={!workerStatus?.running ? { background: 'var(--accent-emerald)', borderColor: 'var(--accent-emerald)' } : {}}
+                    >
+                      启动
+                    </Button>
+                    <Button
+                      icon={<SyncOutlined />}
+                      disabled={!workerStatus?.running}
+                      loading={workerLoading}
+                      onClick={() => handleWorkerAction('restart')}
+                    >
+                      重启
+                    </Button>
+                    <Button
+                      danger
+                      icon={<CloseCircleOutlined />}
+                      disabled={!workerStatus?.running}
+                      loading={workerLoading}
+                      onClick={() => handleWorkerAction('stop')}
+                    >
+                      停止
+                    </Button>
+                  </Space>
+                </Col>
+              </Row>
+            </div>
+
+            <div className="cat-info-banner" style={{ marginBottom: 16 }}>
+              <InfoCircleOutlined style={{ marginRight: 8 }} />
+              <span>主后端启动时会自动拉起 Worker；保存"并行处理线程数"后会自动重启生效。如 Worker 异常退出，可在此手动启动。</span>
+            </div>
+
+            <Row gutter={24}>
+              <Col span={8}>
+                <Form.Item name="max_concurrent_tasks" label="并行处理线程数" tooltip="Worker 同时处理的任务数，1-16，修改后保存会自动重启 Worker">
+                  <InputNumber min={1} max={16} style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
+          <div className="cat-footer">
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveEngine} loading={savingEngine} style={{ background: 'var(--accent-emerald)', borderColor: 'var(--accent-emerald)' }}>
+              保存并应用
+            </Button>
           </div>
         </div>
       );

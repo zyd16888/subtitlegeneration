@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import traceback
 import time
 
-from api import media, tasks, config, stats, models
+from api import media, tasks, config, stats, models, worker
 from models.base import init_db
 from utils.logger import setup_logger, get_logger
 from config.settings import settings
@@ -186,6 +186,14 @@ async def startup_event():
         logger.error(f"数据库初始化失败: {e}")
         raise
     
+    # 自动拉起 Celery worker（由主后端进程托管）
+    try:
+        from services.worker_manager import get_worker_manager
+        result = get_worker_manager().start()
+        logger.info(f"Celery worker 自动启动: {result.get('message')}")
+    except Exception as e:
+        logger.warning(f"Celery worker 自动启动失败（可在 UI 手动启动）: {e}")
+
     # 恢复 Telegram Bot（仅在 UI 中标记为启用时自动启动）
     try:
         from models.base import SessionLocal
@@ -219,6 +227,13 @@ async def shutdown_event():
     except Exception as e:
         logger.warning(f"Telegram Bot 停止失败: {e}")
 
+    # 停止 Celery worker
+    try:
+        from services.worker_manager import get_worker_manager
+        get_worker_manager().stop()
+    except Exception as e:
+        logger.warning(f"Celery worker 停止失败: {e}")
+
 
 # 注册路由
 app.include_router(media.router)
@@ -226,6 +241,7 @@ app.include_router(tasks.router)
 app.include_router(config.router)
 app.include_router(stats.router)
 app.include_router(models.router)
+app.include_router(worker.router)
 
 
 # 根路径

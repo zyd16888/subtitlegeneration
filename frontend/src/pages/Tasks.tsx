@@ -254,7 +254,7 @@ const Tasks: React.FC = () => {
           <Tooltip title="查看详情">
             <Button type="text" icon={<EyeOutlined />} onClick={() => handleViewDetail(record.id)} />
           </Tooltip>
-          {record.status === 'processing' && (
+          {(record.status === 'pending' || record.status === 'processing') && (
             <Tooltip title="取消任务">
               <Button type="text" danger icon={<StopOutlined />} onClick={() => handleCancelTask(record.id, record.media_item_title)} />
             </Tooltip>

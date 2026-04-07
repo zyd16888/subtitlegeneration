@@ -3,8 +3,39 @@ Celery 应用配置
 
 配置 Celery 应用，使用 Redis 作为消息代理和结果存储
 """
+import logging
+
 from celery import Celery
 from config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _load_worker_concurrency(default: int = 2) -> int:
+    """从数据库读取 max_concurrent_tasks 作为 worker 并发数。
+
+    在 celery_app 模块导入时调用（worker 启动前），失败则回退到默认值。
+    修改 UI 配置后需要重启 worker 才能生效。
+    """
+    try:
+        from models.base import SessionLocal
+        from models.config import SystemConfig
+
+        db = SessionLocal()
+        try:
+            row = db.query(SystemConfig).filter(SystemConfig.key == "max_concurrent_tasks").first()
+            if row and row.value:
+                value = int(str(row.value).strip('"'))
+                if 1 <= value <= 16:
+                    return value
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"读取 max_concurrent_tasks 失败，使用默认值 {default}: {e}")
+    return default
+
+
+_worker_concurrency = _load_worker_concurrency()
 
 # 创建 Celery 应用实例
 celery_app = Celery(
@@ -41,6 +72,10 @@ celery_app.conf.update(
     # Worker 配置
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=50,
+    # 并发数来自 UI 设置页（数据库 max_concurrent_tasks 字段），修改后需重启 worker
+    worker_concurrency=_worker_concurrency,
+    # 池类型：threads 跨平台可用（Windows 无 prefork）；ffmpeg/翻译/sherpa 混合负载适合线程池
+    worker_pool="threads",
     
     # 任务路由
     task_routes={

@@ -267,8 +267,8 @@ class ConfigManager:
         if 'max_concurrent_tasks' in updated_keys:
             if config.max_concurrent_tasks < 1:
                 errors.append("最大并发任务数必须大于 0")
-            if config.max_concurrent_tasks > 10:
-                errors.append("最大并发任务数不应超过 10")
+            if config.max_concurrent_tasks > 16:
+                errors.append("最大并发任务数不应超过 16")
         
         return ValidationResult(valid=len(errors) == 0, errors=errors)
     
@@ -308,7 +308,7 @@ class ConfigManager:
         # 验证任务配置
         if config.max_concurrent_tasks < 1:
             errors.append("最大并发任务数必须大于 0")
-        if config.max_concurrent_tasks > 10:
-            errors.append("最大并发任务数不应超过 10")
+        if config.max_concurrent_tasks > 16:
+            errors.append("最大并发任务数不应超过 16")
         
         return ValidationResult(valid=len(errors) == 0, errors=errors)

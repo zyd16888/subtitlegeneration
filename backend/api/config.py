@@ -141,6 +141,18 @@ async def partial_update_config(
         
         # 部分验证并更新配置
         updated_config = await config_manager.partial_update_config(merged_config, config.keys())
+
+        # 若并发数变更，自动重启 Celery worker 让新值生效
+        if "max_concurrent_tasks" in config:
+            try:
+                from services.worker_manager import get_worker_manager
+                mgr = get_worker_manager()
+                if mgr.is_running():
+                    logger.info("检测到 max_concurrent_tasks 变更，重启 Celery worker")
+                    mgr.restart()
+            except Exception as e:
+                logger.warning(f"自动重启 Celery worker 失败: {e}")
+
         return updated_config
         
     except ValueError as e:
