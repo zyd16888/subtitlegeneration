@@ -3,8 +3,7 @@ import { Card, Space, Row, Col } from 'antd';
 import TaskStatusBadge from './TaskStatusBadge';
 import ProgressBar from './ProgressBar';
 import MediaItemCard from './MediaItemCard';
-import { TaskStatus } from '../types/api';
-import type { MediaItem } from '../types/api';
+import type { TaskStatus, MediaItem } from '../types/api';
 
 /**
  * 组件演示页面
@@ -17,11 +16,11 @@ const ComponentsDemo: React.FC = () => {
 
   // 测试数据
   const taskStatuses: TaskStatus[] = [
-    TaskStatus.PENDING,
-    TaskStatus.PROCESSING,
-    TaskStatus.COMPLETED,
-    TaskStatus.FAILED,
-    TaskStatus.CANCELLED,
+    'pending',
+    'processing',
+    'completed',
+    'failed',
+    'cancelled',
   ];
   
   const testMediaItems: MediaItem[] = [
@@ -76,23 +75,23 @@ const ComponentsDemo: React.FC = () => {
         <Space direction="vertical" style={{ width: '100%' }} size="large">
           <div>
             <div style={{ marginBottom: 8 }}>待处理 (0%)</div>
-            <ProgressBar progress={0} status={TaskStatus.PENDING} />
+            <ProgressBar progress={0} status="pending" />
           </div>
           <div>
             <div style={{ marginBottom: 8 }}>处理中 (50%)</div>
-            <ProgressBar progress={50} status={TaskStatus.PROCESSING} />
+            <ProgressBar progress={50} status="processing" />
           </div>
           <div>
             <div style={{ marginBottom: 8 }}>已完成 (100%)</div>
-            <ProgressBar progress={100} status={TaskStatus.COMPLETED} />
+            <ProgressBar progress={100} status="completed" />
           </div>
           <div>
             <div style={{ marginBottom: 8 }}>失败 (30%)</div>
-            <ProgressBar progress={30} status={TaskStatus.FAILED} />
+            <ProgressBar progress={30} status="failed" />
           </div>
           <div>
             <div style={{ marginBottom: 8 }}>已取消 (20%)</div>
-            <ProgressBar progress={20} status={TaskStatus.CANCELLED} />
+            <ProgressBar progress={20} status="cancelled" />
           </div>
         </Space>
       </Card>
