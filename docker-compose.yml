@@ -1,19 +1,5 @@
 version: '3.8'
 
-# ========================================
-# 单镜像部署：前端 + 后端 + Celery 一体
-#
-# 快速启动:
-#   docker-compose up -d
-#
-# 首次拉取镜像（私有仓库需登录）:
-#   echo $GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-#   docker-compose pull
-#   docker-compose up -d
-#
-# 注意: 将下方镜像地址替换为实际的 GitHub 仓库地址
-# ========================================
-
 services:
   redis:
     image: redis:7-alpine
@@ -26,7 +12,7 @@ services:
     restart: unless-stopped
 
   app:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/subtitlegeneration:${IMAGE_TAG:-latest}
+    image: ghcr.io/zyd16888/subtitlegeneration:master
     container_name: subtitle-app
     ports:
       - "8000:8000"
