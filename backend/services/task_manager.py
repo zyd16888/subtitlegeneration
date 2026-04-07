@@ -220,11 +220,11 @@ class TaskManager:
         
         task.progress = max(0, min(100, progress))
         
-        # 更新扩展信息中的当前阶段
+        # 更新扩展信息中的当前阶段（整体赋值以触发 SQLAlchemy 脏检测）
         if stage:
-            if task.extra_info is None:
-                task.extra_info = {}
-            task.extra_info['current_stage'] = stage
+            merged = dict(task.extra_info) if task.extra_info else {}
+            merged['current_stage'] = stage
+            task.extra_info = merged
         
         self.db.commit()
         self.db.refresh(task)
@@ -264,10 +264,11 @@ class TaskManager:
         if audio_duration is not None:
             task.audio_duration = audio_duration
         if extra_info is not None:
-            if task.extra_info:
-                task.extra_info.update(extra_info)
-            else:
-                task.extra_info = extra_info
+            # 注意：JSON 列默认不是 Mutable 的，就地 update 不会触发 SQLAlchemy 脏检测，
+            # 必须整体赋值新 dict 才能持久化。
+            merged = dict(task.extra_info) if task.extra_info else {}
+            merged.update(extra_info)
+            task.extra_info = merged
         
         self.db.commit()
         self.db.refresh(task)

@@ -39,6 +39,7 @@ import {
   FieldTimeOutlined,
   PlayCircleOutlined,
   MinusCircleOutlined,
+  ProfileOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { api } from '../services/api';
@@ -462,8 +463,19 @@ const Tasks: React.FC = () => {
                   const isSkipped = skippedSteps.includes(stage.key);
                   let description: React.ReactNode = null;
                   if (stage.status === 'process') {
-                    description = <Progress percent={Math.round(stage.progress)} size="small" />;
-                  } else if ((stage.status === 'finish' || isSkipped) && stepLog) {
+                    // 处理中：显示进度条，如果有日志也显示
+                    description = (
+                      <>
+                        <Progress percent={Math.round(stage.progress)} size="small" />
+                        {stepLog && (
+                          <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'pre-line', marginTop: 8, display: 'block' }}>
+                            {stepLog}
+                          </Text>
+                        )}
+                      </>
+                    );
+                  } else if (stepLog) {
+                    // 完成、失败、跳过：只要有日志就显示
                     description = (
                       <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'pre-line' }}>
                         {stepLog}
@@ -495,6 +507,64 @@ const Tasks: React.FC = () => {
                 })}
               />
             </Card>
+
+            {/* 处理日志 */}
+            {Array.isArray(selectedTask.extra_info?.logs) && selectedTask.extra_info!.logs.length > 0 && (
+              <Card
+                size="small"
+                title={
+                  <Space>
+                    <ProfileOutlined /> 处理日志
+                    <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                      共 {selectedTask.extra_info!.logs.length} 条
+                    </Text>
+                  </Space>
+                }
+                extra={
+                  <Button
+                    size="small"
+                    onClick={() => fetchTaskDetail(selectedTask.id)}
+                    icon={<ReloadOutlined />}
+                  >
+                    刷新
+                  </Button>
+                }
+                style={{ borderRadius: 12 }}
+              >
+                <div
+                  style={{
+                    maxHeight: 360,
+                    overflow: 'auto',
+                    background: 'var(--code-bg, #1e1e1e)',
+                    color: '#d4d4d4',
+                    padding: 12,
+                    borderRadius: 8,
+                    fontFamily: 'Consolas, Menlo, monospace',
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {(selectedTask.extra_info!.logs as Array<{ timestamp: string; level: string; logger?: string; message: string }>).map((log, idx) => {
+                    const levelColor: Record<string, string> = {
+                      DEBUG: '#9e9e9e',
+                      INFO: '#4ec9b0',
+                      WARNING: '#dcdcaa',
+                      ERROR: '#f48771',
+                      CRITICAL: '#f48771',
+                    };
+                    const color = levelColor[log.level] || '#d4d4d4';
+                    const ts = log.timestamp ? log.timestamp.replace('T', ' ').slice(0, 23) : '';
+                    return (
+                      <div key={idx} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                        <span style={{ color: '#808080' }}>{ts}</span>{' '}
+                        <span style={{ color, fontWeight: 600 }}>[{log.level}]</span>{' '}
+                        <span style={{ color }}>{log.message}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            )}
 
             {/* 结果信息 */}
             {selectedTask.status === 'completed' && selectedTask.subtitle_path && (

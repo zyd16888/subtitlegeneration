@@ -35,6 +35,7 @@ from services.subtitle_generator import SubtitleGenerator, SubtitleSegment
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
 from services.model_manager import ModelManager
+from services.task_log_capture import TaskLogCapture
 from config.settings import settings
 from models.base import SessionLocal
 
@@ -357,6 +358,27 @@ def generate_subtitle_task(
     config_manager = ConfigManager(db)
     audio_path = None
 
+    # 挂载任务日志捕获器，将处理过程中的所有 logging 输出收集起来供前端展示
+    log_capture = TaskLogCapture()
+    root_logger = logging.getLogger()
+    root_logger.addHandler(log_capture)
+    if root_logger.level > logging.INFO or root_logger.level == logging.NOTSET:
+        # 确保 INFO 级别能流到 handler；不修改原有 level 行为以外的设置
+        log_capture.setLevel(logging.INFO)
+
+    def _persist_logs_extra(extra: dict) -> dict:
+        """合并日志快照到 extra_info 更新载荷"""
+        merged = dict(extra) if extra else {}
+        merged["logs"] = log_capture.snapshot()
+        return merged
+
+    def _mark_step_start(stage: str) -> None:
+        # 保留占位以兼容下面调用，无副作用
+        pass
+
+    def _format_step_log(stage: str, summary: str) -> str:
+        return summary
+
     try:
         config = asyncio.run(config_manager.get_config())
 
@@ -390,6 +412,7 @@ def generate_subtitle_task(
         skipped_steps = []
 
         # 1. 提取音频
+        _mark_step_start("audio")
         logger.info(f"[{task_id}] 步骤 1/5: 提取音频")
         logger.info(f"[{task_id}] 视频路径: {video_path}")
         audio_extractor = AudioExtractor(task_work_dir)
@@ -400,11 +423,15 @@ def generate_subtitle_task(
             logger.error(f"[{task_id}] 音频提取失败: {e}", exc_info=True)
             raise
         audio_size = os.path.getsize(audio_path) if os.path.exists(audio_path) else 0
-        step_logs["audio"] = f"输入: {video_path}\n输出: {audio_path}\n音频大小: {audio_size / 1024 / 1024:.1f} MB"
-        asyncio.run(task_manager.update_task_result(task_id, extra_info={"step_logs": step_logs}))
+        step_logs["audio"] = _format_step_log(
+            "audio",
+            f"输入: {video_path}\n输出: {audio_path}\n音频大小: {audio_size / 1024 / 1024:.1f} MB",
+        )
+        asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})))
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 20))
 
         # 2. 语音识别
+        _mark_step_start("asr")
         logger.info(f"[{task_id}] 步骤 2/5: 语音识别")
         logger.info(f"[{task_id}] 创建 ASR 引擎...")
         try:
@@ -421,12 +448,15 @@ def generate_subtitle_task(
         )
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 60))
         logger.info(f"[{task_id}] 语音识别完成，识别到 {len(segments)} 个片段")
-        step_logs["asr"] = (
-            f"引擎: {type(asr_engine_instance).__name__}\n"
-            f"识别片段数: {len(segments)}\n"
-            f"语言: {source_lang}"
+        step_logs["asr"] = _format_step_log(
+            "asr",
+            (
+                f"引擎: {type(asr_engine_instance).__name__}\n"
+                f"识别片段数: {len(segments)}\n"
+                f"语言: {source_lang}"
+            ),
         )
-        asyncio.run(task_manager.update_task_result(task_id, segment_count=len(segments), extra_info={"step_logs": step_logs}))
+        asyncio.run(task_manager.update_task_result(task_id, segment_count=len(segments), extra_info=_persist_logs_extra({"step_logs": step_logs})))
 
         # 保存 ASR 原始识别结果
         import json
@@ -439,6 +469,7 @@ def generate_subtitle_task(
             raise RuntimeError("语音识别未能识别出任何内容，请检查音频是否包含语音或更换 ASR 模型")
 
         # 3. 翻译文本
+        _mark_step_start("translation")
         logger.info(f"[{task_id}] 步骤 3/5: 翻译文本")
         if source_lang == target_lang:
             logger.info(f"[{task_id}] 源语言与目标语言相同 ({source_lang})，跳过翻译")
@@ -453,32 +484,42 @@ def generate_subtitle_task(
             )
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
         if source_lang == target_lang:
-            step_logs["translation"] = f"源语言与目标语言相同 ({source_lang})，已跳过翻译"
+            step_logs["translation"] = _format_step_log(
+                "translation", f"源语言与目标语言相同 ({source_lang})，已跳过翻译"
+            )
             skipped_steps.append("translation")
         else:
             translated_count = sum(1 for s in subtitle_segments if s.is_translated)
-            step_logs["translation"] = (
-                f"翻译服务: {config.translation_service}\n"
-                f"方向: {source_lang} → {target_lang}\n"
-                f"成功翻译: {translated_count}/{len(subtitle_segments)} 段"
+            step_logs["translation"] = _format_step_log(
+                "translation",
+                (
+                    f"翻译服务: {config.translation_service}\n"
+                    f"方向: {source_lang} → {target_lang}\n"
+                    f"成功翻译: {translated_count}/{len(subtitle_segments)} 段"
+                ),
             )
-        asyncio.run(task_manager.update_task_result(task_id, extra_info={"step_logs": step_logs, "skipped_steps": skipped_steps}))
+        asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs, "skipped_steps": skipped_steps})))
 
         # 4. 生成字幕文件
+        _mark_step_start("subtitle")
         logger.info(f"[{task_id}] 步骤 4/5: 生成字幕文件")
         subtitle_generator = SubtitleGenerator()
         subtitle_path = subtitle_generator.generate_srt(subtitle_segments, video_path, target_lang, output_dir=task_work_dir)
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 95))
         logger.info(f"[{task_id}] 字幕文件生成完成: {subtitle_path}")
         srt_size = os.path.getsize(subtitle_path) if os.path.exists(subtitle_path) else 0
-        step_logs["subtitle"] = (
-            f"输出: {subtitle_path}\n"
-            f"文件大小: {srt_size / 1024:.1f} KB\n"
-            f"字幕段落: {len(subtitle_segments)} 段"
+        step_logs["subtitle"] = _format_step_log(
+            "subtitle",
+            (
+                f"输出: {subtitle_path}\n"
+                f"文件大小: {srt_size / 1024:.1f} KB\n"
+                f"字幕段落: {len(subtitle_segments)} 段"
+            ),
         )
-        asyncio.run(task_manager.update_task_result(task_id, subtitle_path=subtitle_path, extra_info={"step_logs": step_logs}))
+        asyncio.run(task_manager.update_task_result(task_id, subtitle_path=subtitle_path, extra_info=_persist_logs_extra({"step_logs": step_logs})))
 
         # 5. 复制字幕到视频目录 + 刷新 Emby
+        _mark_step_start("emby")
         logger.info(f"[{task_id}] 步骤 5/6: 复制字幕到视频目录")
         emby_log_lines = []
         emby_copy_skipped = False
@@ -562,13 +603,15 @@ def generate_subtitle_task(
             logger.warning(f"[{task_id}] 未配置 Emby 连接，跳过字幕回写")
             emby_log_lines.append("未配置 Emby 连接，跳过回写")
 
-        step_logs["emby"] = "\n".join(emby_log_lines)
+        step_logs["emby"] = _format_step_log("emby", "\n".join(emby_log_lines))
         # 判断 Emby 回写是否实质性跳过（未配置 Emby / 获取路径失败 / 路径映射未匹配或未配置）
         if not (config.emby_url and config.emby_api_key) or emby_copy_skipped:
             skipped_steps.append("emby")
-        asyncio.run(task_manager.update_task_result(task_id, extra_info={"step_logs": step_logs, "skipped_steps": skipped_steps}))
+        asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs, "skipped_steps": skipped_steps})))
 
         asyncio.run(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
+        # 任务完成后再写一次，捕获完成日志
+        asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
         logger.info(f"[{task_id}] 任务完成")
 
         # 按配置决定是否清理临时文件
@@ -587,8 +630,18 @@ def generate_subtitle_task(
         asyncio.run(
             task_manager.update_task_status(task_id, TaskStatus.FAILED, error_message=error_message)
         )
+        # 失败时也持久化捕获到的日志，便于排查
+        try:
+            asyncio.run(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
+        except Exception:
+            pass
         raise
 
     finally:
+        # 卸载日志捕获器
+        try:
+            root_logger.removeHandler(log_capture)
+        except Exception:
+            pass
         # 中间产物保留在 task_work_dir 中，不清理，方便调试
         db.close()
