@@ -31,6 +31,7 @@ class SystemConfigData(BaseModel):
     translation_service: str = "openai"  # openai, deepseek, local, google, microsoft, baidu, deepl
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4"
+    openai_base_url: Optional[str] = None  # OpenAI 自定义 base_url，支持中转站点
     deepseek_api_key: Optional[str] = None
     local_llm_url: Optional[str] = None
     google_translate_mode: str = "free"  # free, api
@@ -262,7 +263,7 @@ class ConfigManager:
                     errors.append("使用云端 ASR 时必须配置 API Key")
         
         # 验证翻译服务配置（只在相关字段更新时验证）
-        translation_keys = {'translation_service', 'openai_api_key', 'openai_model', 'deepseek_api_key', 'local_llm_url'}
+        translation_keys = {'translation_service', 'openai_api_key', 'openai_model', 'openai_base_url', 'deepseek_api_key', 'local_llm_url'}
         if translation_keys & updated_keys:  # 如果有交集
             if config.translation_service == "openai" and not config.openai_api_key:
                 errors.append("使用 OpenAI 翻译时必须配置 API Key")

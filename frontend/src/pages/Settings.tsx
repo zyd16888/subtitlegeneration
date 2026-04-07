@@ -214,7 +214,7 @@ const Settings: React.FC = () => {
     try {
       const service = form.getFieldValue('translation_service');
       const values: any = { translation_service: service };
-      if (service === 'openai') { values.openai_api_key = form.getFieldValue('openai_api_key'); values.openai_model = form.getFieldValue('openai_model'); }
+      if (service === 'openai') { values.openai_api_key = form.getFieldValue('openai_api_key'); values.openai_model = form.getFieldValue('openai_model'); values.openai_base_url = form.getFieldValue('openai_base_url'); }
       else if (service === 'deepseek') { values.deepseek_api_key = form.getFieldValue('deepseek_api_key'); }
       else if (service === 'local') { values.local_llm_url = form.getFieldValue('local_llm_url'); }
       else if (service === 'google') { values.google_translate_mode = form.getFieldValue('google_translate_mode'); values.google_api_key = form.getFieldValue('google_api_key'); }
@@ -312,7 +312,7 @@ const Settings: React.FC = () => {
     try {
       const service = form.getFieldValue('translation_service');
       const payload: any = { translation_service: service };
-      if (service === 'openai') { payload.api_key = form.getFieldValue('openai_api_key'); payload.model = form.getFieldValue('openai_model'); }
+      if (service === 'openai') { payload.api_key = form.getFieldValue('openai_api_key'); payload.model = form.getFieldValue('openai_model'); payload.base_url = form.getFieldValue('openai_base_url'); }
       else if (service === 'deepseek') { payload.api_key = form.getFieldValue('deepseek_api_key'); }
       else if (service === 'local') { payload.api_url = form.getFieldValue('local_llm_url'); }
       else if (service === 'google') { payload.google_translate_mode = form.getFieldValue('google_translate_mode'); payload.api_key = form.getFieldValue('google_api_key'); }
@@ -481,6 +481,9 @@ const Settings: React.FC = () => {
                   <Col span={12}><Form.Item name="openai_api_key" label="OpenAI API Key" rules={[{ required: true }]}><Input.Password placeholder="sk-..." /></Form.Item></Col>
                   <Col span={12}><Form.Item name="openai_model" label="大语言模型" initialValue="gpt-4"><Input placeholder="gpt-4o / gpt-3.5-turbo" /></Form.Item></Col>
                 </Row>
+              )}
+              {translationService === 'openai' && (
+                <Form.Item name="openai_base_url" label="API Base URL" tooltip="自定义 OpenAI API 地址，支持中转站点或第三方服务" initialValue=""><Input placeholder="https://api.openai.com/v1 (留空使用官方地址)" /></Form.Item>
               )}
               {translationService === 'deepseek' && (<Form.Item name="deepseek_api_key" label="DeepSeek API Key" rules={[{ required: true }]}><Input.Password placeholder="sk-..." /></Form.Item>)}
               {translationService === 'local' && (<Form.Item name="local_llm_url" label="本地模型 Endpoint" rules={[{ required: true }]}><Input.Password placeholder="http://localhost:11434" /></Form.Item>)}

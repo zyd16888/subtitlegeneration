@@ -48,6 +48,7 @@ class TestTranslationRequest(BaseModel):
     api_key: Optional[str] = None
     api_url: Optional[str] = None
     model: Optional[str] = None
+    base_url: Optional[str] = None  # OpenAI 自定义 base_url，支持中转站点
     # Google 翻译
     google_translate_mode: Optional[str] = "free"
     # 微软翻译
@@ -225,7 +226,8 @@ async def test_translation_service(request: TestTranslationRequest):
             
             translator = OpenAITranslator(
                 api_key=request.api_key,
-                model=request.model or "gpt-4"
+                model=request.model or "gpt-4",
+                base_url=request.base_url
             )
             
         elif request.translation_service == "deepseek":

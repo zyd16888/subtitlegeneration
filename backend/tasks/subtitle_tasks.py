@@ -179,7 +179,7 @@ def _get_translation_service(config) -> TranslationService:
     if config.translation_service == "openai":
         if not config.openai_api_key:
             raise ValueError("OpenAI 翻译服务需要配置 API Key")
-        return OpenAITranslator(config.openai_api_key, config.openai_model)
+        return OpenAITranslator(config.openai_api_key, config.openai_model, config.openai_base_url)
     elif config.translation_service == "deepseek":
         if not config.deepseek_api_key:
             raise ValueError("DeepSeek 翻译服务需要配置 API Key")

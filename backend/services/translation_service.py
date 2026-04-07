@@ -43,17 +43,21 @@ class TranslationService(ABC):
 
 
 class OpenAITranslator(TranslationService):
-    def __init__(self, api_key: str, model: str = "gpt-4"):
+    def __init__(self, api_key: str, model: str = "gpt-4", base_url: Optional[str] = None):
         if not api_key:
             raise ValueError("API key cannot be empty")
         self.api_key = api_key
         self.model = model
+        self.base_url = base_url.rstrip('/') if base_url else None
         self.client = None
-    
+
     def _get_client(self):
         if self.client is None:
             from openai import AsyncOpenAI
-            self.client = AsyncOpenAI(api_key=self.api_key)
+            client_kwargs = {"api_key": self.api_key}
+            if self.base_url:
+                client_kwargs["base_url"] = self.base_url
+            self.client = AsyncOpenAI(**client_kwargs)
         return self.client
     
     async def translate(self, text: str, source_lang: str = "ja", target_lang: str = "zh") -> str:

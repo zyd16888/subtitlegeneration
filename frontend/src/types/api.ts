@@ -148,6 +148,7 @@ export interface SystemConfig {
   translation_service: 'openai' | 'deepseek' | 'local' | 'google' | 'microsoft' | 'baidu' | 'deepl';
   openai_api_key?: string;
   openai_model: string;
+  openai_base_url?: string;  // OpenAI 自定义 base_url，支持中转站点
   deepseek_api_key?: string;
   local_llm_url?: string;
   google_translate_mode?: string;
