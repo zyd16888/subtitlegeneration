@@ -12,7 +12,7 @@ import {
   AimOutlined, ClearOutlined, SendOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { api } from '../services/api';
-import type { SystemConfig, ASRModel, ModelDownloadProgress, LanguageInfo, Library } from '../types/api';
+import type { ASRModel, ModelDownloadProgress, LanguageInfo, Library } from '../types/api';
 
 const { Option } = Select;
 const { Text } = Typography;
