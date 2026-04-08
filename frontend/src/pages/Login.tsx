@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Form, Input, Button, Card, message } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../App';
+
 
 interface LoginForm {
   username: string;
@@ -10,7 +11,7 @@ interface LoginForm {
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
+  const { checkAuth } = useAuth();
 
   const onFinish = async (values: LoginForm) => {
     setLoading(true);
@@ -31,7 +32,7 @@ const Login = () => {
       const data = await response.json();
       localStorage.setItem('token', data.access_token);
       message.success('登录成功');
-      navigate('/');
+      await checkAuth();
     } catch (error: any) {
       message.error(error.message || '登录失败');
     } finally {
