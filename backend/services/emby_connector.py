@@ -240,7 +240,8 @@ class EmbyConnector:
         # 访问控制：若同时指定 library_id 和 accessible_library_ids，
         # 校验 library_id 是否在允许集合中，否则直接返回空结果
         if library_id and accessible_library_ids:
-            if library_id not in set(accessible_library_ids):
+            allowed_norm = {self._normalize_guid(x) for x in accessible_library_ids}
+            if self._normalize_guid(library_id) not in allowed_norm:
                 logger.warning(
                     f"访问控制拒绝：library_id={library_id} 不在允许列表中"
                 )
@@ -306,6 +307,11 @@ class EmbyConnector:
             # 分库聚合时需要手动分页
             if len(parent_ids_to_query) > 1:
                 aggregated_items = aggregated_items[offset : offset + limit]
+
+            # Emby 在 SearchTerm + ParentId 场景下经常返回 TotalRecordCount=0 但
+            # Items 非空，用实际条目数兜底，避免界面显示"0 个结果"。
+            if aggregated_total < len(aggregated_items):
+                aggregated_total = len(aggregated_items)
 
             logger.info(f"获取到 {len(aggregated_items)} 个媒体项 (共 {aggregated_total} 个)")
             return aggregated_items, aggregated_total
@@ -577,6 +583,18 @@ class EmbyConnector:
             raise
     
     @staticmethod
+    def _normalize_guid(value: Optional[str]) -> str:
+        """
+        规范化 Emby 的 Guid：去除连字符/空白并转小写。
+
+        Emby 不同接口返回的 Guid 可能是带连字符（xxxxxxxx-xxxx-...）或无连字符
+        的 32 位 hash 形式，直接字符串比较会判失败，因此用于访问控制比较时统一规范化。
+        """
+        if not value:
+            return ""
+        return str(value).replace("-", "").strip().lower()
+
+    @staticmethod
     def is_item_accessible(
         item: MediaItem,
         accessible_library_ids: Optional[List[str]],
@@ -593,10 +611,13 @@ class EmbyConnector:
         """
         if not accessible_library_ids:
             return True
-        allowed = set(accessible_library_ids)
+        allowed = {EmbyConnector._normalize_guid(x) for x in accessible_library_ids}
         if not item.ancestor_ids:
             return False
-        return any(aid in allowed for aid in item.ancestor_ids)
+        return any(
+            EmbyConnector._normalize_guid(aid) in allowed
+            for aid in item.ancestor_ids
+        )
 
     async def close(self):
         """关闭 HTTP 客户端"""
