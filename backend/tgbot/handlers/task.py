@@ -134,14 +134,24 @@ async def task_create_callback(
 ) -> None:
     """处理 "生成字幕" 按钮回调"""
     query = update.callback_query
-    await query.answer()
+    # 立即 toast 反馈，避免用户感觉无响应
+    await query.answer(text="⏳ 正在创建任务…")
 
     media_item_id = query.data[4:]  # t:c:{media_item_id}
+
+    # 立即移除按钮，防止重复点击产生重复任务（对 photo 和 text 消息都合法）
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception as e:
+        logger.warning(f"移除按钮失败: {e}")
 
     success, msg = await _create_subtitle_task(
         update.effective_user.id, media_item_id, context
     )
-    await query.edit_message_text(msg)
+
+    # 以新消息回复结果，兼容原消息为 photo 的情况
+    # （Telegram 不允许把 photo 消息 edit 成 text 消息）
+    await query.message.reply_text(msg)
 
 
 @require_auth

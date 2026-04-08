@@ -47,7 +47,13 @@ class TaskResponse(BaseModel):
     media_item_id: str
     media_item_title: Optional[str] = None
     video_path: Optional[str] = None
-    
+
+    # 用户追踪信息
+    telegram_user_id: Optional[int] = None
+    telegram_username: Optional[str] = None
+    telegram_display_name: Optional[str] = None
+    emby_username: Optional[str] = None
+
     # 状态信息
     status: TaskStatus
     progress: int = Field(description="任务进度 (0-100)")
@@ -127,6 +133,10 @@ def task_to_response(task: Task) -> TaskResponse:
         media_item_id=task.media_item_id,
         media_item_title=task.media_item_title,
         video_path=task.video_path,
+        telegram_user_id=task.telegram_user_id,
+        telegram_username=task.telegram_username,
+        telegram_display_name=task.telegram_display_name,
+        emby_username=task.emby_username,
         status=task.status,
         progress=task.progress,
         created_at=ensure_utc(task.created_at),
@@ -366,6 +376,10 @@ async def get_task(
             media_item_id=task.media_item_id,
             media_item_title=task.media_item_title,
             video_path=task.video_path,
+            telegram_user_id=task.telegram_user_id,
+            telegram_username=task.telegram_username,
+            telegram_display_name=task.telegram_display_name,
+            emby_username=task.emby_username,
             status=task.status,
             progress=task.progress,
             created_at=created_at_utc,
