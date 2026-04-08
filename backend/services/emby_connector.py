@@ -613,6 +613,33 @@ class EmbyConnector:
         )
         return False
 
+    async def get_image_bytes(
+        self,
+        item_id: str,
+        image_type: str = "Primary",
+        max_width: int = 400,
+    ) -> Optional[bytes]:
+        """
+        获取媒体项的图片原始字节。
+
+        Args:
+            item_id: 媒体项 ID
+            image_type: 图片类型 (Primary, Backdrop 等)
+            max_width: 最大宽度（Emby 会缩放）
+
+        Returns:
+            图片字节，失败返回 None
+        """
+        try:
+            url = f"{self.base_url}/Items/{item_id}/Images/{image_type}"
+            params = {"maxWidth": str(max_width), "api_key": self.api_key}
+            response = await self.client.get(url, params=params)
+            if response.status_code == 200 and response.content:
+                return response.content
+        except Exception as e:
+            logger.warning(f"获取图片失败 (item_id={item_id}): {e}")
+        return None
+
     async def close(self):
         """关闭 HTTP 客户端"""
         await self.client.aclose()

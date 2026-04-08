@@ -3,7 +3,7 @@
 """
 import logging
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -45,6 +45,29 @@ def _get_accessible_ids(config):
     if not ids:
         return None
     return list(ids)
+
+
+async def _reply_text(query, text: str, reply_markup=None) -> None:
+    """
+    安全地回复文本：如果当前消息是 photo 则 delete + send，否则 edit。
+    """
+    try:
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await query.get_bot().send_message(
+                chat_id=chat_id, text=text, reply_markup=reply_markup,
+            )
+        else:
+            await query.edit_message_text(text, reply_markup=reply_markup)
+    except Exception as e:
+        logger.warning(f"_reply_text 回退 send_message: {e}")
+        await query.get_bot().send_message(
+            chat_id=query.message.chat_id, text=text, reply_markup=reply_markup,
+        )
 
 
 @require_auth
@@ -109,8 +132,6 @@ async def search_command(
 
         text = f"🔍 搜索 \"{keyword}\" 找到 {total} 个结果：\n"
         buttons = []
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
         for item in items:
             icon = "🎬" if item.type == "Movie" else "📺"
             sub_icon = " ✅" if item.has_subtitles else ""
@@ -152,10 +173,10 @@ async def browse_callback(
                 libraries = await emby.get_libraries(accessible_library_ids=accessible_ids)
 
             if not libraries:
-                await query.edit_message_text("暂无可访问的媒体库")
+                await _reply_text(query, "暂无可访问的媒体库")
                 return
-            await query.edit_message_text(
-                "📁 选择媒体库：",
+            await _reply_text(
+                query, "📁 选择媒体库：",
                 reply_markup=library_list_keyboard(libraries),
             )
         except Exception as e:
@@ -209,7 +230,7 @@ async def _show_library_items(query, lib_id: str, page: int) -> None:
             logger.warning(
                 f"TG 访问控制拒绝: user={query.from_user.id} lib_id={lib_id}"
             )
-            await query.edit_message_text("❌ 无权访问该内容")
+            await _reply_text(query, "❌ 无权访问该内容")
             return
 
         async with EmbyConnector(emby_url, emby_api_key) as emby:
@@ -221,10 +242,11 @@ async def _show_library_items(query, lib_id: str, page: int) -> None:
             )
 
         if not items:
-            await query.edit_message_text("此媒体库暂无内容")
+            await _reply_text(query, "此媒体库暂无内容")
             return
 
-        await query.edit_message_text(
+        await _reply_text(
+            query,
             f"📺 媒体列表 (第 {page + 1} 页，共 {total} 项)：",
             reply_markup=media_list_keyboard(items, lib_id, page, total, PAGE_SIZE),
         )
@@ -251,15 +273,16 @@ async def _show_episodes(query, series_id: str, page: int) -> None:
                     logger.warning(
                         f"TG 访问控制拒绝: user={query.from_user.id} series_id={series_id}"
                     )
-                    await query.edit_message_text("❌ 无权访问该内容")
+                    await _reply_text(query, "❌ 无权访问该内容")
                     return
             episodes = await emby.get_series_episodes(series_id)
 
         if not episodes:
-            await query.edit_message_text("此剧集暂无内容")
+            await _reply_text(query, "此剧集暂无内容")
             return
 
-        await query.edit_message_text(
+        await _reply_text(
+            query,
             f"📺 剧集列表 (共 {len(episodes)} 集)：",
             reply_markup=episode_list_keyboard(episodes, series_id, page),
         )
@@ -270,7 +293,7 @@ async def _show_episodes(query, series_id: str, page: int) -> None:
 
 
 async def _show_media_detail(query, item_id: str) -> None:
-    """显示媒体详情"""
+    """显示媒体详情（带封面图）"""
     db = SessionLocal()
     try:
         emby_url, emby_api_key, config = await _get_emby(db)
@@ -284,40 +307,56 @@ async def _show_media_detail(query, item_id: str) -> None:
                 accessible_ids is None
                 or await emby.is_item_accessible(item, accessible_ids)
             )
+            if not allowed:
+                logger.warning(
+                    f"TG 访问控制拒绝: user={query.from_user.id} item_id={item_id}"
+                )
+                await _reply_text(query, "❌ 无权访问该内容")
+                return
 
-        if not allowed:
-            logger.warning(
-                f"TG 访问控制拒绝: user={query.from_user.id} item_id={item_id}"
-            )
-            await query.edit_message_text("❌ 无权访问该内容")
-            return
+            # 获取封面图；Episode 优先使用 Series 图片
+            image_item_id = item_id
+            if item.type == "Episode" and item.image_url and "/api/images/" in item.image_url:
+                # image_url 格式: /api/images/{series_id}/Primary
+                parts = item.image_url.split("/")
+                idx = parts.index("images") + 1
+                if idx < len(parts):
+                    image_item_id = parts[idx]
+            image_bytes = await emby.get_image_bytes(image_item_id)
 
         sub_status = "✅ 有字幕" if item.has_subtitles else "❌ 无字幕"
         type_label = {"Movie": "电影", "Episode": "剧集", "Series": "剧集"}.get(
             item.type, item.type
         )
+        caption = f"📺 {item.name}\n\n类型: {type_label}\n字幕: {sub_status}"
 
-        text = (
-            f"📺 {item.name}\n\n"
-            f"类型: {type_label}\n"
-            f"字幕: {sub_status}\n"
-        )
-
-        # 如果是 Series，显示剧集列表
         if item.type == "Series":
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 查看剧集", callback_data=f"b:s:{item_id}:0")],
+                [InlineKeyboardButton("🔙 返回", callback_data="b:back")],
+            ])
+        else:
+            keyboard = media_detail_keyboard(item_id)
 
-            await query.edit_message_text(
-                text + "\n点击下方查看剧集列表：",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📋 查看剧集", callback_data=f"b:s:{item_id}:0")],
-                    [InlineKeyboardButton("🔙 返回", callback_data="b:back")],
-                ]),
+        chat_id = query.message.chat_id
+        # 删除旧消息，发送新的带封面图的消息
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        if image_bytes:
+            await query.get_bot().send_photo(
+                chat_id=chat_id,
+                photo=image_bytes,
+                caption=caption,
+                reply_markup=keyboard,
             )
         else:
-            await query.edit_message_text(
-                text,
-                reply_markup=media_detail_keyboard(item_id),
+            await query.get_bot().send_message(
+                chat_id=chat_id,
+                text=caption,
+                reply_markup=keyboard,
             )
     except Exception as e:
         logger.error(f"显示媒体详情异常: {e}")
