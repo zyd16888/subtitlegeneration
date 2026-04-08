@@ -255,36 +255,60 @@ class EmbyConnector:
                 "Limit": str(limit)
             }
 
-            if library_id:
-                params["ParentId"] = library_id
-            elif accessible_library_ids:
-                # 未指定 library_id 时，将允许列表下发给 Emby 原生过滤
-                params["ParentId"] = ",".join(accessible_library_ids)
-            
             # 如果没有指定类型或类型为 "all"，排除 Episode，只显示 Movie 和 Series
             if not item_type or item_type == "all":
                 params["IncludeItemTypes"] = "Movie,Series"
             elif item_type:
                 params["IncludeItemTypes"] = item_type
-            
+
             if search:
                 params["SearchTerm"] = search
-            
-            response = await self.client.get(
-                url,
-                headers=self._get_headers(),
-                params=params
-            )
-            response.raise_for_status()
-            
-            data = response.json()
-            total = data.get("TotalRecordCount", 0)
-            items = [
-                MediaItem.from_emby_response(item, self.base_url, self.api_key) 
-                for item in data.get("Items", [])
-            ]
-            logger.info(f"获取到 {len(items)} 个媒体项 (共 {total} 个)")
-            return items, total
+
+            # Emby 的 /Items 在带 SearchTerm 时，ParentId 只接受单个 Guid，
+            # 传入逗号分隔的多个 ID 会触发 "Guid should contain 32 digits..." 的 500 错误。
+            # 因此当未指定具体 library_id 且存在多个可访问库时，按库逐个请求并合并结果。
+            if library_id:
+                params["ParentId"] = library_id
+                parent_ids_to_query: List[Optional[str]] = [library_id]
+            elif accessible_library_ids:
+                if search and len(accessible_library_ids) > 1:
+                    parent_ids_to_query = list(accessible_library_ids)
+                else:
+                    # 无 search 时 Emby 允许逗号分隔；单库时直接设置
+                    params["ParentId"] = ",".join(accessible_library_ids) if len(accessible_library_ids) > 1 else accessible_library_ids[0]
+                    parent_ids_to_query = [None]
+            else:
+                parent_ids_to_query = [None]
+
+            aggregated_items: List[MediaItem] = []
+            aggregated_total = 0
+            for pid in parent_ids_to_query:
+                call_params = dict(params)
+                if pid is not None:
+                    call_params["ParentId"] = pid
+                    # 分库查询时放宽单库 Limit，避免某库过早截断；最终再裁剪
+                    call_params["StartIndex"] = "0"
+                    call_params["Limit"] = str(offset + limit)
+
+                response = await self.client.get(
+                    url,
+                    headers=self._get_headers(),
+                    params=call_params,
+                )
+                response.raise_for_status()
+                data = response.json()
+                aggregated_total += data.get("TotalRecordCount", 0)
+                aggregated_items.extend(
+                    MediaItem.from_emby_response(item, self.base_url, self.api_key)
+                    for item in data.get("Items", [])
+                )
+
+            # 分库聚合时需要手动分页
+            if len(parent_ids_to_query) > 1:
+                aggregated_items = aggregated_items[offset : offset + limit]
+
+            logger.info(f"获取到 {len(aggregated_items)} 个媒体项 (共 {aggregated_total} 个)")
+            return aggregated_items, aggregated_total
             
         except httpx.HTTPStatusError as e:
             logger.error(f"获取媒体项列表失败 (HTTP {e.response.status_code}): {e}")
