@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Form, Input, Select, Button, message, Spin, Space, InputNumber, Switch, Slider, Collapse,
-  Table, Tag, Popconfirm, Typography, Row, Col, Tooltip, Progress
+  Table, Tag, Popconfirm, Typography, Row, Col, Tooltip, Progress, Checkbox
 } from 'antd';
 import {
   SaveOutlined, TranslationOutlined, DownloadOutlined,
@@ -264,6 +264,7 @@ const Settings: React.FC = () => {
         telegram_admin_ids: form.getFieldValue('telegram_admin_ids'),
         telegram_daily_task_limit: form.getFieldValue('telegram_daily_task_limit'),
         telegram_max_concurrent_per_user: form.getFieldValue('telegram_max_concurrent_per_user'),
+        telegram_accessible_libraries: form.getFieldValue('telegram_accessible_libraries') || [],
       });
       message.success('Telegram 配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
@@ -852,6 +853,44 @@ const Settings: React.FC = () => {
                 </Form.Item>
               </Col>
             </Row>
+
+            <div style={{ marginTop: 8, marginBottom: 8, fontWeight: 500, color: 'var(--text-primary)' }}>媒体库访问控制</div>
+            <div className="cat-info-banner" style={{ marginBottom: 12 }}>
+              <InfoCircleOutlined style={{ marginRight: 8 }} />
+              <span>勾选允许 Telegram BOT 用户访问的媒体库。<b>留空表示允许所有媒体库（向后兼容）</b>。未勾选的媒体库对 BOT 用户完全不可见。</span>
+            </div>
+            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.telegram_accessible_libraries !== cur.telegram_accessible_libraries}>
+              {() => {
+                const selected: string[] = form.getFieldValue('telegram_accessible_libraries') || [];
+                const allIds = embyLibraries.map(l => l.id);
+                return (
+                  <div>
+                    <Space style={{ marginBottom: 8 }}>
+                      <Button size="small" onClick={() => { form.setFieldValue('telegram_accessible_libraries', allIds); setIsDirty(true); }}>全选</Button>
+                      <Button size="small" onClick={() => { form.setFieldValue('telegram_accessible_libraries', []); setIsDirty(true); }}>全不选</Button>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        已选择 {selected.length} / {embyLibraries.length} 个媒体库
+                        {selected.length === 0 && '（留空 = 允许所有）'}
+                      </Text>
+                    </Space>
+                    <Form.Item name="telegram_accessible_libraries" noStyle>
+                      <Checkbox.Group style={{ width: '100%' }}>
+                        <Row gutter={[8, 8]}>
+                          {embyLibraries.length === 0 && (
+                            <Col span={24}><Text type="secondary">暂无可用媒体库，请先配置 Emby 并确保连接正常</Text></Col>
+                          )}
+                          {embyLibraries.map(lib => (
+                            <Col key={lib.id} span={8}>
+                              <Checkbox value={lib.id}>{lib.name}</Checkbox>
+                            </Col>
+                          ))}
+                        </Row>
+                      </Checkbox.Group>
+                    </Form.Item>
+                  </div>
+                );
+              }}
+            </Form.Item>
           </div>
           <div className="cat-footer">
             <Space>

@@ -5,7 +5,7 @@ Emby 连接器服务
 """
 import httpx
 from typing import List, Optional, Dict, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,8 @@ class MediaItem:
     path: Optional[str] = None
     has_subtitles: bool = False
     image_url: Optional[str] = None
+    # 祖先 ID 列表（用于访问控制判断所属媒体库）
+    ancestor_ids: List[str] = field(default_factory=list)
     
     @classmethod
     def from_emby_response(cls, data: Dict[str, Any], base_url: str = "", api_key: str = "") -> "MediaItem":
@@ -85,13 +87,29 @@ class MediaItem:
             if image_url and api_key:
                 image_url = f"{image_url}?api_key={api_key}"
         
+        # 解析 AncestorIds（Emby 返回 [{"Name":..., "Id":..., "Type":...}] 或直接字符串列表）
+        ancestor_ids: List[str] = []
+        raw_ancestors = data.get("AncestorIds") or []
+        for a in raw_ancestors:
+            if isinstance(a, dict):
+                aid = a.get("Id")
+                if aid:
+                    ancestor_ids.append(aid)
+            elif isinstance(a, str):
+                ancestor_ids.append(a)
+        # ParentId 也作为兜底加入
+        parent_id = data.get("ParentId")
+        if parent_id and parent_id not in ancestor_ids:
+            ancestor_ids.append(parent_id)
+
         return cls(
             id=item_id,
             name=name,
             type=item_type,
             path=data.get("Path"),
             has_subtitles=has_subtitles,
-            image_url=image_url
+            image_url=image_url,
+            ancestor_ids=ancestor_ids,
         )
 
 
@@ -160,10 +178,17 @@ class EmbyConnector:
             logger.error(f"Emby 连接失败: {e}")
             return False
     
-    async def get_libraries(self) -> List[Library]:
+    async def get_libraries(
+        self,
+        accessible_library_ids: Optional[List[str]] = None,
+    ) -> List[Library]:
         """
         获取所有媒体库
-        
+
+        Args:
+            accessible_library_ids: 访问控制过滤列表。非空时仅返回 ID 在列表中的媒体库；
+                None 或空列表时返回所有（向后兼容）。
+
         Returns:
             List[Library]: 媒体库列表
         """
@@ -171,10 +196,18 @@ class EmbyConnector:
             url = f"{self.base_url}/Library/VirtualFolders"
             response = await self.client.get(url, headers=self._get_headers())
             response.raise_for_status()
-            
+
             data = response.json()
             libraries = [Library.from_emby_response(item) for item in data]
-            logger.info(f"获取到 {len(libraries)} 个媒体库")
+            if accessible_library_ids:
+                allowed = set(accessible_library_ids)
+                before = len(libraries)
+                libraries = [lib for lib in libraries if lib.id in allowed]
+                logger.info(
+                    f"获取到 {before} 个媒体库，访问控制过滤后剩余 {len(libraries)} 个"
+                )
+            else:
+                logger.info(f"获取到 {len(libraries)} 个媒体库")
             return libraries
             
         except httpx.HTTPStatusError as e:
@@ -192,7 +225,8 @@ class EmbyConnector:
         item_type: Optional[str] = None,
         search: Optional[str] = None,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
+        accessible_library_ids: Optional[List[str]] = None,
     ) -> tuple[List[MediaItem], int]:
         """
         获取媒体项列表，支持筛选和分页
@@ -207,17 +241,29 @@ class EmbyConnector:
         Returns:
             tuple[List[MediaItem], int]: (媒体项列表, 总数)
         """
+        # 访问控制：若同时指定 library_id 和 accessible_library_ids，
+        # 校验 library_id 是否在允许集合中，否则直接返回空结果
+        if library_id and accessible_library_ids:
+            if library_id not in set(accessible_library_ids):
+                logger.warning(
+                    f"访问控制拒绝：library_id={library_id} 不在允许列表中"
+                )
+                return [], 0
+
         try:
             url = f"{self.base_url}/Items"
             params = {
                 "Recursive": "true",
-                "Fields": "Path,MediaStreams,ImageTags,BackdropImageTags,SeriesName,SeriesId,SeriesPrimaryImageTag,IndexNumber,ParentIndexNumber",
+                "Fields": "Path,MediaStreams,ImageTags,BackdropImageTags,SeriesName,SeriesId,SeriesPrimaryImageTag,IndexNumber,ParentIndexNumber,ParentId",
                 "StartIndex": str(offset),
                 "Limit": str(limit)
             }
-            
+
             if library_id:
                 params["ParentId"] = library_id
+            elif accessible_library_ids:
+                # 未指定 library_id 时，将允许列表下发给 Emby 原生过滤
+                params["ParentId"] = ",".join(accessible_library_ids)
             
             # 如果没有指定类型或类型为 "all"，排除 Episode，只显示 Movie 和 Series
             if not item_type or item_type == "all":
@@ -265,10 +311,13 @@ class EmbyConnector:
         try:
             user_id = await self._get_user_id()
             url = f"{self.base_url}/Users/{user_id}/Items/{item_id}"
-            
+            params = {
+                "Fields": "Path,MediaStreams,ImageTags,BackdropImageTags,SeriesName,SeriesId,SeriesPrimaryImageTag,IndexNumber,ParentIndexNumber,ParentId,AncestorIds",
+            }
+
             logger.info(f"正在获取媒体项详情 (ID: {item_id})")
-            
-            response = await self.client.get(url, headers=self._get_headers())
+
+            response = await self.client.get(url, headers=self._get_headers(), params=params)
             response.raise_for_status()
             
             data = response.json()
@@ -507,6 +556,28 @@ class EmbyConnector:
             logger.error(f"获取用户 ID 失败: {e}")
             raise
     
+    @staticmethod
+    def is_item_accessible(
+        item: MediaItem,
+        accessible_library_ids: Optional[List[str]],
+    ) -> bool:
+        """
+        判断媒体项是否在允许访问的媒体库范围内。
+
+        Args:
+            item: 已加载 ancestor_ids 的 MediaItem
+            accessible_library_ids: 允许的媒体库 ID 列表；None/空 = 允许所有
+
+        Returns:
+            bool: 允许访问返回 True
+        """
+        if not accessible_library_ids:
+            return True
+        allowed = set(accessible_library_ids)
+        if not item.ancestor_ids:
+            return False
+        return any(aid in allowed for aid in item.ancestor_ids)
+
     async def close(self):
         """关闭 HTTP 客户端"""
         await self.client.aclose()

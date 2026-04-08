@@ -142,7 +142,20 @@ async def partial_update_config(
         
         # 创建新的配置对象
         merged_config = SystemConfigData(**current_dict)
-        
+
+        # 当更新媒体库访问控制列表时，验证 Library ID 有效性
+        if "telegram_accessible_libraries" in config:
+            invalid_ids = await config_manager.validate_accessible_libraries(
+                merged_config.telegram_accessible_libraries,
+                merged_config.emby_url,
+                merged_config.emby_api_key,
+            )
+            if invalid_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"以下媒体库 ID 无效: {', '.join(invalid_ids)}",
+                )
+
         # 部分验证并更新配置
         updated_config = await config_manager.partial_update_config(merged_config, config.keys())
 
@@ -159,6 +172,8 @@ async def partial_update_config(
 
         return updated_config
         
+    except HTTPException:
+        raise
     except ValueError as e:
         # 配置验证失败
         raise HTTPException(

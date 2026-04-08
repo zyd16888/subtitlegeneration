@@ -185,6 +185,7 @@ export interface SystemConfig {
   telegram_admin_ids?: string;
   telegram_daily_task_limit?: number;
   telegram_max_concurrent_per_user?: number;
+  telegram_accessible_libraries?: string[];
 
   // 任务配置
   max_concurrent_tasks: number;

@@ -94,12 +94,14 @@ async def inline_query(
         if not config.emby_url or not config.emby_api_key:
             return
 
+        accessible_ids = config.telegram_accessible_libraries or None
         page_size = 20
         async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
             items, total = await emby.get_media_items(
                 search=query,
                 limit=page_size,
                 offset=offset,
+                accessible_library_ids=accessible_ids,
             )
 
         bot_username = context.bot.username

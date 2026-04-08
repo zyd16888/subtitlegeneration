@@ -36,6 +36,17 @@ async def _get_emby(db) -> tuple:
     return config.emby_url, config.emby_api_key, config
 
 
+def _get_accessible_ids(config):
+    """
+    获取可访问媒体库 ID 列表。
+    空列表或 None 返回 None（表示允许所有，向后兼容）。
+    """
+    ids = getattr(config, "telegram_accessible_libraries", None)
+    if not ids:
+        return None
+    return list(ids)
+
+
 @require_auth
 async def browse_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -43,16 +54,17 @@ async def browse_command(
     """浏览媒体库列表"""
     db = SessionLocal()
     try:
-        emby_url, emby_api_key, _ = await _get_emby(db)
+        emby_url, emby_api_key, config = await _get_emby(db)
         if not emby_url:
             await update.message.reply_text("❌ Emby 服务未配置")
             return
 
+        accessible_ids = _get_accessible_ids(config)
         async with EmbyConnector(emby_url, emby_api_key) as emby:
-            libraries = await emby.get_libraries()
+            libraries = await emby.get_libraries(accessible_library_ids=accessible_ids)
 
         if not libraries:
-            await update.message.reply_text("没有找到媒体库")
+            await update.message.reply_text("暂无可访问的媒体库")
             return
 
         await update.message.reply_text(
@@ -79,14 +91,16 @@ async def search_command(
 
     db = SessionLocal()
     try:
-        emby_url, emby_api_key, _ = await _get_emby(db)
+        emby_url, emby_api_key, config = await _get_emby(db)
         if not emby_url:
             await update.message.reply_text("❌ Emby 服务未配置")
             return
 
+        accessible_ids = _get_accessible_ids(config)
         async with EmbyConnector(emby_url, emby_api_key) as emby:
             items, total = await emby.get_media_items(
-                search=keyword, limit=10, offset=0
+                search=keyword, limit=10, offset=0,
+                accessible_library_ids=accessible_ids,
             )
 
         if not items:
@@ -129,13 +143,17 @@ async def browse_callback(
         # 返回媒体库列表
         db = SessionLocal()
         try:
-            emby_url, emby_api_key, _ = await _get_emby(db)
+            emby_url, emby_api_key, config = await _get_emby(db)
             if not emby_url:
                 return
 
+            accessible_ids = _get_accessible_ids(config)
             async with EmbyConnector(emby_url, emby_api_key) as emby:
-                libraries = await emby.get_libraries()
+                libraries = await emby.get_libraries(accessible_library_ids=accessible_ids)
 
+            if not libraries:
+                await query.edit_message_text("暂无可访问的媒体库")
+                return
             await query.edit_message_text(
                 "📁 选择媒体库：",
                 reply_markup=library_list_keyboard(libraries),
@@ -182,8 +200,16 @@ async def _show_library_items(query, lib_id: str, page: int) -> None:
     """显示媒体库下的媒体项"""
     db = SessionLocal()
     try:
-        emby_url, emby_api_key, _ = await _get_emby(db)
+        emby_url, emby_api_key, config = await _get_emby(db)
         if not emby_url:
+            return
+
+        accessible_ids = _get_accessible_ids(config)
+        if accessible_ids is not None and lib_id not in set(accessible_ids):
+            logger.warning(
+                f"TG 访问控制拒绝: user={query.from_user.id} lib_id={lib_id}"
+            )
+            await query.edit_message_text("❌ 无权访问该内容")
             return
 
         async with EmbyConnector(emby_url, emby_api_key) as emby:
@@ -191,6 +217,7 @@ async def _show_library_items(query, lib_id: str, page: int) -> None:
                 library_id=lib_id,
                 limit=PAGE_SIZE,
                 offset=page * PAGE_SIZE,
+                accessible_library_ids=accessible_ids,
             )
 
         if not items:
@@ -211,11 +238,21 @@ async def _show_episodes(query, series_id: str, page: int) -> None:
     """显示剧集列表"""
     db = SessionLocal()
     try:
-        emby_url, emby_api_key, _ = await _get_emby(db)
+        emby_url, emby_api_key, config = await _get_emby(db)
         if not emby_url:
             return
 
+        accessible_ids = _get_accessible_ids(config)
         async with EmbyConnector(emby_url, emby_api_key) as emby:
+            # 先校验 series 所属媒体库是否在允许范围
+            if accessible_ids is not None:
+                series = await emby.get_media_item(series_id)
+                if not EmbyConnector.is_item_accessible(series, accessible_ids):
+                    logger.warning(
+                        f"TG 访问控制拒绝: user={query.from_user.id} series_id={series_id}"
+                    )
+                    await query.edit_message_text("❌ 无权访问该内容")
+                    return
             episodes = await emby.get_series_episodes(series_id)
 
         if not episodes:
@@ -236,12 +273,20 @@ async def _show_media_detail(query, item_id: str) -> None:
     """显示媒体详情"""
     db = SessionLocal()
     try:
-        emby_url, emby_api_key, _ = await _get_emby(db)
+        emby_url, emby_api_key, config = await _get_emby(db)
         if not emby_url:
             return
 
+        accessible_ids = _get_accessible_ids(config)
         async with EmbyConnector(emby_url, emby_api_key) as emby:
             item = await emby.get_media_item(item_id)
+
+        if not EmbyConnector.is_item_accessible(item, accessible_ids):
+            logger.warning(
+                f"TG 访问控制拒绝: user={query.from_user.id} item_id={item_id}"
+            )
+            await query.edit_message_text("❌ 无权访问该内容")
+            return
 
         sub_status = "✅ 有字幕" if item.has_subtitles else "❌ 无字幕"
         type_label = {"Movie": "电影", "Episode": "剧集", "Series": "剧集"}.get(

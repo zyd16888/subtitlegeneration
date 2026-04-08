@@ -71,8 +71,16 @@ async def _handle_subtitle_deeplink(
             await update.message.reply_text("❌ Emby 服务未配置，请联系管理员")
             return
 
+        accessible_ids = config.telegram_accessible_libraries or None
         async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
             media_item = await emby.get_media_item(media_item_id)
+
+        if not EmbyConnector.is_item_accessible(media_item, accessible_ids):
+            logger.warning(
+                f"TG deeplink 访问控制拒绝: user={update.effective_user.id} item_id={media_item_id}"
+            )
+            await update.message.reply_text("❌ 无权访问该内容")
+            return
 
         sub_status = "✅ 有字幕" if media_item.has_subtitles else "❌ 无字幕"
         type_label = {"Movie": "电影", "Episode": "剧集", "Series": "剧集"}.get(

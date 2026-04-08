@@ -1,7 +1,10 @@
 """
 配置管理服务
 """
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+import logging
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, HttpUrl, field_validator
 from models.config import SystemConfig
@@ -63,6 +66,9 @@ class SystemConfigData(BaseModel):
     telegram_admin_ids: Optional[str] = None
     telegram_daily_task_limit: int = 10
     telegram_max_concurrent_per_user: int = 2
+    # 媒体库访问控制：允许 BOT 用户访问的 Emby 媒体库 ID 列表
+    # None 或空列表 = 允许所有（向后兼容）
+    telegram_accessible_libraries: Optional[List[str]] = None
 
     # 任务配置
     max_concurrent_tasks: int = 2
@@ -102,6 +108,21 @@ class SystemConfigData(BaseModel):
             raise ValueError('翻译服务必须是 openai, deepseek, local, google, microsoft, baidu 或 deepl')
         return v
     
+    @field_validator('telegram_accessible_libraries', mode='before')
+    @classmethod
+    def validate_accessible_libraries_field(cls, v: Any) -> Optional[List[str]]:
+        """telegram_accessible_libraries 必须为字符串列表或 None"""
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            raise ValueError('telegram_accessible_libraries 必须为列表')
+        result = []
+        for item in v:
+            if not isinstance(item, str):
+                raise ValueError('telegram_accessible_libraries 元素必须为字符串')
+            result.append(item)
+        return result
+
     @field_validator('telegram_admin_ids', mode='before')
     @classmethod
     def validate_telegram_admin_ids(cls, v: Any) -> Optional[str]:
@@ -280,7 +301,41 @@ class ConfigManager:
                 errors.append("最大并发任务数不应超过 16")
         
         return ValidationResult(valid=len(errors) == 0, errors=errors)
-    
+
+    async def validate_accessible_libraries(
+        self,
+        library_ids: Optional[List[str]],
+        emby_url: Optional[str],
+        emby_api_key: Optional[str],
+    ) -> List[str]:
+        """
+        验证媒体库 ID 是否有效
+
+        Args:
+            library_ids: 要验证的 Library ID 列表
+            emby_url: Emby URL
+            emby_api_key: Emby API Key
+
+        Returns:
+            无效的 Library ID 列表（空列表表示全部有效）。
+            Emby 连接失败时返回空列表并记录 warning（跳过验证）。
+        """
+        if not library_ids:
+            return []
+        if not emby_url or not emby_api_key:
+            logger.warning("Emby 未配置，跳过 Library ID 验证")
+            return []
+        try:
+            from services.emby_connector import EmbyConnector
+            async with EmbyConnector(emby_url, emby_api_key) as emby:
+                libraries = await emby.get_libraries()
+            valid_ids = {lib.id for lib in libraries}
+            invalid = [lid for lid in library_ids if lid not in valid_ids]
+            return invalid
+        except Exception as e:
+            logger.warning(f"连接 Emby 验证 Library ID 失败，跳过验证: {e}")
+            return []
+
     async def validate_config(self, config: SystemConfigData) -> ValidationResult:
         """
         验证配置参数的有效性
