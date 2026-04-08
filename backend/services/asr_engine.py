@@ -80,52 +80,91 @@ class SherpaOnnxOnlineEngine(ASREngine):
     """
     流式 ASR 引擎 (sherpa_onnx.OnlineRecognizer)。
 
-    适用于 streaming-zipformer 系列模型，需要 encoder / decoder / joiner / tokens。
+    支持两种流式模型结构：
+    - transducer:     encoder + decoder + joiner + tokens （streaming-zipformer）
+    - zipformer2_ctc: 单个 *ctc*.onnx + tokens（可选 HLG.fst WFST 解码图）
     """
 
-    def __init__(self, model_path: str, file_map: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        model_path: str,
+        model_type: str = "transducer",
+        file_map: Optional[Dict[str, str]] = None,
+    ):
         """
         Args:
             model_path: 模型目录
-            file_map:   {"tokens": "tokens.txt", "encoder": "...", "decoder": "...", "joiner": "..."}
-                        不传则使用默认文件名。
+            model_type: "transducer" 或 "zipformer2_ctc"
+            file_map:   transducer: {"tokens", "encoder", "decoder", "joiner"}
+                        zipformer2_ctc: {"tokens", "model", 可选 "ctc_graph", "bpe_model"}
         """
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model path not found: {model_path}")
 
         self.model_path = model_path
-        self.file_map = file_map or {
+        self.model_type = model_type
+        self.file_map = file_map or self._default_file_map()
+        self.recognizer: Optional[sherpa_onnx.OnlineRecognizer] = None
+        self._initialize_recognizer()
+
+    def _default_file_map(self) -> Dict[str, str]:
+        if self.model_type == "zipformer2_ctc":
+            return {"tokens": "tokens.txt", "model": "model.onnx"}
+        return {
             "tokens": "tokens.txt",
             "encoder": "encoder.onnx",
             "decoder": "decoder.onnx",
             "joiner": "joiner.onnx",
         }
-        self.recognizer: Optional[sherpa_onnx.OnlineRecognizer] = None
-        self._initialize_recognizer()
 
     def _initialize_recognizer(self):
         try:
             tokens_path = os.path.join(self.model_path, self.file_map["tokens"])
-            encoder_path = os.path.join(self.model_path, self.file_map["encoder"])
-            decoder_path = os.path.join(self.model_path, self.file_map["decoder"])
-            joiner_path = os.path.join(self.model_path, self.file_map["joiner"])
-
             logger.info(f"Initializing OnlineRecognizer with model_path: {self.model_path}")
+            logger.info(f"  model_type: {self.model_type}")
             logger.info(f"  tokens: {tokens_path} (exists: {os.path.exists(tokens_path)})")
-            logger.info(f"  encoder: {encoder_path} (exists: {os.path.exists(encoder_path)})")
-            logger.info(f"  decoder: {decoder_path} (exists: {os.path.exists(decoder_path)})")
-            logger.info(f"  joiner: {joiner_path} (exists: {os.path.exists(joiner_path)})")
 
-            self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
-                tokens=tokens_path,
-                encoder=encoder_path,
-                decoder=decoder_path,
-                joiner=joiner_path,
-                num_threads=4,
-                decoding_method="greedy_search",
-                max_active_paths=4,
-                enable_endpoint_detection=True,
-            )
+            if self.model_type == "zipformer2_ctc":
+                ctc_model_path = os.path.join(self.model_path, self.file_map["model"])
+                logger.info(f"  ctc model: {ctc_model_path} (exists: {os.path.exists(ctc_model_path)})")
+
+                ctc_graph = ""
+                if "ctc_graph" in self.file_map:
+                    graph_path = os.path.join(self.model_path, self.file_map["ctc_graph"])
+                    if os.path.exists(graph_path):
+                        ctc_graph = graph_path
+                        logger.info(f"  ctc_graph (HLG WFST): {graph_path}")
+
+                self.recognizer = sherpa_onnx.OnlineRecognizer.from_zipformer2_ctc(
+                    tokens=tokens_path,
+                    model=ctc_model_path,
+                    num_threads=4,
+                    sample_rate=16000,
+                    feature_dim=80,
+                    decoding_method="greedy_search",
+                    provider="cpu",
+                    ctc_graph=ctc_graph,
+                    enable_endpoint_detection=True,
+                )
+            else:
+                encoder_path = os.path.join(self.model_path, self.file_map["encoder"])
+                decoder_path = os.path.join(self.model_path, self.file_map["decoder"])
+                joiner_path = os.path.join(self.model_path, self.file_map["joiner"])
+
+                logger.info(f"  encoder: {encoder_path} (exists: {os.path.exists(encoder_path)})")
+                logger.info(f"  decoder: {decoder_path} (exists: {os.path.exists(decoder_path)})")
+                logger.info(f"  joiner: {joiner_path} (exists: {os.path.exists(joiner_path)})")
+
+                self.recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+                    tokens=tokens_path,
+                    encoder=encoder_path,
+                    decoder=decoder_path,
+                    joiner=joiner_path,
+                    num_threads=4,
+                    decoding_method="greedy_search",
+                    max_active_paths=4,
+                    enable_endpoint_detection=True,
+                )
             logger.info("OnlineRecognizer initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize OnlineRecognizer: {e}", exc_info=True)

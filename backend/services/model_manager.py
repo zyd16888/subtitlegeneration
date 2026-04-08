@@ -721,7 +721,7 @@ class ModelManager:
     def _try_generate_meta(self, model_id: str) -> bool:
         """为旧版安装的模型自动生成 model_meta.json"""
         model_dir = self.models_dir / model_id
-        file_map = self._auto_detect_files(model_dir)
+        file_map, detected_type = self._auto_detect_files(model_dir, model_id)
         if not file_map:
             return False
 
@@ -729,17 +729,19 @@ class ModelManager:
         registry_models = self.registry.get_models()
         reg_meta = registry_models.get(model_id, {})
 
-        # 推断模型类型
-        if "whisper" in model_id.lower():
-            engine_type, model_type = "offline", "whisper"
+        # 推断 engine_type（online / offline）
+        if detected_type == "whisper":
+            engine_type = "offline"
+        elif detected_type == "zipformer2_ctc":
+            engine_type = "online"
         elif model_id.startswith("streaming-"):
-            engine_type, model_type = "online", "transducer"
+            engine_type = "online"
         else:
-            engine_type, model_type = "offline", "transducer"
+            engine_type = "offline"
 
         meta = {
             "type": reg_meta.get("type", engine_type),
-            "model_type": reg_meta.get("model_type", model_type),
+            "model_type": detected_type,
             "languages": reg_meta.get("languages", ["unknown"]),
             "files": file_map,
         }
@@ -756,31 +758,86 @@ class ModelManager:
     # ── 文件自动检测 ──
 
     @staticmethod
-    def _auto_detect_files(model_dir: Path) -> Dict[str, str]:
-        """扫描模型目录，自动匹配 encoder/decoder/joiner/tokens 文件"""
-        file_map: Dict[str, str] = {}
+    def _auto_detect_files(model_dir: Path, model_id: str = "") -> Tuple[Dict[str, str], str]:
+        """
+        扫描模型目录，识别三种合法结构并返回 (file_map, model_type)：
 
+        - transducer:     encoder + decoder + joiner + tokens
+        - whisper:        encoder + decoder + tokens（无 joiner，且目录/model_id 含 "whisper"）
+        - zipformer2_ctc: 单个 *ctc*.onnx + tokens（可选 HLG.fst / bpe.model）
+
+        不匹配时返回 ({}, "")。
+        """
         onnx_files = list(model_dir.glob("*.onnx"))
         txt_files = list(model_dir.glob("*.txt"))
 
+        encoder = decoder = joiner = tokens = None
+        ctc_onnx: Optional[Path] = None
+
         for f in onnx_files:
             name_lower = f.name.lower()
-            if "encoder" in name_lower and "encoder" not in file_map:
-                file_map["encoder"] = f.name
-            elif "decoder" in name_lower and "decoder" not in file_map:
-                file_map["decoder"] = f.name
-            elif "joiner" in name_lower and "joiner" not in file_map:
-                file_map["joiner"] = f.name
+            # 跳过 int8 量化版本，优先使用 fp32
+            if "int8" in name_lower:
+                continue
+            if "encoder" in name_lower and encoder is None:
+                encoder = f.name
+            elif "decoder" in name_lower and decoder is None:
+                decoder = f.name
+            elif "joiner" in name_lower and joiner is None:
+                joiner = f.name
+            elif "ctc" in name_lower and ctc_onnx is None:
+                ctc_onnx = f
+
+        # int8 回退：如果上面没找到非 int8 版本，再扫一次允许 int8
+        if not (encoder or ctc_onnx):
+            for f in onnx_files:
+                name_lower = f.name.lower()
+                if "encoder" in name_lower and encoder is None:
+                    encoder = f.name
+                elif "decoder" in name_lower and decoder is None:
+                    decoder = f.name
+                elif "joiner" in name_lower and joiner is None:
+                    joiner = f.name
+                elif "ctc" in name_lower and ctc_onnx is None:
+                    ctc_onnx = f
 
         for f in txt_files:
-            name_lower = f.name.lower()
-            if "tokens" in name_lower and "tokens" not in file_map:
-                file_map["tokens"] = f.name
+            if "tokens" in f.name.lower():
+                tokens = f.name
+                break
 
-        # 最少需要 encoder + decoder + tokens
-        if all(k in file_map for k in ("encoder", "decoder", "tokens")):
-            return file_map
-        return {}
+        if not tokens:
+            return {}, ""
+
+        # 1) transducer: encoder + decoder + joiner + tokens
+        if encoder and decoder and joiner:
+            return (
+                {"encoder": encoder, "decoder": decoder, "joiner": joiner, "tokens": tokens},
+                "transducer",
+            )
+
+        # 2) whisper: encoder + decoder + tokens（无 joiner）
+        # transducer 必须有 joiner，故无 joiner 时只能是 whisper
+        if encoder and decoder and not joiner:
+            return (
+                {"encoder": encoder, "decoder": decoder, "tokens": tokens},
+                "whisper",
+            )
+
+        # 3) zipformer2_ctc: 单个 *ctc*.onnx + tokens
+        if ctc_onnx and not encoder and not decoder and not joiner:
+            file_map: Dict[str, str] = {"model": ctc_onnx.name, "tokens": tokens}
+            # 可选 WFST HLG 解码图
+            hlg = model_dir / "HLG.fst"
+            if hlg.exists():
+                file_map["ctc_graph"] = "HLG.fst"
+            # 可选 BPE 模型（hotwords 用）
+            bpe = model_dir / "bpe.model"
+            if bpe.exists():
+                file_map["bpe_model"] = "bpe.model"
+            return file_map, "zipformer2_ctc"
+
+        return {}, ""
 
     # ── 下载 ──
 
@@ -916,14 +973,15 @@ class ModelManager:
             logger.info(f"开始下载模型 {model_id}: {url}")
             self._download_with_resume(model_id, url, tmp_file)
 
-            # 清理旧目录
+            # 清理旧目录（不要预创建 target_dir，否则 shutil.move 会把 source_dir 嵌套进去）
             if target_dir.exists():
                 shutil.rmtree(target_dir)
-            target_dir.mkdir(parents=True, exist_ok=True)
+            self.models_dir.mkdir(parents=True, exist_ok=True)
 
             # VAD .onnx 文件直接移动，不需要解压
             if is_vad and url.endswith(".onnx"):
                 logger.info(f"模型 {model_id} 是直接的 .onnx 文件，直接移动到目标目录")
+                target_dir.mkdir(parents=True, exist_ok=True)
                 onnx_file = tmp_file.name.replace(".tmp.onnx", ".onnx")
                 # 从 URL 获取文件名
                 import os
@@ -966,7 +1024,10 @@ class ModelManager:
                 contents = list(extract_tmp.rglob("*"))[:30]
                 content_list = "\n".join(str(p.relative_to(extract_tmp)) for p in contents)
                 raise RuntimeError(
-                    f"解压后找不到模型文件（需要 *encoder*.onnx + *decoder*.onnx + *tokens*.txt）\n"
+                    f"解压后找不到模型文件（需要以下任一结构）：\n"
+                    f"  - transducer: *encoder*.onnx + *decoder*.onnx + *joiner*.onnx + *tokens*.txt\n"
+                    f"  - whisper: *encoder*.onnx + *decoder*.onnx + *tokens*.txt\n"
+                    f"  - zipformer2_ctc: 单个 *ctc*.onnx + tokens.txt\n"
                     f"解压内容:\n{content_list}"
                 )
 
@@ -981,13 +1042,27 @@ class ModelManager:
                 if not file_map:
                     raise RuntimeError("VAD 模型文件检测失败：找不到 .onnx 文件")
             else:
-                file_map = self._auto_detect_files(target_dir)
+                file_map, detected_type = self._auto_detect_files(target_dir, model_id)
                 if not file_map:
-                    raise RuntimeError("模型文件自动检测失败：缺少必要的 encoder/decoder/tokens 文件")
+                    raise RuntimeError(
+                        "模型文件自动检测失败：需要 transducer(encoder+decoder+joiner+tokens) / "
+                        "whisper(encoder+decoder+tokens) / zipformer2_ctc(*ctc*.onnx + tokens) 之一"
+                    )
+
+            # 决定最终 model_type：检测优先，注册表兜底
+            if is_vad:
+                final_model_type = meta.get("model_type", "silero_vad")
+            else:
+                final_model_type = detected_type or meta.get("model_type", "transducer")
+
+            # engine type（online/offline）：CTC 与 streaming transducer 都是 online
+            default_engine_type = meta.get("type")
+            if not default_engine_type:
+                default_engine_type = "online" if final_model_type == "zipformer2_ctc" else "offline"
 
             model_meta = {
-                "type": meta.get("type", "offline"),
-                "model_type": meta.get("model_type", "transducer"),
+                "type": default_engine_type,
+                "model_type": final_model_type,
                 "category": meta.get("category", "asr"),
                 "languages": meta.get("languages", []),
                 "files": file_map,
@@ -1019,7 +1094,8 @@ class ModelManager:
         def has_model_files(d: Path) -> bool:
             if is_vad:
                 return bool(self._auto_detect_vad_files(d))
-            return bool(self._auto_detect_files(d))
+            file_map, _ = self._auto_detect_files(d)
+            return bool(file_map)
 
         # 策略1: 直接在解压根目录
         if has_model_files(extract_root):

@@ -144,7 +144,7 @@ def _get_asr_engine(config, source_language: str = None) -> ASREngine:
 
             if meta.get("type") == "online":
                 logger.info("Creating SherpaOnnxOnlineEngine")
-                return SherpaOnnxOnlineEngine(str(model_path), file_map=file_map)
+                return SherpaOnnxOnlineEngine(str(model_path), model_type=model_type, file_map=file_map)
 
             # 离线模型：检查是否启用 VAD
             if config.enable_vad and config.vad_model_id:
