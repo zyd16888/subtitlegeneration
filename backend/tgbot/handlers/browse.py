@@ -247,7 +247,7 @@ async def _show_episodes(query, series_id: str, page: int) -> None:
             # 先校验 series 所属媒体库是否在允许范围
             if accessible_ids is not None:
                 series = await emby.get_media_item(series_id)
-                if not EmbyConnector.is_item_accessible(series, accessible_ids):
+                if not await emby.is_item_accessible(series, accessible_ids):
                     logger.warning(
                         f"TG 访问控制拒绝: user={query.from_user.id} series_id={series_id}"
                     )
@@ -280,8 +280,12 @@ async def _show_media_detail(query, item_id: str) -> None:
         accessible_ids = _get_accessible_ids(config)
         async with EmbyConnector(emby_url, emby_api_key) as emby:
             item = await emby.get_media_item(item_id)
+            allowed = (
+                accessible_ids is None
+                or await emby.is_item_accessible(item, accessible_ids)
+            )
 
-        if not EmbyConnector.is_item_accessible(item, accessible_ids):
+        if not allowed:
             logger.warning(
                 f"TG 访问控制拒绝: user={query.from_user.id} item_id={item_id}"
             )

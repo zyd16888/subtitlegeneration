@@ -74,8 +74,12 @@ async def _handle_subtitle_deeplink(
         accessible_ids = config.telegram_accessible_libraries or None
         async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
             media_item = await emby.get_media_item(media_item_id)
+            allowed = (
+                accessible_ids is None
+                or await emby.is_item_accessible(media_item, accessible_ids)
+            )
 
-        if not EmbyConnector.is_item_accessible(media_item, accessible_ids):
+        if not allowed:
             logger.warning(
                 f"TG deeplink 访问控制拒绝: user={update.effective_user.id} item_id={media_item_id}"
             )

@@ -74,7 +74,7 @@ async def _create_subtitle_task(
         accessible_ids = config.telegram_accessible_libraries or None
         async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
             media_item = await emby.get_media_item(media_item_id)
-            if not EmbyConnector.is_item_accessible(media_item, accessible_ids):
+            if not await emby.is_item_accessible(media_item, accessible_ids):
                 logger.warning(
                     f"TG 任务创建访问控制拒绝: user={user_telegram_id} item_id={media_item_id}"
                 )

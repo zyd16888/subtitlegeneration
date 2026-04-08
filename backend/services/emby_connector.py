@@ -17,15 +17,21 @@ class Library:
     id: str
     name: str
     type: str  # Movie, Series, etc.
-    
+    item_id: str = ""  # BaseItem id（与媒体项 AncestorIds 对应）
+
     @classmethod
     def from_emby_response(cls, data: Dict[str, Any]) -> "Library":
         """从 Emby API 响应创建 Library 对象"""
-        # Emby VirtualFolders API 返回 Id 和 ItemId 字段（值相同）
+        # Emby VirtualFolders API 在不同版本里可能同时返回 Id 和 ItemId，
+        # 它们的形式不一定一致：Id 常为 hash 形式，ItemId 是 BaseItem 的标准 Guid，
+        # 而媒体项 AncestorIds 内是 BaseItem 的 Guid。两者都需要保留以便访问控制比对。
+        primary = data.get("Id") or data.get("ItemId") or ""
+        item_id = data.get("ItemId") or data.get("Id") or ""
         return cls(
-            id=data.get("Id", ""),
+            id=primary,
             name=data.get("Name", ""),
-            type=data.get("CollectionType", "")
+            type=data.get("CollectionType", ""),
+            item_id=item_id,
         )
 
 
@@ -135,6 +141,8 @@ class EmbyConnector:
         self.client = httpx.AsyncClient(timeout=30.0, verify=False)
         # 缓存 user_id，避免每次请求都调用 /Users 接口
         self._user_id: Optional[str] = None
+        # 缓存原始（未过滤）的媒体库列表，用于访问控制时把允许列表展开成等价 id 集合
+        self._all_libraries_cache: Optional[List[Library]] = None
         
     async def __aenter__(self):
         """异步上下文管理器入口"""
@@ -195,6 +203,8 @@ class EmbyConnector:
 
             data = response.json()
             libraries = [Library.from_emby_response(item) for item in data]
+            # 缓存完整列表（未过滤）供访问控制 id 等价展开使用
+            self._all_libraries_cache = list(libraries)
             if accessible_library_ids:
                 allowed = set(accessible_library_ids)
                 before = len(libraries)
@@ -240,7 +250,7 @@ class EmbyConnector:
         # 访问控制：若同时指定 library_id 和 accessible_library_ids，
         # 校验 library_id 是否在允许集合中，否则直接返回空结果
         if library_id and accessible_library_ids:
-            allowed_norm = {self._normalize_guid(x) for x in accessible_library_ids}
+            allowed_norm = await self._expand_allowed_ids(list(accessible_library_ids))
             if self._normalize_guid(library_id) not in allowed_norm:
                 logger.warning(
                     f"访问控制拒绝：library_id={library_id} 不在允许列表中"
@@ -594,8 +604,48 @@ class EmbyConnector:
             return ""
         return str(value).replace("-", "").strip().lower()
 
-    @staticmethod
-    def is_item_accessible(
+    async def _get_all_libraries_cached(self) -> List[Library]:
+        """获取（并缓存）完整未过滤的媒体库列表，用于访问控制等价 id 展开"""
+        if self._all_libraries_cache is not None:
+            return self._all_libraries_cache
+        await self.get_libraries()  # 内部会写入 _all_libraries_cache
+        return self._all_libraries_cache or []
+
+    async def _expand_allowed_ids(
+        self, accessible_library_ids: List[str]
+    ) -> set:
+        """
+        把用户配置的允许媒体库 id 列表展开成"等价 id 的规范化集合"。
+
+        VirtualFolders 返回的 Id / ItemId 与媒体项 AncestorIds 内的 Id 形式可能不一致
+        （hash vs 标准 Guid），仅靠 normalize 仍可能匹配不上。这里通过 libraries 列表
+        建立两者的等价关系：
+          - 输入的允许 id 命中某个 library 的 id 或 item_id 时，把该 library 的两个 id
+            都加入允许集合，从而覆盖 AncestorIds 实际可能出现的任一形式。
+        """
+        allowed_input = {self._normalize_guid(x) for x in accessible_library_ids if x}
+        if not allowed_input:
+            return set()
+
+        expanded = set(allowed_input)
+        try:
+            libraries = await self._get_all_libraries_cached()
+        except Exception as e:
+            logger.warning(f"展开访问控制 id 时获取媒体库失败，回退原始集合: {e}")
+            return expanded
+
+        for lib in libraries:
+            lib_id_norm = self._normalize_guid(lib.id)
+            item_id_norm = self._normalize_guid(lib.item_id)
+            if lib_id_norm in allowed_input or item_id_norm in allowed_input:
+                if lib_id_norm:
+                    expanded.add(lib_id_norm)
+                if item_id_norm:
+                    expanded.add(item_id_norm)
+        return expanded
+
+    async def is_item_accessible(
+        self,
         item: MediaItem,
         accessible_library_ids: Optional[List[str]],
     ) -> bool:
@@ -611,12 +661,13 @@ class EmbyConnector:
         """
         if not accessible_library_ids:
             return True
-        allowed = {EmbyConnector._normalize_guid(x) for x in accessible_library_ids}
+        allowed = await self._expand_allowed_ids(list(accessible_library_ids))
+        if not allowed:
+            return False
         if not item.ancestor_ids:
             return False
         return any(
-            EmbyConnector._normalize_guid(aid) in allowed
-            for aid in item.ancestor_ids
+            self._normalize_guid(aid) in allowed for aid in item.ancestor_ids
         )
 
     async def close(self):
