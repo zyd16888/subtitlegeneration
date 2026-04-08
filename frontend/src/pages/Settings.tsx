@@ -196,7 +196,10 @@ const Settings: React.FC = () => {
       setSavingAll(true);
       // form.getFieldsValue(true) 获取所有字段（包括未挂载的），避免分 tab 导致字段丢失
       const values = form.getFieldsValue(true);
-      await api.config.partialUpdateConfig(values);
+      // 过滤掉 undefined/null 字段，避免未加载或禁用字段覆盖数据库中的有效值
+      // （例如 asr_model_id 由模型激活流程管理，不应通过全局保存清空）
+      const payload = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined && v !== null));
+      await api.config.partialUpdateConfig(payload);
       message.success('核心配置库同步完成');
       setIsDirty(false);
     }
@@ -341,8 +344,8 @@ const Settings: React.FC = () => {
     { title: '操作', key: 'action', width: 150, render: (_: any, record: ASRModel) => {
       if (record.installed) return (
         <Space size="middle">
-          {!record.active && <Button type="link" onClick={() => api.models.activateModel(record.id).then(loadModels)} style={{ padding: 0, color: 'var(--accent-cyan)' }}>激活</Button>}
-          <Popconfirm title="确认删除神经模型?" onConfirm={() => api.models.deleteModel(record.id).then(loadModels)}><Button type="link" danger style={{ padding: 0 }}>卸载</Button></Popconfirm>
+          {!record.active && <Button type="link" onClick={() => api.models.activateModel(record.id).then(() => { loadModels(); loadConfig(); })} style={{ padding: 0, color: 'var(--accent-cyan)' }}>激活</Button>}
+          <Popconfirm title="确认删除神经模型?" onConfirm={() => api.models.deleteModel(record.id).then(() => { loadModels(); loadConfig(); })}><Button type="link" danger style={{ padding: 0 }}>卸载</Button></Popconfirm>
         </Space>
       );
       const progress = downloadProgress[record.id];

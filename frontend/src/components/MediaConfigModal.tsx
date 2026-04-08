@@ -19,7 +19,7 @@ import {
   GlobalOutlined,
   InfoCircleOutlined,
 } from '@ant-design/icons';
-import { api } from '../services/api';
+import { api, getImageUrl } from '../services/api';
 import type { MediaItem, TaskConfig, SystemConfig } from '../types/api';
 
 const { Text } = Typography;
@@ -135,7 +135,7 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
         <Space size="middle" align="start">
           {mediaItem.image_url ? (
             <Image
-              src={mediaItem.image_url}
+              src={getImageUrl(mediaItem.image_url)}
               alt={mediaItem.name}
               width={120}
               height={180}

@@ -53,6 +53,17 @@ function getToken(): string | null {
 }
 
 /**
+ * 为图片代理 URL 附加认证 token（img 标签无法通过 Header 传递 token）
+ */
+export function getImageUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  const token = getToken();
+  if (!token) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
+/**
  * API 客户端类
  */
 class ApiClient {

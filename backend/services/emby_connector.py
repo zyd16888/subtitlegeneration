@@ -68,24 +68,20 @@ class MediaItem:
                 else:
                     name = series_name
         
-        # 构建图片URL
+        # 构建图片URL（使用后端代理路径，避免暴露 Emby 地址和 API Key）
         image_url = None
         item_id = data.get("Id", "")
-        if item_id and base_url:
+        if item_id:
             # 对于Episode，优先使用Series的Primary图片
             if item_type == "Episode" and data.get("SeriesId") and data.get("SeriesPrimaryImageTag"):
                 series_id = data.get("SeriesId")
-                image_url = f"{base_url}/Items/{series_id}/Images/Primary"
+                image_url = f"/api/images/{series_id}/Primary"
             # 否则使用自己的Primary图片
             elif data.get("ImageTags", {}).get("Primary"):
-                image_url = f"{base_url}/Items/{item_id}/Images/Primary"
+                image_url = f"/api/images/{item_id}/Primary"
             # 最后尝试Backdrop
             elif data.get("BackdropImageTags") and len(data.get("BackdropImageTags", [])) > 0:
-                image_url = f"{base_url}/Items/{item_id}/Images/Backdrop/0"
-            
-            # 添加API Key参数
-            if image_url and api_key:
-                image_url = f"{image_url}?api_key={api_key}"
+                image_url = f"/api/images/{item_id}/Backdrop/0"
         
         # 解析 AncestorIds（Emby 返回 [{"Name":..., "Id":..., "Type":...}] 或直接字符串列表）
         ancestor_ids: List[str] = []

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
@@ -119,3 +119,35 @@ def require_auth(username: Optional[str] = Depends(get_current_user)) -> str:
             detail="需要认证",
         )
     return username or "anonymous"
+
+
+def verify_token_param(token: Optional[str] = Query(None)) -> str:
+    """
+    通过 URL query param 验证 token，用于 img 标签等无法携带 Header 的场景。
+    认证未启用时直接放行。
+    """
+    if not settings.auth_enabled:
+        return "anonymous"
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="需要认证",
+        )
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="无效的认证令牌",
+            )
+        return username
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的认证令牌",
+        )

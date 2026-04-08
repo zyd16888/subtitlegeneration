@@ -243,6 +243,7 @@ app.include_router(auth.router)
 
 # 需要认证保护的路由
 app.include_router(media.router)
+app.include_router(media.image_router)
 app.include_router(tasks.router)
 app.include_router(config.router)
 app.include_router(stats.router)

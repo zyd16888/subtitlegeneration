@@ -21,7 +21,7 @@ import {
   FilterOutlined,
   AppstoreOutlined,
 } from '@ant-design/icons';
-import { api } from '../services/api';
+import { api, getImageUrl } from '../services/api';
 import type { Library, MediaItem, TaskConfig } from '../types/api';
 import SeriesEpisodesModal from '../components/SeriesEpisodesModal';
 import MediaConfigModal from '../components/MediaConfigModal';
@@ -52,7 +52,7 @@ const MediaItemImage: React.FC<{
     >
       {imageUrl && !imageError ? (
         <img
-          src={imageUrl}
+          src={getImageUrl(imageUrl)}
           alt={name}
           style={{
             position: 'absolute',

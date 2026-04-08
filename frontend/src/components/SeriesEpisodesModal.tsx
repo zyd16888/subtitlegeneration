@@ -19,7 +19,7 @@ import {
   GlobalOutlined,
   InfoCircleOutlined,
 } from '@ant-design/icons';
-import { api } from '../services/api';
+import { api, getImageUrl } from '../services/api';
 import type { MediaItem, TaskConfig, SystemConfig } from '../types/api';
 
 const { Text } = Typography;
@@ -142,7 +142,7 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
       render: (url: string, record: MediaItem) => (
         url ? (
           <Image
-            src={url}
+            src={getImageUrl(url)}
             alt={record.name}
             width={60}
             height={40}
