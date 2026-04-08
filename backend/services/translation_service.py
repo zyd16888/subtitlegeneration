@@ -14,48 +14,83 @@ Usage:
 """
 import asyncio
 import hashlib
+import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class TranslationService(ABC):
     """Abstract base class for translation services."""
-    
+
+    # 默认并发数：子类按 provider 限速覆盖
+    default_concurrency: int = 4
+
     @abstractmethod
     async def translate(self, text: str, source_lang: str = "ja", target_lang: str = "zh") -> str:
+        """单条翻译；失败时回退原文，永远返回字符串。如需失败标志请用 translate_batch。"""
         pass
-    
-    async def translate_batch(self, texts: List[str], source_lang: str = "ja", target_lang: str = "zh") -> List[str]:
-        results = []
-        for text in texts:
-            translated = await self.translate(text, source_lang, target_lang)
-            results.append(translated)
-        return results
-    
-    async def _translate_with_retry(self, text: str, source_lang: str, target_lang: str, max_retries: int = 3) -> str:
+
+    async def translate_batch(
+        self,
+        texts: List[str],
+        source_lang: str = "ja",
+        target_lang: str = "zh",
+        concurrency: Optional[int] = None,
+    ) -> List[Tuple[str, bool]]:
+        """
+        并发批量翻译，结果顺序与输入一一对应。
+
+        Returns:
+            List of (translated_text, success) tuples. success=False 表示翻译失败已回退原文。
+        """
+        if not texts:
+            return []
+
+        # 确定并发数：用户显式指定 > provider 默认值，但不能小于 1
+        effective = concurrency if concurrency and concurrency > 0 else self.default_concurrency
+        effective = max(1, effective)
+        sem = asyncio.Semaphore(effective)
+
+        async def _one(idx: int, text: str) -> Tuple[str, bool]:
+            # 空文本直接返回，不算失败也不算成功翻译
+            if not text or not text.strip():
+                return (text, False)
+            async with sem:
+                return await self._translate_with_retry(text, source_lang, target_lang)
+
+        return await asyncio.gather(*[_one(i, t) for i, t in enumerate(texts)])
+
+    async def _translate_with_retry(
+        self, text: str, source_lang: str, target_lang: str, max_retries: int = 3
+    ) -> Tuple[str, bool]:
+        """重试包装：成功返回 (译文, True)，失败返回 (原文, False)。"""
         last_error = None
         for attempt in range(max_retries):
             try:
                 result = await self._do_translate(text, source_lang, target_lang)
-                return result
+                return (result, True)
             except Exception as e:
                 last_error = e
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt
                     await asyncio.sleep(wait_time)
                     continue
-        print(f"Translation failed after {max_retries} retries: {last_error}")
-        print(f"Preserving original text: {text}")
-        return text
-    
+        logger.warning(f"Translation failed after {max_retries} retries: {last_error}")
+        logger.warning(f"Preserving original text: {text}")
+        return (text, False)
+
     @abstractmethod
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         pass
 
 
 class OpenAITranslator(TranslationService):
+    default_concurrency = 8
+
     def __init__(self, api_key: str, model: str = "gpt-4", base_url: Optional[str] = None):
         if not api_key:
             raise ValueError("API key cannot be empty")
@@ -72,11 +107,12 @@ class OpenAITranslator(TranslationService):
                 client_kwargs["base_url"] = self.base_url
             self.client = AsyncOpenAI(**client_kwargs)
         return self.client
-    
+
     async def translate(self, text: str, source_lang: str = "ja", target_lang: str = "zh") -> str:
         if not text or not text.strip():
             return text
-        return await self._translate_with_retry(text, source_lang, target_lang)
+        result, _ = await self._translate_with_retry(text, source_lang, target_lang)
+        return result
     
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         try:
@@ -108,16 +144,19 @@ class OpenAITranslator(TranslationService):
 
 
 class DeepSeekTranslator(TranslationService):
+    default_concurrency = 8
+
     def __init__(self, api_key: str, api_url: str = "https://api.deepseek.com/v1"):
         if not api_key:
             raise ValueError("API key cannot be empty")
         self.api_key = api_key
         self.api_url = api_url.rstrip('/')
-    
+
     async def translate(self, text: str, source_lang: str = "ja", target_lang: str = "zh") -> str:
         if not text or not text.strip():
             return text
-        return await self._translate_with_retry(text, source_lang, target_lang)
+        result, _ = await self._translate_with_retry(text, source_lang, target_lang)
+        return result
     
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         try:
@@ -151,16 +190,20 @@ class DeepSeekTranslator(TranslationService):
 
 
 class LocalLLMTranslator(TranslationService):
+    # 本机算力瓶颈，并发过高反而拖慢
+    default_concurrency = 2
+
     def __init__(self, api_url: str, model: str = "llama2"):
         if not api_url:
             raise ValueError("API URL cannot be empty")
         self.api_url = api_url.rstrip('/')
         self.model = model
-    
+
     async def translate(self, text: str, source_lang: str = "ja", target_lang: str = "zh") -> str:
         if not text or not text.strip():
             return text
-        return await self._translate_with_retry(text, source_lang, target_lang)
+        result, _ = await self._translate_with_retry(text, source_lang, target_lang)
+        return result
     
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         try:
@@ -212,6 +255,8 @@ class GoogleTranslator(TranslationService):
         self.api_key = api_key
         if mode == "api" and not api_key:
             raise ValueError("Google 翻译 API 模式需要 API Key")
+        # 免费版易被封 IP，并发要低；官方 API 配额宽松
+        self.default_concurrency = 2 if mode == "free" else 8
 
     def _map_lang(self, lang: str) -> str:
         return self.LANG_MAP.get(lang, lang)
@@ -219,7 +264,8 @@ class GoogleTranslator(TranslationService):
     async def translate(self, text: str, source_lang: str = "ja", target_lang: str = "zh") -> str:
         if not text or not text.strip():
             return text
-        return await self._translate_with_retry(text, source_lang, target_lang)
+        result, _ = await self._translate_with_retry(text, source_lang, target_lang)
+        return result
 
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         src = self._map_lang(source_lang)
@@ -233,11 +279,19 @@ class GoogleTranslator(TranslationService):
         try:
             from googletrans import Translator
             translator = Translator()
-            loop = asyncio.get_event_loop()
             # Google Translate 支持 src='auto' 自动检测
             if src == "auto" or not src:
                 src = "auto"
-            result = await loop.run_in_executor(None, lambda: translator.translate(text, src=src, dest=tgt))
+            # googletrans 4.x translate() 是异步协程，直接 await
+            coro_or_result = translator.translate(text, src=src, dest=tgt)
+            if asyncio.iscoroutine(coro_or_result):
+                result = await coro_or_result
+            else:
+                # 兼容旧版同步 API，放到线程池避免阻塞
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None, lambda: translator.translate(text, src=src, dest=tgt)
+                )
             return result.text
         except Exception as e:
             raise RuntimeError(f"Google 免费翻译失败: {e}")
@@ -280,6 +334,8 @@ class MicrosoftTranslator(TranslationService):
         self.region = region
         if mode == "api" and not api_key:
             raise ValueError("微软翻译 API 模式需要 API Key")
+        # 免费版（Bing）易被风控；Azure 官方 API 配额宽松
+        self.default_concurrency = 2 if mode == "free" else 8
 
     def _map_lang(self, lang: str) -> str:
         return self.LANG_MAP.get(lang, lang)
@@ -287,7 +343,8 @@ class MicrosoftTranslator(TranslationService):
     async def translate(self, text: str, source_lang: str = "ja", target_lang: str = "zh") -> str:
         if not text or not text.strip():
             return text
-        return await self._translate_with_retry(text, source_lang, target_lang)
+        result, _ = await self._translate_with_retry(text, source_lang, target_lang)
+        return result
 
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         src = self._map_lang(source_lang)
@@ -359,6 +416,9 @@ class MicrosoftTranslator(TranslationService):
 class BaiduTranslator(TranslationService):
     """百度翻译 - 官方 API"""
 
+    # 百度标准版 1 QPS 硬限制，无论用户配置多少都强制串行
+    default_concurrency = 1
+
     LANG_MAP = {
         "zh": "zh", "en": "en", "ja": "jp", "ko": "kor",
         "fr": "fra", "de": "de", "es": "spa", "ru": "ru",
@@ -372,22 +432,39 @@ class BaiduTranslator(TranslationService):
         self.app_id = app_id
         self.secret_key = secret_key
         self._last_call_time = 0.0
+        self._rate_lock = asyncio.Lock()
 
     def _map_lang(self, lang: str) -> str:
         return self.LANG_MAP.get(lang, lang)
 
+    async def _wait_for_rate_limit(self) -> None:
+        """串行限速：保证两次调用间隔 ≥ 1 秒。"""
+        async with self._rate_lock:
+            now = time.time()
+            elapsed = now - self._last_call_time
+            if elapsed < 1.0:
+                await asyncio.sleep(1.0 - elapsed)
+            self._last_call_time = time.time()
+
     async def translate(self, text: str, source_lang: str = "ja", target_lang: str = "zh") -> str:
         if not text or not text.strip():
             return text
-        # 百度标准版 QPS 限制：1次/秒
-        now = time.time()
-        elapsed = now - self._last_call_time
-        if elapsed < 1.0:
-            await asyncio.sleep(1.0 - elapsed)
-        self._last_call_time = time.time()
-        return await self._translate_with_retry(text, source_lang, target_lang)
+        result, _ = await self._translate_with_retry(text, source_lang, target_lang)
+        return result
+
+    async def translate_batch(
+        self,
+        texts: List[str],
+        source_lang: str = "ja",
+        target_lang: str = "zh",
+        concurrency: Optional[int] = None,
+    ) -> List[Tuple[str, bool]]:
+        """百度强制 concurrency=1，忽略上层传入的更大值。"""
+        return await super().translate_batch(texts, source_lang, target_lang, concurrency=1)
 
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:
+        # 限速放在 _do_translate 里，单条 translate 与批量 translate_batch 都生效
+        await self._wait_for_rate_limit()
         try:
             import httpx
             url = "https://fanyi-api.baidu.com/api/trans/vip/translate"
@@ -439,6 +516,8 @@ class DeepLTranslator(TranslationService):
         self.deeplx_url = (deeplx_url or "http://localhost:1188").rstrip("/")
         if mode == "api" and not api_key:
             raise ValueError("DeepL 官方 API 模式需要 API Key")
+        # 官方 API 受限速；DeepLX 看自建服务承载，保守一点
+        self.default_concurrency = 4
 
     def _map_lang(self, lang: str, is_source: bool = False) -> str:
         m = self.SOURCE_LANG_MAP if is_source else self.LANG_MAP
@@ -450,7 +529,8 @@ class DeepLTranslator(TranslationService):
     async def translate(self, text: str, source_lang: str = "ja", target_lang: str = "zh") -> str:
         if not text or not text.strip():
             return text
-        return await self._translate_with_retry(text, source_lang, target_lang)
+        result, _ = await self._translate_with_retry(text, source_lang, target_lang)
+        return result
 
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:
         # DeepL 支持 auto 模式

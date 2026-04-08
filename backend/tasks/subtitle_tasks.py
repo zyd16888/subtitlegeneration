@@ -310,35 +310,36 @@ async def _translate_segments(
     translation_service: TranslationService,
     source_lang: str = "ja",
     target_lang: str = "zh",
+    concurrency: Optional[int] = None,
 ) -> List[SubtitleSegment]:
-    """翻译 ASR 识别的文本片段"""
-    subtitle_segments = []
+    """
+    并发翻译 ASR 识别的文本片段。
 
-    for segment in segments:
-        try:
-            translated_text = await translation_service.translate(
-                segment.text,
-                source_lang=source_lang,
-                target_lang=target_lang,
-            )
-            subtitle_segment = SubtitleSegment(
+    使用 translate_batch 并发执行，asyncio.gather 保证返回结果与输入索引一一对应，
+    SRT 时间轴顺序不会乱。失败的段落 success=False，translated_text 等于 original_text。
+    """
+    if not segments:
+        return []
+
+    texts = [s.text for s in segments]
+    results = await translation_service.translate_batch(
+        texts,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        concurrency=concurrency,
+    )
+
+    subtitle_segments: List[SubtitleSegment] = []
+    for segment, (translated_text, success) in zip(segments, results):
+        subtitle_segments.append(
+            SubtitleSegment(
                 start=segment.start,
                 end=segment.end,
                 original_text=segment.text,
                 translated_text=translated_text,
-                is_translated=True,
+                is_translated=success,
             )
-        except Exception as e:
-            logger.warning(f"翻译失败，保留原文: {e}")
-            subtitle_segment = SubtitleSegment(
-                start=segment.start,
-                end=segment.end,
-                original_text=segment.text,
-                translated_text=segment.text,
-                is_translated=False,
-            )
-        subtitle_segments.append(subtitle_segment)
-
+        )
     return subtitle_segments
 
 
@@ -511,8 +512,19 @@ def generate_subtitle_task(
             if translation_source_lang == "auto":
                 logger.info(f"[{task_id}] 使用自动语言检测模式翻译到 {target_lang}")
             translation_service_instance = _get_translation_service(config)
+            translation_concurrency = getattr(config, "translation_concurrency", None)
+            logger.info(
+                f"[{task_id}] 翻译并发数: "
+                f"{translation_concurrency if translation_concurrency else f'默认 ({translation_service_instance.default_concurrency})'}"
+            )
             subtitle_segments = _run_async(
-                _translate_segments(segments, translation_service_instance, translation_source_lang, target_lang)
+                _translate_segments(
+                    segments,
+                    translation_service_instance,
+                    translation_source_lang,
+                    target_lang,
+                    concurrency=translation_concurrency,
+                )
             )
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
         if source_lang == target_lang and translation_source_lang != "auto":

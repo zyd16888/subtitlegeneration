@@ -169,6 +169,9 @@ export interface SystemConfig {
   deepl_api_key?: string;
   deeplx_url?: string;
 
+  // 翻译并发数（留空使用各 provider 默认值；百度强制串行无视此值）
+  translation_concurrency?: number | null;
+
   // VAD 配置
   enable_vad?: boolean;
   vad_model_id?: string;

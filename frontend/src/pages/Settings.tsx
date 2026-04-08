@@ -225,6 +225,9 @@ const Settings: React.FC = () => {
       else if (service === 'microsoft') { values.microsoft_translate_mode = form.getFieldValue('microsoft_translate_mode'); values.microsoft_api_key = form.getFieldValue('microsoft_api_key'); values.microsoft_region = form.getFieldValue('microsoft_region'); }
       else if (service === 'baidu') { values.baidu_app_id = form.getFieldValue('baidu_app_id'); values.baidu_secret_key = form.getFieldValue('baidu_secret_key'); }
       else if (service === 'deepl') { values.deepl_mode = form.getFieldValue('deepl_mode'); values.deepl_api_key = form.getFieldValue('deepl_api_key'); values.deeplx_url = form.getFieldValue('deeplx_url'); }
+      // 翻译并发数：undefined 表示用户清空 → 提交 null 让后端回退默认
+      const concurrency = form.getFieldValue('translation_concurrency');
+      values.translation_concurrency = (concurrency === undefined || concurrency === '') ? null : concurrency;
       setSavingTranslation(true); await api.config.partialUpdateConfig(values); message.success('翻译配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
     finally { setSavingTranslation(false); }
@@ -520,6 +523,28 @@ const Settings: React.FC = () => {
                 </Row>
               )}
             </div>
+            <Row gutter={24} style={{ marginTop: 16 }}>
+              <Col span={12}>
+                <Form.Item
+                  name="translation_concurrency"
+                  label={
+                    <Space>
+                      翻译并发数
+                      <Tooltip title="同一任务内并发调用翻译接口的最大数量。留空使用各 provider 的推荐值（OpenAI/DeepSeek=8, Google/Microsoft 免费=2, 本地 LLM=2, DeepL=4）。百度翻译因 1 QPS 硬限制强制串行，此项无效。并发不会打乱字幕顺序。">
+                        <InfoCircleOutlined />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={1}
+                    max={32}
+                    placeholder="留空 = 使用默认值"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
           </div>
           <div className="cat-footer">
             <Space>

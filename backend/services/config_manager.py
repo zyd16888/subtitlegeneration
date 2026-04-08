@@ -51,7 +51,10 @@ class SystemConfigData(BaseModel):
     deepl_mode: str = "deeplx"  # deeplx, api
     deepl_api_key: Optional[str] = None
     deeplx_url: Optional[str] = None
-    
+
+    # 翻译并发数（None = 使用各 provider 默认值；百度强制串行无视此值）
+    translation_concurrency: Optional[int] = None
+
     # VAD 配置
     enable_vad: bool = False
     vad_model_id: Optional[str] = None
@@ -118,6 +121,16 @@ class SystemConfigData(BaseModel):
         """验证翻译服务类型"""
         if v not in ['openai', 'deepseek', 'local', 'google', 'microsoft', 'baidu', 'deepl']:
             raise ValueError('翻译服务必须是 openai, deepseek, local, google, microsoft, baidu 或 deepl')
+        return v
+
+    @field_validator('translation_concurrency')
+    @classmethod
+    def validate_translation_concurrency(cls, v: Optional[int]) -> Optional[int]:
+        """翻译并发数：None 用默认；显式值需在 1-32 之间"""
+        if v is None:
+            return None
+        if v < 1 or v > 32:
+            raise ValueError('翻译并发数必须在 1-32 之间')
         return v
     
     @field_validator('telegram_accessible_libraries', mode='before')
@@ -304,6 +317,12 @@ class ConfigManager:
                 errors.append("使用 DeepSeek 翻译时必须配置 API Key")
             if config.translation_service == "local" and not config.local_llm_url:
                 errors.append("使用本地 LLM 翻译时必须配置 API URL")
+
+        # 验证翻译并发数
+        if 'translation_concurrency' in updated_keys:
+            if config.translation_concurrency is not None:
+                if config.translation_concurrency < 1 or config.translation_concurrency > 32:
+                    errors.append("翻译并发数必须在 1-32 之间")
         
         # 验证任务配置（只在相关字段更新时验证）
         if 'max_concurrent_tasks' in updated_keys:
