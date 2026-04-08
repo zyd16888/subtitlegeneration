@@ -29,6 +29,10 @@ class SystemConfigData(BaseModel):
     # 语言配置
     source_language: str = "ja"
     target_language: str = "zh"
+    # 源语言检测模式：
+    # - "fixed": 强制使用 source_language 配置（适合单一语言场景）
+    # - "auto": 让翻译服务自动检测源语言（推荐，适合多语言或不确定场景）
+    source_language_detection: str = "auto"
 
     # 翻译服务配置
     translation_service: str = "openai"  # openai, deepseek, local, google, microsoft, baidu, deepl
@@ -98,6 +102,14 @@ class SystemConfigData(BaseModel):
         """验证 ASR 引擎类型"""
         if v not in ['sherpa-onnx', 'cloud']:
             raise ValueError('ASR 引擎必须是 sherpa-onnx 或 cloud')
+        return v
+    
+    @field_validator('source_language_detection')
+    @classmethod
+    def validate_source_language_detection(cls, v: str) -> str:
+        """验证源语言检测模式"""
+        if v not in ['fixed', 'auto']:
+            raise ValueError('源语言检测模式必须是 fixed 或 auto')
         return v
     
     @field_validator('translation_service')

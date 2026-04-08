@@ -237,6 +237,7 @@ const Settings: React.FC = () => {
         asr_model_id: form.getFieldValue('asr_model_id'),
         source_language: form.getFieldValue('source_language'),
         target_language: form.getFieldValue('target_language'),
+        source_language_detection: form.getFieldValue('source_language_detection'),
         enable_vad: form.getFieldValue('enable_vad'),
         vad_model_id: form.getFieldValue('vad_model_id'),
         vad_threshold: form.getFieldValue('vad_threshold'),
@@ -574,6 +575,36 @@ const Settings: React.FC = () => {
                       {languages.map(lang => <Option key={lang.code} value={lang.code}>{lang.name} ({lang.code})</Option>)}
                     </Select>
                   </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={24} style={{ marginTop: 16 }}>
+                <Col span={24}>
+                  <Form.Item 
+                    name="source_language_detection" 
+                    label={
+                      <Space>
+                        源语言检测模式
+                        <Tooltip title="Auto 模式：翻译时自动检测实际语言（推荐）。Fixed 模式：强制使用配置的源语言。">
+                          <InfoCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                    }
+                    initialValue="auto"
+                  >
+                    <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                      <Option value="auto">
+                        <Space>
+                          自动检测 (Auto)
+                          <Tag color="success" style={{ marginLeft: 4, border: 'none' }}>推荐</Tag>
+                        </Space>
+                      </Option>
+                      <Option value="fixed">固定语言 (Fixed)</Option>
+                    </Select>
+                  </Form.Item>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -16 }}>
+                    • Auto 模式：翻译服务自动检测 ASR 输出的实际语言，适用于多语言视频或不确定语言的场景<br />
+                    • Fixed 模式：强制使用配置的源语言，适用于确定所有视频都是同一语言的场景
+                  </Text>
                 </Col>
               </Row>
               <Text type="secondary" style={{ fontSize: 12 }}>源语言与目标语言相同时将跳过翻译步骤，仅生成转录字幕</Text>

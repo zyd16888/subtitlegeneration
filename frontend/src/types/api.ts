@@ -149,6 +149,7 @@ export interface SystemConfig {
   // 语言配置
   source_language: string;
   target_language: string;
+  source_language_detection?: 'fixed' | 'auto';  // 源语言检测模式
 
   // 翻译服务配置
   translation_service: 'openai' | 'deepseek' | 'local' | 'google' | 'microsoft' | 'baidu' | 'deepl';

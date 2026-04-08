@@ -1,4 +1,17 @@
-"""Translation Service Module - Supports OpenAI, DeepSeek, Local LLM, Google, Microsoft, Baidu, and DeepL translation engines."""
+"""Translation Service Module - Supports OpenAI, DeepSeek, Local LLM, Google, Microsoft, Baidu, and DeepL translation engines.
+
+All translation services support source_lang="auto" for automatic language detection:
+- LLM-based (OpenAI, DeepSeek, Local LLM): Use prompt to auto-detect source language
+- Traditional APIs (Google, Microsoft, Baidu): Use native auto-detection feature
+- DeepL: Auto-detection available in API mode
+
+Usage:
+    translator = OpenAITranslator(api_key="...")
+    # Fixed source language
+    result = await translator.translate("こんにちは", source_lang="ja", target_lang="zh")
+    # Auto-detect source language (recommended)
+    result = await translator.translate("Hello", source_lang="auto", target_lang="zh")
+"""
 import asyncio
 import hashlib
 import random
@@ -74,9 +87,15 @@ class OpenAITranslator(TranslationService):
                 "pt": "Portuguese", "it": "Italian", "th": "Thai", "vi": "Vietnamese",
                 "ar": "Arabic", "yue": "Cantonese",
             }
-            source_name = lang_names.get(source_lang, source_lang)
             target_name = lang_names.get(target_lang, target_lang)
-            system_prompt = f"You are a professional translator. Translate the following text from {source_name} to {target_name}. Only provide the translation without any explanations or additional text."
+            
+            # 支持 auto 模式：让模型自动检测源语言
+            if source_lang == "auto" or not source_lang:
+                system_prompt = f"You are a professional translator. Translate the following text to {target_name}. Automatically detect the source language. Only provide the translation without any explanations or additional text."
+            else:
+                source_name = lang_names.get(source_lang, source_lang)
+                system_prompt = f"You are a professional translator. Translate the following text from {source_name} to {target_name}. Only provide the translation without any explanations or additional text."
+            
             response = await client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": text}],
@@ -109,9 +128,15 @@ class DeepSeekTranslator(TranslationService):
                 "pt": "Portuguese", "it": "Italian", "th": "Thai", "vi": "Vietnamese",
                 "ar": "Arabic", "yue": "Cantonese",
             }
-            source_name = lang_names.get(source_lang, source_lang)
             target_name = lang_names.get(target_lang, target_lang)
-            system_prompt = f"You are a professional translator. Translate the following text from {source_name} to {target_name}. Only provide the translation without any explanations or additional text."
+            
+            # 支持 auto 模式：让模型自动检测源语言
+            if source_lang == "auto" or not source_lang:
+                system_prompt = f"You are a professional translator. Translate the following text to {target_name}. Automatically detect the source language. Only provide the translation without any explanations or additional text."
+            else:
+                source_name = lang_names.get(source_lang, source_lang)
+                system_prompt = f"You are a professional translator. Translate the following text from {source_name} to {target_name}. Only provide the translation without any explanations or additional text."
+            
             headers = {'Authorization': f'Bearer {self.api_key}', 'Content-Type': 'application/json'}
             payload = {"model": "deepseek-chat", "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": text}], "temperature": 0.3, "max_tokens": 1000}
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -146,9 +171,15 @@ class LocalLLMTranslator(TranslationService):
                 "pt": "Portuguese", "it": "Italian", "th": "Thai", "vi": "Vietnamese",
                 "ar": "Arabic", "yue": "Cantonese",
             }
-            source_name = lang_names.get(source_lang, source_lang)
             target_name = lang_names.get(target_lang, target_lang)
-            system_prompt = f"You are a professional translator. Translate the following text from {source_name} to {target_name}. Only provide the translation without any explanations or additional text."
+            
+            # 支持 auto 模式：让模型自动检测源语言
+            if source_lang == "auto" or not source_lang:
+                system_prompt = f"You are a professional translator. Translate the following text to {target_name}. Automatically detect the source language. Only provide the translation without any explanations or additional text."
+            else:
+                source_name = lang_names.get(source_lang, source_lang)
+                system_prompt = f"You are a professional translator. Translate the following text from {source_name} to {target_name}. Only provide the translation without any explanations or additional text."
+            
             payload = {"model": self.model, "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": text}], "stream": False, "options": {"temperature": 0.3, "num_predict": 1000}}
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(f"{self.api_url}/chat", json=payload)
@@ -203,6 +234,9 @@ class GoogleTranslator(TranslationService):
             from googletrans import Translator
             translator = Translator()
             loop = asyncio.get_event_loop()
+            # Google Translate 支持 src='auto' 自动检测
+            if src == "auto" or not src:
+                src = "auto"
             result = await loop.run_in_executor(None, lambda: translator.translate(text, src=src, dest=tgt))
             return result.text
         except Exception as e:
@@ -212,13 +246,15 @@ class GoogleTranslator(TranslationService):
         try:
             import httpx
             url = "https://translation.googleapis.com/language/translate/v2"
+            # Google API 不需要 source 参数时会自动检测
             params = {
                 "q": text,
-                "source": src,
                 "target": tgt,
                 "key": self.api_key,
                 "format": "text",
             }
+            if src != "auto" and src:
+                params["source"] = src
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(url, data=params)
                 response.raise_for_status()
@@ -265,6 +301,9 @@ class MicrosoftTranslator(TranslationService):
         """通过 Bing Translator 非官方接口翻译（无需 API Key）"""
         try:
             import httpx
+            # Bing 支持 auto-detect
+            if src == "auto" or not src:
+                src = "auto-detect"
             # 先获取认证 token
             async with httpx.AsyncClient(timeout=30.0) as client:
                 page_resp = await client.get("https://www.bing.com/translator")
@@ -296,7 +335,10 @@ class MicrosoftTranslator(TranslationService):
         try:
             import httpx
             url = "https://api.cognitive.microsofttranslator.com/translate"
-            params = {"api-version": "3.0", "from": src, "to": tgt}
+            params = {"api-version": "3.0", "to": tgt}
+            # Azure API 不指定 from 时会自动检测
+            if src != "auto" and src:
+                params["from"] = src
             headers = {
                 "Ocp-Apim-Subscription-Key": self.api_key,
                 "Ocp-Apim-Subscription-Region": self.region,
@@ -352,9 +394,13 @@ class BaiduTranslator(TranslationService):
             salt = str(random.randint(10000, 99999))
             sign_str = self.app_id + text + salt + self.secret_key
             sign = hashlib.md5(sign_str.encode("utf-8")).hexdigest()
+            
+            # 百度翻译支持 from='auto' 自动检测
+            src_lang = self._map_lang(source_lang) if source_lang != "auto" and source_lang else "auto"
+            
             params = {
                 "q": text,
-                "from": self._map_lang(source_lang),
+                "from": src_lang,
                 "to": self._map_lang(target_lang),
                 "appid": self.app_id,
                 "salt": salt,
@@ -407,22 +453,28 @@ class DeepLTranslator(TranslationService):
         return await self._translate_with_retry(text, source_lang, target_lang)
 
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:
-        src = self._map_lang(source_lang, is_source=True)
+        # DeepL 支持 auto 模式
+        if source_lang == "auto" or not source_lang:
+            src = None  # None 表示自动检测
+        else:
+            src = self._map_lang(source_lang, is_source=True)
         tgt = self._map_lang(target_lang, is_source=False)
         if self.mode == "deeplx":
             return await self._translate_deeplx(text, src, tgt)
         else:
             return await self._translate_api(text, src, tgt)
 
-    async def _translate_deeplx(self, text: str, src: str, tgt: str) -> str:
+    async def _translate_deeplx(self, text: str, src: Optional[str], tgt: str) -> str:
         """通过 DeepLX 免费接口翻译（需自建 DeepLX 服务）"""
         try:
             import httpx
             payload = {
                 "text": text,
-                "source_lang": src,
                 "target_lang": tgt,
             }
+            # DeepLX 支持不指定 source_lang 时自动检测
+            if src:
+                payload["source_lang"] = src
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(f"{self.deeplx_url}/translate", json=payload)
                 response.raise_for_status()
@@ -435,12 +487,13 @@ class DeepLTranslator(TranslationService):
         except Exception as e:
             raise RuntimeError(f"DeepLX 翻译失败: {e}")
 
-    async def _translate_api(self, text: str, src: str, tgt: str) -> str:
+    async def _translate_api(self, text: str, src: Optional[str], tgt: str) -> str:
         """通过 DeepL 官方 API 翻译"""
         try:
             import deepl
             loop = asyncio.get_event_loop()
             translator = deepl.Translator(self.api_key)
+            # DeepL API 支持 source_lang=None 时自动检测
             result = await loop.run_in_executor(
                 None, lambda: translator.translate_text(text, source_lang=src, target_lang=tgt)
             )

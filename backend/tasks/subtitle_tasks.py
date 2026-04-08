@@ -411,7 +411,18 @@ def generate_subtitle_task(
         # 语言参数：任务指定 > 全局配置
         source_lang = source_language if source_language else config.source_language
         target_lang = config.target_language
+        
+        # 根据配置决定是否使用自动检测模式
+        # 如果配置为 auto 模式，翻译时传入 "auto" 让翻译服务自动检测
+        translation_source_lang = source_lang
+        if hasattr(config, 'source_language_detection') and config.source_language_detection == "auto":
+            translation_source_lang = "auto"
+            logger.info(f"[{task_id}] 源语言检测模式: auto（翻译服务将自动检测语言）")
+        else:
+            logger.info(f"[{task_id}] 源语言检测模式: fixed（使用配置的语言: {source_lang}）")
+        
         logger.info(f"[{task_id}] 使用语音识别语言: {source_lang} (任务指定: {source_language}, 全局: {config.source_language})")
+        logger.info(f"[{task_id}] 翻译源语言: {translation_source_lang}, 目标语言: {target_lang}")
 
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
         logger.info(f"开始处理任务 {task_id}: {video_path}")
@@ -489,30 +500,35 @@ def generate_subtitle_task(
         # 3. 翻译文本
         _mark_step_start("translation")
         logger.info(f"[{task_id}] 步骤 3/5: 翻译文本")
-        if source_lang == target_lang:
+        if source_lang == target_lang and translation_source_lang != "auto":
+            # 只有在非 auto 模式且源语言等于目标语言时才跳过翻译
             logger.info(f"[{task_id}] 源语言与目标语言相同 ({source_lang})，跳过翻译")
             subtitle_segments = [
                 SubtitleSegment(start=s.start, end=s.end, original_text=s.text, translated_text=s.text, is_translated=False)
                 for s in segments
             ]
         else:
+            if translation_source_lang == "auto":
+                logger.info(f"[{task_id}] 使用自动语言检测模式翻译到 {target_lang}")
             translation_service_instance = _get_translation_service(config)
             subtitle_segments = _run_async(
-                _translate_segments(segments, translation_service_instance, source_lang, target_lang)
+                _translate_segments(segments, translation_service_instance, translation_source_lang, target_lang)
             )
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
-        if source_lang == target_lang:
+        if source_lang == target_lang and translation_source_lang != "auto":
             step_logs["translation"] = _format_step_log(
                 "translation", f"源语言与目标语言相同 ({source_lang})，已跳过翻译"
             )
             skipped_steps.append("translation")
         else:
             translated_count = sum(1 for s in subtitle_segments if s.is_translated)
+            detection_mode = "自动检测" if translation_source_lang == "auto" else f"固定 ({translation_source_lang})"
             step_logs["translation"] = _format_step_log(
                 "translation",
                 (
                     f"翻译服务: {config.translation_service}\n"
-                    f"方向: {source_lang} → {target_lang}\n"
+                    f"源语言模式: {detection_mode}\n"
+                    f"目标语言: {target_lang}\n"
                     f"成功翻译: {translated_count}/{len(subtitle_segments)} 段"
                 ),
             )
