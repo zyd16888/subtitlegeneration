@@ -132,42 +132,43 @@ const Settings: React.FC = () => {
     if (pollTimers.current[modelId]) { clearInterval(pollTimers.current[modelId]); delete pollTimers.current[modelId]; }
   }, []);
 
-  const startPolling = useCallback((modelId: string) => {
+  const pollErrorCount = useRef<Record<string, number>>({});
+  const pollOnComplete = useRef<Record<string, () => void>>({});
+
+  const startPolling = useCallback((modelId: string, onComplete?: () => void) => {
     stopPolling(modelId);
+    pollErrorCount.current[modelId] = 0;
+    if (onComplete) pollOnComplete.current[modelId] = onComplete;
     pollTimers.current[modelId] = setInterval(async () => {
       try {
         const progress = await api.models.getDownloadProgress(modelId);
+        pollErrorCount.current[modelId] = 0;
         setDownloadProgress(prev => ({ ...prev, [modelId]: progress }));
         if (progress.status === 'completed') {
-          stopPolling(modelId); message.success('模型下载完成'); loadModels();
+          stopPolling(modelId); message.success('模型下载完成');
+          pollOnComplete.current[modelId]?.();
+          delete pollOnComplete.current[modelId];
           setTimeout(() => { setDownloadProgress(prev => { const n = { ...prev }; delete n[modelId]; return n; }); }, 3000);
         } else if (progress.status === 'failed') { stopPolling(modelId); message.error(progress.error || '模型下载失败'); }
-      } catch { stopPolling(modelId); }
+      } catch {
+        pollErrorCount.current[modelId] = (pollErrorCount.current[modelId] || 0) + 1;
+        if (pollErrorCount.current[modelId] >= 10) { stopPolling(modelId); }
+      }
     }, 1000);
-  }, [stopPolling, loadModels]);
+  }, [stopPolling]);
 
   const handleDownload = useCallback(async (modelId: string) => {
-    try { const progress = await api.models.downloadModel(modelId); setDownloadProgress(prev => ({ ...prev, [modelId]: progress })); startPolling(modelId); }
+    try { const progress = await api.models.downloadModel(modelId); setDownloadProgress(prev => ({ ...prev, [modelId]: progress })); startPolling(modelId, loadModels); }
     catch (err: any) { message.error(err.message || '启动下载失败'); }
-  }, [startPolling]);
+  }, [startPolling, loadModels]);
 
   const handleVadDownload = useCallback(async (modelId: string) => {
     try {
       const progress = await api.models.downloadVadModel(modelId);
       setDownloadProgress(prev => ({ ...prev, [modelId]: progress }));
-      stopPolling(modelId);
-      pollTimers.current[modelId] = setInterval(async () => {
-        try {
-          const p = await api.models.getDownloadProgress(modelId);
-          setDownloadProgress(prev => ({ ...prev, [modelId]: p }));
-          if (p.status === 'completed') {
-            stopPolling(modelId); message.success('VAD 模型下载完成'); loadVadModels();
-            setTimeout(() => { setDownloadProgress(prev => { const n = { ...prev }; delete n[modelId]; return n; }); }, 3000);
-          } else if (p.status === 'failed') { stopPolling(modelId); message.error(p.error || 'VAD 模型下载失败'); }
-        } catch { stopPolling(modelId); }
-      }, 1000);
+      startPolling(modelId, loadVadModels);
     } catch (err: any) { message.error(err.message || 'VAD 模型下载失败'); }
-  }, [stopPolling, loadVadModels]);
+  }, [startPolling, loadVadModels]);
 
   const filteredModels = React.useMemo(() => {
     let list = models;
