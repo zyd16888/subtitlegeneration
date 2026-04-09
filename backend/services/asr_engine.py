@@ -467,24 +467,17 @@ class SherpaOnnxOfflineEngine(ASREngine):
 
 class SherpaOnnxVadOfflineEngine(ASREngine):
     """
-    VAD + 离线 ASR 引擎（参考官方 generate-subtitles.py 优化）。
+    分段 + 离线 ASR 引擎，支持两种分段模式：
 
-    先用 silero_vad 检测语音段获得精确时间戳，再逐段用 OfflineRecognizer 识别。
-    
-    改进点：
-    1. VAD 参数优化（参考官方示例）：
-       - threshold: 0.2（更敏感）
-       - min_silence_duration: 0.25（更短的静音检测）
-       - max_speech_duration: 5.0（避免单段太长）
-    2. 批量处理 VAD 段落（官方示例的优化方式）
-    3. 过滤无意义的识别结果
+    - silero: 使用 silero_vad 神经网络检测语音段，精确但较慢
+    - energy: 使用 RMS 能量检测静音做切分，不做语音判断，极快且不漏检
     """
 
-    # 官方示例的默认 VAD 参数
     DEFAULT_VAD_THRESHOLD = 0.2
     DEFAULT_VAD_MIN_SILENCE_DURATION = 0.25
     DEFAULT_VAD_MIN_SPEECH_DURATION = 0.25
     DEFAULT_VAD_MAX_SPEECH_DURATION = 5.0
+    FRAME_DURATION_MS = 30  # energy 模式帧长
 
     def __init__(
         self,
@@ -492,6 +485,7 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
         model_type: str = "transducer",
         file_map: Optional[Dict[str, str]] = None,
         language: str = "",
+        vad_mode: str = "energy",
         vad_model_path: str = "",
         vad_threshold: float = DEFAULT_VAD_THRESHOLD,
         vad_min_silence_duration: float = DEFAULT_VAD_MIN_SILENCE_DURATION,
@@ -502,13 +496,12 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
     ):
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model path not found: {model_path}")
-        if not vad_model_path or not os.path.exists(vad_model_path):
-            raise FileNotFoundError(f"VAD model not found: {vad_model_path}")
 
         self.model_path = model_path
         self.model_type = model_type
         self.default_language = language
         self.file_map = file_map or self._default_file_map()
+        self.vad_mode = vad_mode
         self.vad_model_path = vad_model_path
         self.vad_threshold = vad_threshold
         self.vad_min_silence_duration = vad_min_silence_duration
@@ -539,7 +532,7 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
 
     def _initialize(self, language: str = None):
         """
-        初始化识别器和 VAD。
+        初始化 OfflineRecognizer，silero 模式下同时初始化 VAD。
 
         Args:
             language: 语言代码，None 时使用 self.default_language
@@ -550,7 +543,6 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
             encoder_path = os.path.join(self.model_path, self.file_map["encoder"])
             decoder_path = os.path.join(self.model_path, self.file_map["decoder"])
 
-            # 创建 OfflineRecognizer
             if self.model_type == "whisper":
                 self.recognizer = sherpa_onnx.OfflineRecognizer.from_whisper(
                     encoder=encoder_path,
@@ -574,28 +566,28 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
                     debug=self.debug,
                 )
 
-            # 创建 VAD（只在首次初始化时创建）
-            if self.vad is None:
+            # silero 模式：初始化 silero_vad
+            if self.vad_mode == "silero" and self.vad is None:
+                if not self.vad_model_path or not os.path.exists(self.vad_model_path):
+                    raise FileNotFoundError(f"VAD model not found: {self.vad_model_path}")
                 vad_config = sherpa_onnx.VadModelConfig()
                 vad_config.silero_vad.model = self.vad_model_path
-                # 使用官方示例推荐的参数
                 vad_config.silero_vad.threshold = self.vad_threshold
                 vad_config.silero_vad.min_silence_duration = self.vad_min_silence_duration
                 vad_config.silero_vad.min_speech_duration = self.vad_min_speech_duration
-                # If the current segment is larger than this value, then it increases
-                # the threshold to 0.9 internally. After detecting this segment,
-                # it resets the threshold to its original value.
                 vad_config.silero_vad.max_speech_duration = self.vad_max_speech_duration
                 vad_config.sample_rate = 16000
                 vad_config.num_threads = self.num_threads
-                
-                # buffer_size_in_seconds=100 参考官方示例
                 self.vad = sherpa_onnx.VoiceActivityDetector(vad_config, buffer_size_in_seconds=100)
 
-            logger.info(f"VadOfflineEngine initialized (VAD + OfflineRecognizer, language={lang or 'auto'})")
-            logger.info(f"  VAD params: threshold={self.vad_threshold}, "
-                       f"min_silence={self.vad_min_silence_duration}s, "
-                       f"max_speech={self.vad_max_speech_duration}s")
+            logger.info(
+                f"VadOfflineEngine initialized (mode={self.vad_mode}, language={lang or 'auto'})"
+            )
+            logger.info(
+                f"  params: min_silence={self.vad_min_silence_duration}s, "
+                f"min_speech={self.vad_min_speech_duration}s, "
+                f"max_speech={self.vad_max_speech_duration}s"
+            )
         except Exception as e:
             logger.error(f"Failed to initialize VadOfflineEngine: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize VadOfflineEngine: {e}")
@@ -633,39 +625,131 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
             None, self._transcribe_sync, audio_path, progress_cb
         )
 
+    @staticmethod
+    def _compute_rms_energy(
+        samples: np.ndarray,
+        sample_rate: int,
+        frame_duration_ms: int = 30,
+    ) -> Tuple[np.ndarray, int]:
+        """按帧计算 RMS 能量 (dB)，单次 numpy 向量化运算。"""
+        frame_size = int(sample_rate * frame_duration_ms / 1000)
+        num_frames = len(samples) // frame_size
+        if num_frames == 0:
+            return np.array([], dtype=np.float32), frame_size
+        frames = samples[:num_frames * frame_size].reshape(num_frames, frame_size)
+        rms = np.sqrt(np.mean(frames ** 2, axis=1))
+        rms_db = 20 * np.log10(np.maximum(rms, 1e-10))
+        return rms_db, frame_size
+
+    @staticmethod
+    def _segment_by_energy(
+        energy_db: np.ndarray,
+        frame_duration_s: float,
+        min_silence_duration: float,
+        min_speech_duration: float,
+        max_speech_duration: float,
+        margin_db: float = 10.0,
+    ) -> List[Tuple[int, int]]:
+        """
+        基于能量的静音分段，不做语音判断。
+
+        自动校准阈值：取能量第 10 百分位作为噪底 + margin 作为阈值。
+        返回 (start_frame, end_frame) 列表。
+        """
+        if len(energy_db) == 0:
+            return []
+
+        # 自动校准阈值
+        noise_floor = np.percentile(energy_db, 10)
+        threshold = noise_floor + margin_db
+
+        is_active = energy_db > threshold
+        min_silence_frames = max(1, int(min_silence_duration / frame_duration_s))
+        min_speech_frames = max(1, int(min_speech_duration / frame_duration_s))
+        max_speech_frames = int(max_speech_duration / frame_duration_s)
+
+        # 找连续活跃区间
+        regions: List[List[int]] = []  # [[start, end], ...]
+        in_region = False
+        start = 0
+        for i in range(len(is_active)):
+            if is_active[i] and not in_region:
+                start = i
+                in_region = True
+            elif not is_active[i] and in_region:
+                regions.append([start, i])
+                in_region = False
+        if in_region:
+            regions.append([start, len(is_active)])
+
+        if not regions:
+            return []
+
+        # 合并间隔过短的相邻区间
+        merged: List[List[int]] = [regions[0]]
+        for r in regions[1:]:
+            gap = r[0] - merged[-1][1]
+            if gap < min_silence_frames:
+                merged[-1][1] = r[1]
+            else:
+                merged.append(r)
+
+        # 过滤过短段
+        merged = [r for r in merged if (r[1] - r[0]) >= min_speech_frames]
+
+        # 拆分过长段（在最安静帧处切分）
+        final: List[Tuple[int, int]] = []
+        for r in merged:
+            if (r[1] - r[0]) <= max_speech_frames:
+                final.append((r[0], r[1]))
+            else:
+                # 递归拆分
+                seg_start = r[0]
+                while seg_start < r[1]:
+                    seg_end = min(seg_start + max_speech_frames, r[1])
+                    if seg_end < r[1] and (seg_end - seg_start) >= max_speech_frames:
+                        # 在后半段找最安静帧作为切分点
+                        search_start = seg_start + max_speech_frames // 2
+                        search_end = min(seg_end, r[1])
+                        if search_start < search_end:
+                            quiet_idx = search_start + int(np.argmin(energy_db[search_start:search_end]))
+                            seg_end = quiet_idx + 1
+                    final.append((seg_start, seg_end))
+                    seg_start = seg_end
+
+        return final
+
     def _transcribe_sync(
         self,
         audio_path: str,
         progress_cb: Optional[ProgressCallback] = None,
     ) -> List[Segment]:
-        """
-        转录音频（参考官方示例优化）。
+        if self.vad_mode == "silero":
+            return self._transcribe_sync_silero(audio_path, progress_cb)
+        return self._transcribe_sync_energy(audio_path, progress_cb)
 
-        改进：
-        1. 批量处理 VAD 段落
-        2. 过滤无意义的识别结果
-        3. 进度上报：VAD 投喂占 0–30%，decode 阶段占 30–100%
-        """
-        # VAD 投喂阶段：0 → 30%
+    # ── silero 模式 ─────────────────────────────────────────────────
+
+    def _transcribe_sync_silero(
+        self,
+        audio_path: str,
+        progress_cb: Optional[ProgressCallback] = None,
+    ) -> List[Segment]:
+        """silero_vad 检测语音段 → 批量 ASR。进度：VAD 0–30%，decode 30–100%。"""
         VAD_SHARE = 0.3
-        logger.info(f"VadOfflineEngine._transcribe_sync started, progress_cb={'enabled' if progress_cb else 'None'}")
+        logger.info("VadOfflineEngine._transcribe_sync started (silero mode)")
         _safe_progress(progress_cb, 0.0)
 
         samples, sample_rate = _read_wave(audio_path)
-
-        # 官方示例：window_size = config.silero_vad.window_size (512 for 16kHz)
         window_size = self.vad.config.silero_vad.window_size
 
-        # 逐窗口喂入 VAD（参考官方示例）
-        buffer = samples
-        total_samples = max(len(buffer), 1)
-        # 每 ~50 步上报一次，避免高频回调
+        total_samples = max(len(samples), 1)
         total_steps = max(total_samples // window_size, 1)
         vad_report_interval = max(1, total_steps // 50)
         step_idx = 0
 
-        for i in range(0, len(buffer), window_size):
-            chunk = buffer[i: i + window_size]
+        for i in range(0, len(samples), window_size):
+            chunk = samples[i: i + window_size]
             if len(chunk) < window_size:
                 break
             self.vad.accept_waveform(chunk)
@@ -673,32 +757,23 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
             if step_idx % vad_report_interval == 0:
                 _safe_progress(progress_cb, min(VAD_SHARE - 0.001, (i / total_samples) * VAD_SHARE))
 
-        # 处理剩余音频
         self.vad.flush()
         _safe_progress(progress_cb, VAD_SHARE)
 
-        # 批量处理 VAD 段落（参考官方示例的优化方式）
-        segments: List[Segment] = []
         streams = []
         vad_segments = []
-
-        # 收集所有 VAD 段落
         while not self.vad.empty():
             start_time = self.vad.front.start / sample_rate
             seg_samples = self.vad.front.samples
             duration = len(seg_samples) / sample_rate
 
-            # 创建 stream 并接受波形
             stream = self.recognizer.create_stream()
             stream.accept_waveform(sample_rate, seg_samples)
             streams.append(stream)
             vad_segments.append((start_time, duration))
-
             self.vad.pop()
 
-        # 批量解码：VAD_SHARE → 1.0 线性推进
         total_streams = max(len(streams), 1)
-        # 节流：每 ~50 段上报一次（短视频段少时退化为每段都报）
         decode_report_interval = max(1, total_streams // 50)
         for idx, s in enumerate(streams):
             self.recognizer.decode_stream(s)
@@ -706,21 +781,73 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
                 progressed = VAD_SHARE + (1.0 - VAD_SHARE) * ((idx + 1) / total_streams)
                 _safe_progress(progress_cb, min(0.99, progressed))
 
-        # 收集结果并过滤
+        segments: List[Segment] = []
         for (start_time, duration), stream in zip(vad_segments, streams):
             text = stream.result.text.strip()
-
-            # 过滤无意义的识别结果（参考官方示例）
             if not text or text in (".", "The.", "。"):
                 continue
+            segments.append(Segment(start=start_time, end=start_time + duration, text=text))
 
-            segments.append(Segment(
-                start=start_time,
-                end=start_time + duration,
-                text=text,
-            ))
+        logger.info(f"silero VAD + ASR complete: {len(segments)} segments")
+        _safe_progress(progress_cb, 1.0)
+        return segments
 
-        logger.info(f"VAD+ASR transcription complete: {len(segments)} segments")
+    # ── energy 模式 ─────────────────────────────────────────────────
+
+    def _transcribe_sync_energy(
+        self,
+        audio_path: str,
+        progress_cb: Optional[ProgressCallback] = None,
+    ) -> List[Segment]:
+        """能量分段 → 批量 ASR。不做语音判断。进度：分段 0–10%，decode 10–100%。"""
+        SEG_SHARE = 0.1
+        logger.info("VadOfflineEngine._transcribe_sync started (energy mode)")
+        _safe_progress(progress_cb, 0.0)
+
+        samples, sample_rate = _read_wave(audio_path)
+        frame_duration_s = self.FRAME_DURATION_MS / 1000.0
+
+        energy_db, frame_size = self._compute_rms_energy(
+            samples, sample_rate, self.FRAME_DURATION_MS
+        )
+        regions = self._segment_by_energy(
+            energy_db, frame_duration_s,
+            self.vad_min_silence_duration,
+            self.vad_min_speech_duration,
+            self.vad_max_speech_duration,
+        )
+        logger.info(f"Energy segmentation: {len(regions)} segments "
+                    f"(threshold auto-calibrated, min_silence={self.vad_min_silence_duration}s)")
+        _safe_progress(progress_cb, SEG_SHARE)
+
+        streams = []
+        seg_times: List[Tuple[float, float]] = []
+        for start_frame, end_frame in regions:
+            start_sample = start_frame * frame_size
+            end_sample = min(end_frame * frame_size, len(samples))
+            seg_samples = samples[start_sample:end_sample]
+
+            stream = self.recognizer.create_stream()
+            stream.accept_waveform(sample_rate, seg_samples)
+            streams.append(stream)
+            seg_times.append((start_sample / sample_rate, end_sample / sample_rate))
+
+        total_streams = max(len(streams), 1)
+        decode_report_interval = max(1, total_streams // 50)
+        for idx, s in enumerate(streams):
+            self.recognizer.decode_stream(s)
+            if (idx + 1) % decode_report_interval == 0 or (idx + 1) == total_streams:
+                progressed = SEG_SHARE + (1.0 - SEG_SHARE) * ((idx + 1) / total_streams)
+                _safe_progress(progress_cb, min(0.99, progressed))
+
+        segments: List[Segment] = []
+        for (start_time, end_time), stream in zip(seg_times, streams):
+            text = stream.result.text.strip()
+            if not text:
+                continue
+            segments.append(Segment(start=start_time, end=end_time, text=text))
+
+        logger.info(f"Energy segmentation + ASR complete: {len(segments)} segments")
         _safe_progress(progress_cb, 1.0)
         return segments
 

@@ -64,8 +64,12 @@ class SystemConfigData(BaseModel):
     # 翻译上下文窗口大小：当前字幕前后各 N 条作为参考（0=禁用，仅 LLM 翻译器生效，推荐 2-5）
     translation_context_size: int = 0
 
+    # 降噪配置
+    enable_denoise: bool = False
+
     # VAD 配置
     enable_vad: bool = False
+    vad_mode: str = "energy"  # "silero" 或 "energy"
     vad_model_id: Optional[str] = None
     vad_threshold: float = 0.5
     vad_min_silence_duration: float = 0.5

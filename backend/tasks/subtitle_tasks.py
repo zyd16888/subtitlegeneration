@@ -15,6 +15,7 @@ from .celery_app import celery_app
 from models.task import TaskStatus
 from services.emby_connector import EmbyConnector
 from services.audio_extractor import AudioExtractor
+from services.audio_denoiser import denoise_audio
 from services.asr_engine import (
     ASREngine,
     SherpaOnnxOnlineEngine,
@@ -148,20 +149,24 @@ def _get_asr_engine(config, source_language: str = None) -> ASREngine:
                 return SherpaOnnxOnlineEngine(str(model_path), model_type=model_type, file_map=file_map)
 
             # 离线模型：检查是否启用 VAD
-            if config.enable_vad and config.vad_model_id:
-                vad_model_path = _resolve_vad_model_path(config)
-                logger.info(f"Creating SherpaOnnxVadOfflineEngine (VAD: {config.vad_model_id})")
-                return SherpaOnnxVadOfflineEngine(
+            if config.enable_vad:
+                vad_mode = getattr(config, 'vad_mode', 'energy')
+                vad_kwargs = dict(
                     model_path=str(model_path),
                     model_type=model_type,
                     file_map=file_map,
                     language=source_lang,
-                    vad_model_path=vad_model_path,
-                    vad_threshold=config.vad_threshold,
+                    vad_mode=vad_mode,
                     vad_min_silence_duration=config.vad_min_silence_duration,
                     vad_min_speech_duration=config.vad_min_speech_duration,
                     vad_max_speech_duration=config.vad_max_speech_duration,
                 )
+                if vad_mode == "silero" and config.vad_model_id:
+                    vad_model_path = _resolve_vad_model_path(config)
+                    vad_kwargs["vad_model_path"] = vad_model_path
+                    vad_kwargs["vad_threshold"] = config.vad_threshold
+                logger.info(f"Creating SherpaOnnxVadOfflineEngine (mode={vad_mode})")
+                return SherpaOnnxVadOfflineEngine(**vad_kwargs)
             else:
                 logger.info("Creating SherpaOnnxOfflineEngine")
                 return SherpaOnnxOfflineEngine(str(model_path), model_type=model_type, file_map=file_map, language=source_lang)
@@ -555,7 +560,17 @@ def generate_subtitle_task(
             logger.info(f"[{task_id}] 启用源语言字幕保留: {source_lang}")
 
         # 进度上报器：把各阶段内部进度映射到全局百分比，带节流、线程安全
-        reporter = TaskProgressReporter(task_id, SessionLocal)
+        if getattr(config, 'enable_denoise', False):
+            reporter = TaskProgressReporter(task_id, SessionLocal, stage_weights={
+                "audio": (0, 15),
+                "denoise": (15, 25),
+                "asr": (25, 60),
+                "translation": (60, 90),
+                "subtitle": (90, 95),
+                "emby": (95, 100),
+            })
+        else:
+            reporter = TaskProgressReporter(task_id, SessionLocal)
 
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
         logger.info(f"开始处理任务 {task_id}: {video_path}")
@@ -592,6 +607,26 @@ def generate_subtitle_task(
         )
         _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})))
         reporter.report("audio", 1.0)
+
+        # 1.5. 音频降噪（可选）
+        if getattr(config, 'enable_denoise', False):
+            _mark_step_start("denoise")
+            reporter.report("denoise", 0.0)
+            logger.info(f"[{task_id}] 步骤 1.5: 音频降噪")
+            try:
+                denoised_path = _run_async(denoise_audio(audio_path))
+                denoised_size = os.path.getsize(denoised_path) if os.path.exists(denoised_path) else 0
+                logger.info(f"[{task_id}] 降噪完成: {denoised_path}")
+                step_logs["denoise"] = _format_step_log(
+                    "denoise",
+                    f"输入: {audio_path}\n输出: {denoised_path}\n降噪后大小: {denoised_size / 1024 / 1024:.1f} MB",
+                )
+                audio_path = denoised_path  # 后续 ASR/VAD 使用降噪后的音频
+            except Exception as e:
+                logger.warning(f"[{task_id}] 降噪失败，使用原始音频继续: {e}", exc_info=True)
+                step_logs["denoise"] = _format_step_log("denoise", f"降噪失败: {e}，使用原始音频")
+            reporter.report("denoise", 1.0)
+            _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})))
 
         # 2. 语音识别
         _mark_step_start("asr")

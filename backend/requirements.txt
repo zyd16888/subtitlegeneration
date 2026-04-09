@@ -13,6 +13,7 @@ alembic==1.13.1
 
 # Audio Processing
 ffmpeg-python==0.2.0
+noisereduce>=3.0.0
 
 # ASR Engine
 numpy>=1.24.0

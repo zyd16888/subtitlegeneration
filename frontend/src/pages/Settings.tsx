@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Form, Input, Select, Button, message, Spin, Space, InputNumber, Switch, Slider, Collapse,
-  Table, Tag, Popconfirm, Typography, Row, Col, Tooltip, Progress, Checkbox
+  Table, Tag, Popconfirm, Typography, Row, Col, Tooltip, Progress, Checkbox, Radio
 } from 'antd';
 import {
   SaveOutlined, TranslationOutlined, DownloadOutlined,
@@ -69,7 +69,9 @@ const Settings: React.FC = () => {
   const [embyLibraries, setEmbyLibraries] = useState<Library[]>([]);
 
   const translationService = Form.useWatch('translation_service', form);
+  const enableDenoise = Form.useWatch('enable_denoise', form);
   const enableVad = Form.useWatch('enable_vad', form);
+  const vadMode = Form.useWatch('vad_mode', form);
   const googleMode = Form.useWatch('google_translate_mode', form);
   const microsoftMode = Form.useWatch('microsoft_translate_mode', form);
   const deeplMode = Form.useWatch('deepl_mode', form);
@@ -256,7 +258,9 @@ const Settings: React.FC = () => {
         target_languages: targetLanguages.length > 0 ? targetLanguages : [primaryTarget],
         keep_source_subtitle: !!form.getFieldValue('keep_source_subtitle'),
         source_language_detection: form.getFieldValue('source_language_detection'),
+        enable_denoise: form.getFieldValue('enable_denoise'),
         enable_vad: form.getFieldValue('enable_vad'),
+        vad_mode: form.getFieldValue('vad_mode'),
         vad_model_id: form.getFieldValue('vad_model_id'),
         vad_threshold: form.getFieldValue('vad_threshold'),
         vad_min_silence_duration: form.getFieldValue('vad_min_silence_duration'),
@@ -708,63 +712,96 @@ const Settings: React.FC = () => {
                 <Row align="middle" gutter={16}>
                   <Col flex="auto">
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
+                      <InfoCircleOutlined style={{ color: 'var(--accent-cyan)' }} />音频降噪 (Denoise)
+                    </div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>启用后使用频谱门控算法降低背景噪声，提升嘈杂场景下的识别准确率（建议配合 VAD 使用）</Text>
+                  </Col>
+                  <Col><Form.Item name="enable_denoise" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
+                </Row>
+              </div>
+              <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
+                <Row align="middle" gutter={16}>
+                  <Col flex="auto">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
                       <InfoCircleOutlined style={{ color: 'var(--accent-amber)' }} />语音活动检测 (VAD)
                     </div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>启用后使用 Silero VAD 检测语音段，获得更精确的字幕时间戳（仅离线模型有效）</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>启用后对音频进行分段处理，获得更精确的字幕时间戳（仅离线模型有效）</Text>
                   </Col>
                   <Col><Form.Item name="enable_vad" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
                 </Row>
                 {enableVad && (
                   <div style={{ marginTop: 12 }}>
-                    <Row gutter={24}>
-                      <Col span={16}>
-                        <Form.Item name="vad_model_id" label="VAD 模型">
-                          <Select placeholder={vadModels.filter(m => m.installed).length ? '选择 VAD 模型' : '请先下载 VAD 模型'} dropdownStyle={{ background: 'var(--bg-elevated)' }} loading={vadModelsLoading} disabled={!vadModels.some(m => m.installed)}>
-                            {vadModels.filter(m => m.installed).map(m => <Option key={m.id} value={m.id}>{m.name} {m.active && <Tag color="success" style={{ marginLeft: 8 }}>激活</Tag>}</Option>)}
-                          </Select>
-                        </Form.Item>
-                      </Col>
-                      <Col span={8}>
-                        <Form.Item label=" "><Button onClick={loadVadModels} loading={vadModelsLoading} icon={<ReloadOutlined />} type="text" size="small">刷新</Button></Form.Item>
-                      </Col>
-                    </Row>
-                    {vadModelsLoading ? (
-                      <div style={{ textAlign: 'center', padding: 16 }}><LoadingOutlined spin style={{ fontSize: 20, color: 'var(--accent-cyan)' }} /><div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 12 }}>加载中...</div></div>
-                    ) : vadModels.length > 0 && (
-                      <div style={{ marginBottom: 12 }}>
-                        {vadModels.map(m => {
-                          const progress = downloadProgress[m.id];
-                          const isDownloading = progress && (progress.status === 'downloading' || progress.status === 'extracting');
-                          return (
-                            <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--glass-border)' }}>
-                              <Space>
-                                <Text style={{ color: 'var(--text-primary)' }}>{m.name}</Text>
-                                <Tag style={{ background: 'var(--bg-tag)', border: 'none', fontSize: 10 }}>{m.size}</Tag>
-                                {m.installed && <Tag color="success" style={{ background: 'var(--accent-emerald-bg)', border: '1px solid var(--accent-emerald)', color: 'var(--accent-emerald)' }}>已安装</Tag>}
-                              </Space>
-                              <Space>
-                                {isDownloading ? (
-                                  <Space size={4}><LoadingOutlined spin style={{ fontSize: 12, color: 'var(--accent-cyan)' }} /><Text style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{progress.progress}%</Text></Space>
-                                ) : m.installed ? (
-                                  <Button type="link" size="small" onClick={() => api.models.activateVadModel(m.id).then(() => { loadVadModels(); loadConfig(); })} style={{ padding: 0, color: 'var(--accent-cyan)' }}>{m.active ? '已激活' : '激活'}</Button>
-                                ) : (
-                                  <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => handleVadDownload(m.id)} style={{ padding: 0, color: 'var(--accent-emerald)' }}>下载</Button>
-                                )}
-                              </Space>
-                            </div>
-                          );
-                        })}
-                      </div>
+                    <Form.Item name="vad_mode" label="分段模式" style={{ marginBottom: 12 }}>
+                      <Radio.Group>
+                        <Radio.Button value="energy">能量分段（推荐）</Radio.Button>
+                        <Radio.Button value="silero">Silero VAD</Radio.Button>
+                      </Radio.Group>
+                    </Form.Item>
+                    <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -8, marginBottom: 12 }}>
+                      {vadMode === 'silero'
+                        ? '• Silero VAD：使用神经网络检测语音段，精确但较慢，可能在嘈杂场景漏检'
+                        : '• 能量分段：按静音位置切分音频，速度极快，不做语音判断不会漏检（建议配合降噪使用）'}
+                    </Text>
+                    {vadMode === 'silero' && (
+                      <>
+                        <Row gutter={24}>
+                          <Col span={16}>
+                            <Form.Item name="vad_model_id" label="VAD 模型">
+                              <Select placeholder={vadModels.filter(m => m.installed).length ? '选择 VAD 模型' : '请先下载 VAD 模型'} dropdownStyle={{ background: 'var(--bg-elevated)' }} loading={vadModelsLoading} disabled={!vadModels.some(m => m.installed)}>
+                                {vadModels.filter(m => m.installed).map(m => <Option key={m.id} value={m.id}>{m.name} {m.active && <Tag color="success" style={{ marginLeft: 8 }}>激活</Tag>}</Option>)}
+                              </Select>
+                            </Form.Item>
+                          </Col>
+                          <Col span={8}>
+                            <Form.Item label=" "><Button onClick={loadVadModels} loading={vadModelsLoading} icon={<ReloadOutlined />} type="text" size="small">刷新</Button></Form.Item>
+                          </Col>
+                        </Row>
+                        {vadModelsLoading ? (
+                          <div style={{ textAlign: 'center', padding: 16 }}><LoadingOutlined spin style={{ fontSize: 20, color: 'var(--accent-cyan)' }} /><div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 12 }}>加载中...</div></div>
+                        ) : vadModels.length > 0 && (
+                          <div style={{ marginBottom: 12 }}>
+                            {vadModels.map(m => {
+                              const progress = downloadProgress[m.id];
+                              const isDownloading = progress && (progress.status === 'downloading' || progress.status === 'extracting');
+                              return (
+                                <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--glass-border)' }}>
+                                  <Space>
+                                    <Text style={{ color: 'var(--text-primary)' }}>{m.name}</Text>
+                                    <Tag style={{ background: 'var(--bg-tag)', border: 'none', fontSize: 10 }}>{m.size}</Tag>
+                                    {m.installed && <Tag color="success" style={{ background: 'var(--accent-emerald-bg)', border: '1px solid var(--accent-emerald)', color: 'var(--accent-emerald)' }}>已安装</Tag>}
+                                  </Space>
+                                  <Space>
+                                    {isDownloading ? (
+                                      <Space size={4}><LoadingOutlined spin style={{ fontSize: 12, color: 'var(--accent-cyan)' }} /><Text style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{progress.progress}%</Text></Space>
+                                    ) : m.installed ? (
+                                      <Button type="link" size="small" onClick={() => api.models.activateVadModel(m.id).then(() => { loadVadModels(); loadConfig(); })} style={{ padding: 0, color: 'var(--accent-cyan)' }}>{m.active ? '已激活' : '激活'}</Button>
+                                    ) : (
+                                      <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => handleVadDownload(m.id)} style={{ padding: 0, color: 'var(--accent-emerald)' }}>下载</Button>
+                                    )}
+                                  </Space>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
                     )}
                     <Collapse ghost size="small" items={[{
                       key: 'vad-advanced',
-                      label: <Text type="secondary" style={{ fontSize: 12 }}>VAD 高级参数</Text>,
+                      label: <Text type="secondary" style={{ fontSize: 12 }}>高级参数</Text>,
                       children: (
                         <>
-                          <Row gutter={24}>
-                            <Col span={12}><Form.Item name="vad_threshold" label="语音检测阈值"><Slider min={0.1} max={0.9} step={0.05} marks={{ 0.2: '0.2', 0.5: '0.5', 0.8: '0.8' }} /></Form.Item></Col>
-                            <Col span={12}><Form.Item name="vad_max_speech_duration" label="最大语音段长度 (秒)"><InputNumber min={1} max={60} step={1} style={{ width: '100%' }} /></Form.Item></Col>
-                          </Row>
+                          {vadMode === 'silero' && (
+                            <Row gutter={24}>
+                              <Col span={12}><Form.Item name="vad_threshold" label="语音检测阈值"><Slider min={0.1} max={0.9} step={0.05} marks={{ 0.2: '0.2', 0.5: '0.5', 0.8: '0.8' }} /></Form.Item></Col>
+                              <Col span={12}><Form.Item name="vad_max_speech_duration" label="最大语音段长度 (秒)"><InputNumber min={1} max={60} step={1} style={{ width: '100%' }} /></Form.Item></Col>
+                            </Row>
+                          )}
+                          {vadMode !== 'silero' && (
+                            <Row gutter={24}>
+                              <Col span={12}><Form.Item name="vad_max_speech_duration" label="最大语音段长度 (秒)"><InputNumber min={1} max={60} step={1} style={{ width: '100%' }} /></Form.Item></Col>
+                            </Row>
+                          )}
                           <Row gutter={24}>
                             <Col span={12}><Form.Item name="vad_min_silence_duration" label="最小静音时长 (秒)"><InputNumber min={0.1} max={5} step={0.1} style={{ width: '100%' }} /></Form.Item></Col>
                             <Col span={12}><Form.Item name="vad_min_speech_duration" label="最小语音时长 (秒)"><InputNumber min={0.05} max={5} step={0.05} style={{ width: '100%' }} /></Form.Item></Col>
