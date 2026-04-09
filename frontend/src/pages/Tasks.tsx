@@ -482,8 +482,36 @@ const Tasks: React.FC = () => {
                   {TRANSLATION_SERVICE_NAMES[selectedTask.translation_service || ''] || selectedTask.translation_service || '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="语言方向">
-                  {LANGUAGE_NAMES[selectedTask.source_language || ''] || selectedTask.source_language || '自动'} → {LANGUAGE_NAMES[selectedTask.target_language || ''] || selectedTask.target_language || '中文'}
+                  {(() => {
+                    const src = LANGUAGE_NAMES[selectedTask.source_language || ''] || selectedTask.source_language || '自动';
+                    const targets = (selectedTask.extra_info?.target_languages as string[] | undefined)
+                      || (selectedTask.target_language ? [selectedTask.target_language] : []);
+                    const targetDisplay = targets.length > 0
+                      ? targets.map(t => LANGUAGE_NAMES[t] || t).join(' / ')
+                      : '中文';
+                    const keepSource = !!selectedTask.extra_info?.keep_source_subtitle;
+                    return (
+                      <Space size={4} wrap>
+                        <span>{src} → {targetDisplay}</span>
+                        {keepSource && <Tag color="cyan" style={{ marginLeft: 4, fontSize: 11 }}>+ 源字幕</Tag>}
+                      </Space>
+                    );
+                  })()}
                 </Descriptions.Item>
+                {Array.isArray(selectedTask.extra_info?.subtitles) && selectedTask.extra_info.subtitles.length > 0 && (
+                  <Descriptions.Item label="已生成字幕" span={2}>
+                    <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                      {(selectedTask.extra_info.subtitles as { lang: string; path: string }[]).map(sub => (
+                        <div key={sub.lang}>
+                          <Tag color="blue">{LANGUAGE_NAMES[sub.lang] || sub.lang}</Tag>
+                          <Text type="secondary" style={{ fontSize: 12 }} copyable={{ text: sub.path }}>
+                            {sub.path}
+                          </Text>
+                        </div>
+                      ))}
+                    </Space>
+                  </Descriptions.Item>
+                )}
               </Descriptions>
             </Card>
 

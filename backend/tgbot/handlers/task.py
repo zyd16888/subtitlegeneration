@@ -98,11 +98,18 @@ async def _create_subtitle_task(
             emby_username=user.emby_username,
         )
 
-        # 记录来源（保留用于兼容性）
-        task.extra_info = {"telegram_user_id": user_telegram_id}
+        # 记录来源 + 多语言信息（保留用于兼容性和重试恢复）
+        effective_target_languages = (
+            list(config.target_languages) if config.target_languages else [config.target_language]
+        )
+        task.extra_info = {
+            "telegram_user_id": user_telegram_id,
+            "target_languages": effective_target_languages,
+            "keep_source_subtitle": bool(config.keep_source_subtitle),
+        }
         db.commit()
 
-        # 提交 Celery 任务
+        # 提交 Celery 任务（TG 任务统一走全局配置）
         generate_subtitle_task.delay(
             task_id=task.id,
             media_item_id=media_item_id,
@@ -110,6 +117,8 @@ async def _create_subtitle_task(
             asr_engine=config.asr_engine,
             translation_service=config.translation_service,
             source_language=config.source_language,
+            target_languages=None,  # 使用全局配置
+            keep_source_subtitle=None,  # 使用全局配置
         )
 
         # 增加配额计数

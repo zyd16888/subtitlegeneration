@@ -11,6 +11,7 @@ import {
   Alert,
   Typography,
   Tooltip,
+  Switch,
 } from 'antd';
 import {
   CheckCircleOutlined,
@@ -65,6 +66,8 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
   const [globalConfig, setGlobalConfig] = useState<SystemConfig | null>(null);
   const [sharedPathMappingIndex, setSharedPathMappingIndex] = useState<number | undefined>(undefined);
   const [sharedSourceLanguage, setSharedSourceLanguage] = useState<string | undefined>(undefined);
+  const [sharedTargetLanguages, setSharedTargetLanguages] = useState<string[]>([]);
+  const [sharedKeepSourceSubtitle, setSharedKeepSourceSubtitle] = useState<boolean | undefined>(undefined);
 
   // 加载剧集集数
   const fetchEpisodes = async () => {
@@ -126,6 +129,8 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
         openai_model: episode?.openai_model,
         path_mapping_index: sharedPathMappingIndex,
         source_language: sharedSourceLanguage,
+        target_languages: sharedTargetLanguages.length > 0 ? sharedTargetLanguages : undefined,
+        keep_source_subtitle: sharedKeepSourceSubtitle,
       };
     });
 
@@ -280,10 +285,18 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
       )}
 
       <div style={{ marginBottom: 16 }}>
-        <Space>
+        <Space wrap>
           <span>当前全局配置：</span>
           <Tag>ASR: {globalConfig?.asr_engine || '未配置'}</Tag>
           <Tag>识别语言: {globalConfig?.source_language || 'ja'}</Tag>
+          <Tag>
+            目标语言: {
+              globalConfig?.target_languages && globalConfig.target_languages.length > 0
+                ? globalConfig.target_languages.join(', ')
+                : (globalConfig?.target_language || 'zh')
+            }
+          </Tag>
+          {globalConfig?.keep_source_subtitle && <Tag color="cyan">保留源字幕</Tag>}
           <Tag>翻译: {globalConfig?.translation_service || '未配置'}</Tag>
           {globalConfig?.openai_model && <Tag>模型: {globalConfig.openai_model}</Tag>}
           <Tag>
@@ -327,6 +340,53 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
             <Option value="es">西班牙语 (es)</Option>
             <Option value="ru">俄语 (ru)</Option>
           </Select>
+        </Space>
+      </div>
+
+      <div style={{ marginBottom: 16, padding: '12px 16px', background: 'var(--info-bg)', borderRadius: 8 }}>
+        <Space size="large" wrap>
+          <div>
+            <Text strong>批量目标语言：</Text>
+            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+              可多选；留空使用全局配置
+            </Text>
+          </div>
+          <Select
+            mode="multiple"
+            style={{ minWidth: 260 }}
+            placeholder={`使用全局配置 (${
+              globalConfig?.target_languages && globalConfig.target_languages.length > 0
+                ? globalConfig.target_languages.join(', ')
+                : (globalConfig?.target_language || 'zh')
+            })`}
+            value={sharedTargetLanguages}
+            onChange={setSharedTargetLanguages}
+            allowClear
+          >
+            <Option value="zh">中文 (zh)</Option>
+            <Option value="ja">日语 (ja)</Option>
+            <Option value="en">英语 (en)</Option>
+            <Option value="ko">韩语 (ko)</Option>
+            <Option value="fr">法语 (fr)</Option>
+            <Option value="de">德语 (de)</Option>
+            <Option value="es">西班牙语 (es)</Option>
+            <Option value="ru">俄语 (ru)</Option>
+          </Select>
+          <div>
+            <Text strong>保留源语言字幕：</Text>
+            <Tooltip title="除目标语言字幕外额外输出一份源语言字幕（ASR 原文）。不设置则跟随全局配置。">
+              <InfoCircleOutlined style={{ marginLeft: 4 }} />
+            </Tooltip>
+          </div>
+          <Switch
+            checked={sharedKeepSourceSubtitle === true}
+            onChange={(checked) => setSharedKeepSourceSubtitle(checked ? true : undefined)}
+          />
+          {sharedKeepSourceSubtitle !== undefined && (
+            <Button size="small" type="link" onClick={() => setSharedKeepSourceSubtitle(undefined)}>
+              跟随全局
+            </Button>
+          )}
         </Space>
       </div>
 

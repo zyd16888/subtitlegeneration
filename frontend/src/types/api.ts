@@ -74,8 +74,9 @@ export interface Task {
   asr_model_id?: string;
   translation_service?: string;
   source_language?: string;
-  target_language?: string;
-  
+  target_language?: string;  // 主目标语言（列表第 0 个，向后兼容）
+  target_languages?: string[];  // 多目标语言列表（从 extra_info 透传）
+
   // 结果信息
   subtitle_path?: string;
   segment_count?: number;  // 识别的字幕段落数
@@ -120,6 +121,8 @@ export interface TaskConfig {
   openai_model?: string;
   path_mapping_index?: number;
   source_language?: string; // 语音识别语言，覆盖全局配置
+  target_languages?: string[]; // 多目标语言，覆盖全局配置
+  keep_source_subtitle?: boolean; // 是否额外保留源语言字幕
 }
 
 /**
@@ -148,7 +151,9 @@ export interface SystemConfig {
 
   // 语言配置
   source_language: string;
-  target_language: string;
+  target_language: string;  // 主目标语言（始终等于 target_languages[0]）
+  target_languages?: string[];  // 多目标语言列表（空时回退 [target_language]）
+  keep_source_subtitle?: boolean;  // 是否额外保留源语言字幕
   source_language_detection?: 'fixed' | 'auto';  // 源语言检测模式
 
   // 翻译服务配置

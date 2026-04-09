@@ -11,6 +11,7 @@ import {
   Alert,
   Typography,
   Tooltip,
+  Switch,
 } from 'antd';
 import {
   CheckCircleOutlined,
@@ -86,6 +87,12 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
         openai_model: values.openai_model,
         path_mapping_index: values.path_mapping_index,
         source_language: values.source_language,
+        target_languages: values.target_languages && values.target_languages.length > 0
+          ? values.target_languages
+          : undefined,
+        keep_source_subtitle: typeof values.keep_source_subtitle === 'boolean'
+          ? values.keep_source_subtitle
+          : undefined,
       };
 
       onGenerateSubtitle(task);
@@ -183,6 +190,14 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
         <Space wrap>
           <Tag>ASR: {globalConfig?.asr_engine || '未配置'}</Tag>
           <Tag>识别语言: {globalConfig?.source_language || 'ja'}</Tag>
+          <Tag>
+            目标语言: {
+              globalConfig?.target_languages && globalConfig.target_languages.length > 0
+                ? globalConfig.target_languages.join(', ')
+                : (globalConfig?.target_language || 'zh')
+            }
+          </Tag>
+          {globalConfig?.keep_source_subtitle && <Tag color="cyan">保留源字幕</Tag>}
           <Tag>翻译: {globalConfig?.translation_service || '未配置'}</Tag>
           {globalConfig?.openai_model && <Tag>模型: {globalConfig.openai_model}</Tag>}
           <Tag>
@@ -236,6 +251,40 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
             <Option value="es">西班牙语 (es)</Option>
             <Option value="ru">俄语 (ru)</Option>
           </Select>
+        </Form.Item>
+
+        <Form.Item
+          label="目标语言（可多选）"
+          name="target_languages"
+          tooltip="同时生成多份字幕，第一个为主目标。留空使用全局配置。"
+        >
+          <Select
+            mode="multiple"
+            placeholder={`使用全局配置 (${
+              globalConfig?.target_languages && globalConfig.target_languages.length > 0
+                ? globalConfig.target_languages.join(', ')
+                : (globalConfig?.target_language || 'zh')
+            })`}
+            allowClear
+          >
+            <Option value="zh">中文 (zh)</Option>
+            <Option value="ja">日语 (ja)</Option>
+            <Option value="en">英语 (en)</Option>
+            <Option value="ko">韩语 (ko)</Option>
+            <Option value="fr">法语 (fr)</Option>
+            <Option value="de">德语 (de)</Option>
+            <Option value="es">西班牙语 (es)</Option>
+            <Option value="ru">俄语 (ru)</Option>
+          </Select>
+        </Form.Item>
+
+        <Form.Item
+          label="保留源语言字幕"
+          name="keep_source_subtitle"
+          valuePropName="checked"
+          tooltip="除目标语言字幕外，额外输出一份源语言字幕（使用 ASR 原文，不翻译）"
+        >
+          <Switch />
         </Form.Item>
 
         <Form.Item

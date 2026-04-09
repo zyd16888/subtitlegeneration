@@ -30,6 +30,8 @@ class TaskConfigRequest(BaseModel):
     openai_model: Optional[str] = None
     path_mapping_index: Optional[int] = None  # 指定路径映射规则索引
     source_language: Optional[str] = None  # 语音识别语言，覆盖全局配置
+    target_languages: Optional[List[str]] = None  # 多目标语言，覆盖全局配置
+    keep_source_subtitle: Optional[bool] = None  # 是否额外保留源语言字幕
 
 
 class CreateTaskRequest(BaseModel):
@@ -73,7 +75,8 @@ class TaskResponse(BaseModel):
     asr_model_id: Optional[str] = None
     translation_service: Optional[str] = None
     source_language: Optional[str] = None
-    target_language: Optional[str] = None
+    target_language: Optional[str] = None  # 主目标语言
+    target_languages: Optional[List[str]] = None  # 多目标语言（从 extra_info 抽取）
     
     # 结果信息
     subtitle_path: Optional[str] = None
@@ -128,6 +131,10 @@ async def get_emby_connector(db: Session = Depends(get_db)) -> AsyncGenerator[Em
 
 def task_to_response(task: Task) -> TaskResponse:
     """将 Task 模型转换为响应模型"""
+    extra = task.extra_info or {}
+    target_languages = extra.get("target_languages")
+    if not target_languages and task.target_language:
+        target_languages = [task.target_language]
     return TaskResponse(
         id=task.id,
         media_item_id=task.media_item_id,
@@ -150,6 +157,7 @@ def task_to_response(task: Task) -> TaskResponse:
         translation_service=task.translation_service,
         source_language=task.source_language,
         target_language=task.target_language,
+        target_languages=target_languages,
         subtitle_path=task.subtitle_path,
         segment_count=task.segment_count,
         audio_duration=task.audio_duration,
@@ -220,7 +228,19 @@ async def create_tasks(
                     source_language=config.source_language,
                     target_language=config.target_language,
                 )
-                
+
+                # 把多语言信息写入 extra_info 便于重试恢复
+                try:
+                    await task_manager.update_task_result(
+                        task.id,
+                        extra_info={
+                            "target_languages": list(config.target_languages or [config.target_language]),
+                            "keep_source_subtitle": bool(config.keep_source_subtitle),
+                        },
+                    )
+                except Exception:
+                    pass
+
                 # 提交 Celery 任务（使用全局配置）
                 generate_subtitle_task.delay(
                     task_id=task.id,
@@ -228,6 +248,8 @@ async def create_tasks(
                     video_path=audio_url,
                     library_id=request.library_id,
                     source_language=None,  # 使用全局配置的语言
+                    target_languages=None,  # 使用全局配置的 target_languages
+                    keep_source_subtitle=None,  # 使用全局配置
                 )
 
                 created_tasks.append(task_to_response(task))
@@ -257,6 +279,20 @@ async def create_tasks(
                 task_translation_service = task_config.translation_service or config.translation_service
                 task_source_language = task_config.source_language or config.source_language
 
+                # 解析任务级别的目标语言和源字幕开关
+                effective_target_languages = (
+                    task_config.target_languages
+                    if task_config.target_languages
+                    else (list(config.target_languages) if config.target_languages else [config.target_language])
+                )
+                effective_keep_source = (
+                    task_config.keep_source_subtitle
+                    if task_config.keep_source_subtitle is not None
+                    else bool(config.keep_source_subtitle)
+                )
+                # task.target_language 列记录主目标（列表第 0 个）
+                task_primary_target = effective_target_languages[0] if effective_target_languages else config.target_language
+
                 # 创建任务
                 task = await task_manager.create_task(
                     media_item_id=task_config.media_item_id,
@@ -266,8 +302,20 @@ async def create_tasks(
                     asr_model_id=config.asr_model_id,
                     translation_service=task_translation_service,
                     source_language=task_source_language,
-                    target_language=config.target_language,
+                    target_language=task_primary_target,
                 )
+
+                # 把多语言信息写入 extra_info 便于重试恢复
+                try:
+                    await task_manager.update_task_result(
+                        task.id,
+                        extra_info={
+                            "target_languages": list(effective_target_languages),
+                            "keep_source_subtitle": effective_keep_source,
+                        },
+                    )
+                except Exception:
+                    pass
 
                 # 提交 Celery 任务（使用自定义配置）
                 generate_subtitle_task.delay(
@@ -280,8 +328,10 @@ async def create_tasks(
                     library_id=request.library_id,
                     path_mapping_index=task_config.path_mapping_index,
                     source_language=task_config.source_language,
+                    target_languages=task_config.target_languages,
+                    keep_source_subtitle=task_config.keep_source_subtitle,
                 )
-                
+
                 created_tasks.append(task_to_response(task))
         
         return created_tasks
@@ -371,6 +421,11 @@ async def get_task(
         if started_at_utc and created_at_utc:
             wait_time = (started_at_utc - created_at_utc).total_seconds()
 
+        detail_extra = task.extra_info or {}
+        detail_target_langs = detail_extra.get("target_languages")
+        if not detail_target_langs and task.target_language:
+            detail_target_langs = [task.target_language]
+
         return TaskDetailResponse(
             id=task.id,
             media_item_id=task.media_item_id,
@@ -393,6 +448,7 @@ async def get_task(
             translation_service=task.translation_service,
             source_language=task.source_language,
             target_language=task.target_language,
+            target_languages=detail_target_langs,
             subtitle_path=task.subtitle_path,
             segment_count=task.segment_count,
             audio_duration=task.audio_duration,
@@ -490,6 +546,25 @@ async def retry_task(
                     detail=f"任务 {task_id} 无法重试（当前状态: {task.status}）"
                 )
         
+        # 从原任务的 extra_info 恢复多语言配置
+        original_task = await task_manager.get_task(task_id)
+        original_extra = (original_task.extra_info or {}) if original_task else {}
+        retry_target_languages = original_extra.get("target_languages")
+        retry_keep_source = original_extra.get("keep_source_subtitle")
+
+        # 把多语言信息写入新任务的 extra_info
+        if retry_target_languages is not None or retry_keep_source is not None:
+            try:
+                await task_manager.update_task_result(
+                    new_task.id,
+                    extra_info={
+                        "target_languages": retry_target_languages,
+                        "keep_source_subtitle": retry_keep_source,
+                    },
+                )
+            except Exception:
+                pass
+
         # 提交 Celery 任务
         generate_subtitle_task.delay(
             task_id=new_task.id,
@@ -498,8 +573,10 @@ async def retry_task(
             asr_engine=new_task.asr_engine,
             translation_service=new_task.translation_service,
             source_language=new_task.source_language,
+            target_languages=retry_target_languages,
+            keep_source_subtitle=retry_keep_source,
         )
-        
+
         return task_to_response(new_task)
         
     except HTTPException:

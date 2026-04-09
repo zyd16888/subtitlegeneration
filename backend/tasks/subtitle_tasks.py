@@ -8,7 +8,7 @@ import logging
 import os
 import shutil
 import threading
-from typing import List, Optional
+from typing import Dict, List, Optional
 from celery import Task
 
 from .celery_app import celery_app
@@ -349,6 +349,87 @@ async def _translate_segments(
     return subtitle_segments
 
 
+def _build_source_segments(segments: List[Segment]) -> List[SubtitleSegment]:
+    """构造"源语言字幕"的 SubtitleSegment 列表。
+
+    直接用 ASR 识别文本，is_translated=False 让 SubtitleGenerator 回落到 original_text。
+    """
+    return [
+        SubtitleSegment(
+            start=s.start,
+            end=s.end,
+            original_text=s.text,
+            translated_text=s.text,
+            is_translated=False,
+        )
+        for s in segments
+    ]
+
+
+def _resolve_target_languages(
+    config,
+    task_override: Optional[List[str]] = None,
+) -> List[str]:
+    """解析本次任务要生成的目标语言列表。
+
+    优先级：任务级 override > config.target_languages > [config.target_language]
+    返回结果去重保持顺序。
+    """
+    candidates: List[str]
+    if task_override:
+        candidates = list(task_override)
+    elif getattr(config, "target_languages", None):
+        candidates = list(config.target_languages)
+    else:
+        candidates = [config.target_language]
+
+    seen = set()
+    result: List[str] = []
+    for code in candidates:
+        if not code:
+            continue
+        code = code.strip()
+        if code and code not in seen:
+            seen.add(code)
+            result.append(code)
+    return result
+
+
+async def _translate_to_multi_targets(
+    segments: List[Segment],
+    translation_service: TranslationService,
+    source_lang: str,
+    translation_source_lang: str,
+    target_langs: List[str],
+    concurrency: Optional[int] = None,
+    context_size: int = 0,
+) -> Dict[str, List[SubtitleSegment]]:
+    """按语言维度串行翻译到多个目标语言，段落维度由 translate_batch 并发。
+
+    对于 source_lang == target_lang 且非 auto 模式的语言，跳过翻译直接返回源文本
+    （与单语言路径行为一致）。返回 dict: {lang_code: subtitle_segments}。
+    """
+    results: Dict[str, List[SubtitleSegment]] = {}
+    for target_lang in target_langs:
+        if source_lang == target_lang and translation_source_lang != "auto":
+            logger.info(
+                f"目标语言 {target_lang} 与源语言相同，跳过翻译直接使用 ASR 原文"
+            )
+            results[target_lang] = _build_source_segments(segments)
+            continue
+
+        logger.info(f"开始翻译到 {target_lang}")
+        results[target_lang] = await _translate_segments(
+            segments,
+            translation_service,
+            source_lang=translation_source_lang,
+            target_lang=target_lang,
+            concurrency=concurrency,
+            context_size=context_size,
+        )
+    return results
+
+
 @celery_app.task(
     bind=True,
     base=SubtitleGenerationTask,
@@ -367,6 +448,8 @@ def generate_subtitle_task(
     library_id: str = None,
     path_mapping_index: int = None,
     source_language: str = None,
+    target_languages: Optional[List[str]] = None,
+    keep_source_subtitle: Optional[bool] = None,
 ):
     """
     字幕生成主任务
@@ -376,6 +459,10 @@ def generate_subtitle_task(
     3. 翻译文本 (90%)
     4. 生成字幕文件 (95%)
     5. 回写 Emby (100%)
+
+    Args:
+        target_languages: 任务级多目标语言覆盖；None 时使用 config.target_languages
+        keep_source_subtitle: 任务级源语言字幕开关；None 时使用 config.keep_source_subtitle
     """
     db = SessionLocal()
     task_manager = TaskManager(db)
@@ -417,8 +504,14 @@ def generate_subtitle_task(
 
         # 语言参数：任务指定 > 全局配置
         source_lang = source_language if source_language else config.source_language
-        target_lang = config.target_language
-        
+        # 多目标语言：任务级 override > config.target_languages > [config.target_language]
+        resolved_target_langs = _resolve_target_languages(config, target_languages)
+        primary_target_lang = resolved_target_langs[0] if resolved_target_langs else config.target_language
+        # 源语言字幕开关：任务级 > 全局
+        keep_source = keep_source_subtitle if keep_source_subtitle is not None else bool(
+            getattr(config, "keep_source_subtitle", False)
+        )
+
         # 根据配置决定是否使用自动检测模式
         # 如果配置为 auto 模式，翻译时传入 "auto" 让翻译服务自动检测
         translation_source_lang = source_lang
@@ -427,15 +520,19 @@ def generate_subtitle_task(
             logger.info(f"[{task_id}] 源语言检测模式: auto（翻译服务将自动检测语言）")
         else:
             logger.info(f"[{task_id}] 源语言检测模式: fixed（使用配置的语言: {source_lang}）")
-        
+
         logger.info(f"[{task_id}] 使用语音识别语言: {source_lang} (任务指定: {source_language}, 全局: {config.source_language})")
-        logger.info(f"[{task_id}] 翻译源语言: {translation_source_lang}, 目标语言: {target_lang}")
+        logger.info(
+            f"[{task_id}] 翻译源语言: {translation_source_lang}, 目标语言: {resolved_target_langs}"
+        )
+        if keep_source:
+            logger.info(f"[{task_id}] 启用源语言字幕保留: {source_lang}")
 
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
         logger.info(f"开始处理任务 {task_id}: {video_path}")
         logger.info(
             f"[{task_id}] 配置: ASR={config.asr_engine}, model_id={config.asr_model_id}, "
-            f"翻译={config.translation_service}, 语言={source_lang}->{target_lang}"
+            f"翻译={config.translation_service}, 语言={source_lang}->{resolved_target_langs}"
         )
 
         # 为每个任务创建独立的工作目录，保留所有中间产物
@@ -504,19 +601,33 @@ def generate_subtitle_task(
         if not segments:
             raise RuntimeError("语音识别未能识别出任何内容，请检查音频是否包含语音或更换 ASR 模型")
 
-        # 3. 翻译文本
+        # 3. 翻译文本（支持多目标语言）
         _mark_step_start("translation")
         logger.info(f"[{task_id}] 步骤 3/5: 翻译文本")
-        if source_lang == target_lang and translation_source_lang != "auto":
-            # 只有在非 auto 模式且源语言等于目标语言时才跳过翻译
-            logger.info(f"[{task_id}] 源语言与目标语言相同 ({source_lang})，跳过翻译")
-            subtitle_segments = [
-                SubtitleSegment(start=s.start, end=s.end, original_text=s.text, translated_text=s.text, is_translated=False)
-                for s in segments
-            ]
+
+        # 判断是否有语言需要真正调用翻译服务
+        # （auto 模式强制走翻译服务；非 auto 模式下，所有目标语言都等于源语言才能完全跳过）
+        all_targets_equal_source = (
+            translation_source_lang != "auto"
+            and all(tl == source_lang for tl in resolved_target_langs)
+        )
+
+        per_lang_segments: Dict[str, List[SubtitleSegment]] = {}
+
+        if all_targets_equal_source:
+            logger.info(
+                f"[{task_id}] 所有目标语言均等于源语言 ({source_lang})，跳过翻译"
+            )
+            source_subs = _build_source_segments(segments)
+            for tl in resolved_target_langs:
+                per_lang_segments[tl] = source_subs
+            translation_skipped = True
+            translation_service_instance = None
         else:
             if translation_source_lang == "auto":
-                logger.info(f"[{task_id}] 使用自动语言检测模式翻译到 {target_lang}")
+                logger.info(
+                    f"[{task_id}] 使用自动语言检测模式翻译到 {resolved_target_langs}"
+                )
             translation_service_instance = _get_translation_service(config)
             translation_concurrency = getattr(config, "translation_concurrency", None)
             translation_context_size = getattr(config, "translation_context_size", 0) or 0
@@ -526,53 +637,104 @@ def generate_subtitle_task(
             )
             if translation_context_size > 0:
                 logger.info(f"[{task_id}] 翻译上下文窗口: 前后各 {translation_context_size} 条")
-            subtitle_segments = _run_async(
-                _translate_segments(
+
+            per_lang_segments = _run_async(
+                _translate_to_multi_targets(
                     segments,
                     translation_service_instance,
-                    translation_source_lang,
-                    target_lang,
+                    source_lang=source_lang,
+                    translation_source_lang=translation_source_lang,
+                    target_langs=resolved_target_langs,
                     concurrency=translation_concurrency,
                     context_size=translation_context_size,
                 )
             )
+            translation_skipped = False
+
+        # 如果开启保留源语言字幕，且源语言不在目标列表中，额外追加一份
+        emit_langs: List[str] = list(resolved_target_langs)
+        if keep_source and source_lang not in per_lang_segments:
+            per_lang_segments[source_lang] = _build_source_segments(segments)
+            emit_langs.append(source_lang)
+            logger.info(f"[{task_id}] 追加源语言字幕: {source_lang}")
+
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
-        if source_lang == target_lang and translation_source_lang != "auto":
+
+        if translation_skipped:
             step_logs["translation"] = _format_step_log(
-                "translation", f"源语言与目标语言相同 ({source_lang})，已跳过翻译"
+                "translation",
+                f"所有目标语言均等于源语言 ({source_lang})，已跳过翻译",
             )
             skipped_steps.append("translation")
         else:
-            translated_count = sum(1 for s in subtitle_segments if s.is_translated)
-            detection_mode = "自动检测" if translation_source_lang == "auto" else f"固定 ({translation_source_lang})"
-            step_logs["translation"] = _format_step_log(
-                "translation",
-                (
-                    f"翻译服务: {config.translation_service}\n"
-                    f"源语言模式: {detection_mode}\n"
-                    f"目标语言: {target_lang}\n"
-                    f"成功翻译: {translated_count}/{len(subtitle_segments)} 段"
-                ),
+            detection_mode = (
+                "自动检测" if translation_source_lang == "auto" else f"固定 ({translation_source_lang})"
             )
-        _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs, "skipped_steps": skipped_steps})))
+            lines = [
+                f"翻译服务: {config.translation_service}",
+                f"源语言模式: {detection_mode}",
+                f"目标语言: {', '.join(resolved_target_langs)}",
+            ]
+            for tl in resolved_target_langs:
+                segs = per_lang_segments.get(tl, [])
+                translated_count = sum(1 for s in segs if s.is_translated)
+                lines.append(f"  - {tl}: 成功翻译 {translated_count}/{len(segs)} 段")
+            step_logs["translation"] = _format_step_log("translation", "\n".join(lines))
+        _run_async(task_manager.update_task_result(
+            task_id,
+            extra_info=_persist_logs_extra({
+                "step_logs": step_logs,
+                "skipped_steps": skipped_steps,
+                "target_languages": list(resolved_target_langs),
+                "keep_source_subtitle": keep_source,
+            }),
+        ))
 
-        # 4. 生成字幕文件
+        # 4. 生成字幕文件（每种语言一份）
         _mark_step_start("subtitle")
         logger.info(f"[{task_id}] 步骤 4/5: 生成字幕文件")
         subtitle_generator = SubtitleGenerator()
-        subtitle_path = subtitle_generator.generate_srt(subtitle_segments, video_path, target_lang, output_dir=task_work_dir)
+
+        # subtitle_paths: 按语言顺序记录 (lang, path)
+        subtitle_paths: Dict[str, str] = {}
+        subtitle_info_lines: List[str] = []
+        for lang_code in emit_langs:
+            segs = per_lang_segments.get(lang_code, [])
+            if not segs:
+                logger.warning(f"[{task_id}] 语言 {lang_code} 无字幕段，跳过生成")
+                continue
+            path = subtitle_generator.generate_srt(
+                segs, video_path, lang_code, output_dir=task_work_dir
+            )
+            subtitle_paths[lang_code] = path
+            size_kb = os.path.getsize(path) / 1024 if os.path.exists(path) else 0
+            logger.info(f"[{task_id}] 字幕文件生成完成: {path}")
+            subtitle_info_lines.append(
+                f"  - {lang_code}: {path} ({size_kb:.1f} KB, {len(segs)} 段)"
+            )
+
+        if not subtitle_paths:
+            raise RuntimeError("未能生成任何字幕文件")
+
+        # 主字幕路径：primary_target_lang 对应那一份；不存在时用 emit_langs 第 0 个
+        subtitle_path = subtitle_paths.get(primary_target_lang) or subtitle_paths[emit_langs[0]]
+
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 95))
-        logger.info(f"[{task_id}] 字幕文件生成完成: {subtitle_path}")
-        srt_size = os.path.getsize(subtitle_path) if os.path.exists(subtitle_path) else 0
         step_logs["subtitle"] = _format_step_log(
             "subtitle",
-            (
-                f"输出: {subtitle_path}\n"
-                f"文件大小: {srt_size / 1024:.1f} KB\n"
-                f"字幕段落: {len(subtitle_segments)} 段"
-            ),
+            "生成字幕文件:\n" + "\n".join(subtitle_info_lines),
         )
-        _run_async(task_manager.update_task_result(task_id, subtitle_path=subtitle_path, extra_info=_persist_logs_extra({"step_logs": step_logs})))
+        _run_async(task_manager.update_task_result(
+            task_id,
+            subtitle_path=subtitle_path,
+            extra_info=_persist_logs_extra({
+                "step_logs": step_logs,
+                "subtitles": [
+                    {"lang": lc, "path": p}
+                    for lc, p in subtitle_paths.items()
+                ],
+            }),
+        ))
 
         # 5. 复制字幕到视频目录 + 刷新 Emby
         _mark_step_start("emby")
@@ -615,18 +777,27 @@ def generate_subtitle_task(
                             f"本地视频文件不存在: {local_video_path}，"
                             f"请检查路径映射配置 (Emby 路径: {emby_video_path})"
                         )
-                    # 生成目标字幕路径：与视频同目录同名
+                    # 每种语言复制一份字幕到视频目录
                     video_basename = os.path.splitext(os.path.basename(local_video_path))[0]
                     video_dir = os.path.dirname(local_video_path)
-                    target_srt = os.path.join(video_dir, f"{video_basename}.{target_lang}.srt")
 
-                    try:
-                        shutil.copy2(subtitle_path, target_srt)
-                        logger.info(f"[{task_id}] 字幕文件已复制: {subtitle_path} → {target_srt}")
-                        emby_log_lines.append(f"字幕已复制到: {target_srt}")
-                    except Exception as e:
-                        logger.error(f"[{task_id}] 复制字幕文件失败: {e}", exc_info=True)
-                        raise RuntimeError(f"复制字幕文件到视频目录失败: {e}")
+                    for lang_code, src_path in subtitle_paths.items():
+                        target_srt = os.path.join(video_dir, f"{video_basename}.{lang_code}.srt")
+                        try:
+                            shutil.copy2(src_path, target_srt)
+                            logger.info(
+                                f"[{task_id}] 字幕文件已复制 [{lang_code}]: "
+                                f"{src_path} → {target_srt}"
+                            )
+                            emby_log_lines.append(f"字幕已复制 [{lang_code}]: {target_srt}")
+                        except Exception as e:
+                            logger.error(
+                                f"[{task_id}] 复制字幕文件失败 [{lang_code}]: {e}",
+                                exc_info=True,
+                            )
+                            raise RuntimeError(
+                                f"复制字幕文件到视频目录失败 [{lang_code}]: {e}"
+                            )
                 else:
                     logger.warning(
                         f"[{task_id}] 路径映射未匹配，Emby 路径: {emby_video_path}，"

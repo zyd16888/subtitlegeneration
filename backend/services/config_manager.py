@@ -6,7 +6,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, HttpUrl, field_validator
+from pydantic import BaseModel, HttpUrl, field_validator, model_validator
 from models.config import SystemConfig
 import json
 
@@ -28,7 +28,13 @@ class SystemConfigData(BaseModel):
 
     # 语言配置
     source_language: str = "ja"
-    target_language: str = "zh"
+    target_language: str = "zh"  # 主目标语言，向后兼容单语言场景
+    # 多目标语言：同时生成多份字幕（空列表 = 回退到 [target_language]）
+    # 顺序即生成顺序，第 0 个视为"主目标"（写回 target_language 字段）
+    target_languages: List[str] = []
+    # 是否额外保留源语言字幕（直接用 ASR 原文，不翻译）
+    # 与 target_languages 独立生效；若 source_language 已在 target_languages 中则不重复生成
+    keep_source_subtitle: bool = False
     # 源语言检测模式：
     # - "fixed": 强制使用 source_language 配置（适合单一语言场景）
     # - "auto": 让翻译服务自动检测源语言（推荐，适合多语言或不确定场景）
@@ -117,6 +123,48 @@ class SystemConfigData(BaseModel):
         if v not in ['fixed', 'auto']:
             raise ValueError('源语言检测模式必须是 fixed 或 auto')
         return v
+
+    @model_validator(mode='after')
+    def sync_target_language_fields(self) -> 'SystemConfigData':
+        """保持 target_language / target_languages 一致：
+        - 如果 target_languages 非空，target_language = target_languages[0]
+        - 如果 target_languages 为空，回填为 [target_language]
+        这样所有调用方读到的都是一致的。
+        """
+        if self.target_languages:
+            self.target_language = self.target_languages[0]
+        elif self.target_language:
+            self.target_languages = [self.target_language]
+        return self
+
+    @field_validator('target_languages', mode='before')
+    @classmethod
+    def validate_target_languages(cls, v: Any) -> List[str]:
+        """target_languages 必须为字符串列表；去重保持顺序"""
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            # 从 DB 读出来可能是 JSON 字符串或单个语言码
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    v = parsed
+                else:
+                    v = [v]
+            except (json.JSONDecodeError, TypeError):
+                v = [v]
+        if not isinstance(v, list):
+            raise ValueError('target_languages 必须为列表')
+        seen = set()
+        result = []
+        for item in v:
+            if not isinstance(item, str):
+                raise ValueError('target_languages 元素必须为字符串')
+            code = item.strip()
+            if code and code not in seen:
+                seen.add(code)
+                result.append(code)
+        return result
     
     @field_validator('translation_service')
     @classmethod

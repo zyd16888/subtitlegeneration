@@ -76,8 +76,15 @@ const Settings: React.FC = () => {
 
   const loadConfig = async () => {
     setLoading(true);
-    try { const config = await api.config.getConfig(); form.setFieldsValue(config); setIsDirty(false); }
-    catch (err: any) { message.error(err.message || '加载配置失败'); }
+    try {
+      const config = await api.config.getConfig();
+      // 兼容老数据：target_languages 为空时回填为 [target_language]
+      if (!config.target_languages || config.target_languages.length === 0) {
+        config.target_languages = config.target_language ? [config.target_language] : [];
+      }
+      form.setFieldsValue(config);
+      setIsDirty(false);
+    } catch (err: any) { message.error(err.message || '加载配置失败'); }
     finally { setLoading(false); }
   };
 
@@ -238,11 +245,16 @@ const Settings: React.FC = () => {
 
   const handleSaveEngine = async () => {
     try {
+      // 多目标语言：form 里存的是数组。如果用户清空了，回退到 [source_language or 'zh']
+      const targetLanguages: string[] = form.getFieldValue('target_languages') || [];
+      const primaryTarget = targetLanguages[0] || form.getFieldValue('target_language') || 'zh';
       const values: any = {
         asr_engine: form.getFieldValue('asr_engine'),
         asr_model_id: form.getFieldValue('asr_model_id'),
         source_language: form.getFieldValue('source_language'),
-        target_language: form.getFieldValue('target_language'),
+        target_language: primaryTarget,
+        target_languages: targetLanguages.length > 0 ? targetLanguages : [primaryTarget],
+        keep_source_subtitle: !!form.getFieldValue('keep_source_subtitle'),
         source_language_detection: form.getFieldValue('source_language_detection'),
         enable_vad: form.getFieldValue('enable_vad'),
         vad_model_id: form.getFieldValue('vad_model_id'),
@@ -618,11 +630,47 @@ const Settings: React.FC = () => {
                   </Form.Item>
                 </Col>
                 <Col span={12}>
-                  <Form.Item name="target_language" label="目标语言（字幕语言）">
-                    <Select placeholder="选择目标语言" dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                  <Form.Item
+                    name="target_languages"
+                    label={
+                      <Space>
+                        目标语言（字幕语言）
+                        <Tooltip title="可多选：同时生成多份字幕。第一个语言为主目标（默认展示），所有语言都会复制到视频目录。">
+                          <InfoCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                    }
+                  >
+                    <Select
+                      mode="multiple"
+                      placeholder="选择目标语言（可多选）"
+                      dropdownStyle={{ background: 'var(--bg-elevated)' }}
+                      allowClear
+                    >
                       {languages.map(lang => <Option key={lang.code} value={lang.code}>{lang.name} ({lang.code})</Option>)}
                     </Select>
                   </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={24} style={{ marginTop: 8 }}>
+                <Col span={24}>
+                  <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
+                    <Row align="middle" gutter={16}>
+                      <Col flex="auto">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
+                          <InfoCircleOutlined style={{ color: 'var(--accent-cyan)' }} />保留源语言字幕
+                        </div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          除目标语言字幕外，额外输出一份未经翻译的源语言字幕文件（使用 ASR 原文）。
+                        </Text>
+                      </Col>
+                      <Col>
+                        <Form.Item name="keep_source_subtitle" valuePropName="checked" style={{ margin: 0 }}>
+                          <Switch />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </div>
                 </Col>
               </Row>
               <Row gutter={24} style={{ marginTop: 16 }}>
