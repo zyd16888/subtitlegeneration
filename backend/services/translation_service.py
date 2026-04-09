@@ -18,7 +18,7 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ class TranslationService(ABC):
         concurrency: Optional[int] = None,
         all_texts: Optional[List[str]] = None,
         context_size: int = 0,
+        progress_cb: Optional[Callable[[int, int], None]] = None,
     ) -> List[Tuple[str, bool]]:
         """
         并发批量翻译，结果顺序与输入一一对应。
@@ -49,6 +50,7 @@ class TranslationService(ABC):
         Args:
             all_texts: 完整字幕文本列表，用于上下文窗口（仅 LLM 翻译器使用）。
             context_size: 上下文窗口大小，前后各 N 条（0=禁用）。
+            progress_cb: 可选进度回调 (done, total)。每条翻译完成后调用。
 
         Returns:
             List of (translated_text, success) tuples. success=False 表示翻译失败已回退原文。
@@ -67,16 +69,38 @@ class TranslationService(ABC):
         effective = max(1, effective)
         sem = asyncio.Semaphore(effective)
 
+        # 进度计数器
+        total = len(texts)
+        done_count = 0
+        done_lock = asyncio.Lock()
+
         async def _one(idx: int, text: str) -> Tuple[str, bool]:
+            nonlocal done_count
             # 空文本直接返回，不算失败也不算成功翻译
             if not text or not text.strip():
+                async with done_lock:
+                    done_count += 1
+                    if progress_cb:
+                        try:
+                            progress_cb(done_count, total)
+                        except Exception:
+                            pass
                 return (text, False)
             async with sem:
                 if use_context:
-                    return await self._translate_with_retry_context(
+                    result = await self._translate_with_retry_context(
                         all_texts, idx, source_lang, target_lang, context_size
                     )
-                return await self._translate_with_retry(text, source_lang, target_lang)
+                else:
+                    result = await self._translate_with_retry(text, source_lang, target_lang)
+            async with done_lock:
+                done_count += 1
+                if progress_cb:
+                    try:
+                        progress_cb(done_count, total)
+                    except Exception:
+                        pass
+            return result
 
         return await asyncio.gather(*[_one(i, t) for i, t in enumerate(texts)])
 
@@ -564,11 +588,13 @@ class BaiduTranslator(TranslationService):
         concurrency: Optional[int] = None,
         all_texts: Optional[List[str]] = None,
         context_size: int = 0,
+        progress_cb: Optional[Callable[[int, int], None]] = None,
     ) -> List[Tuple[str, bool]]:
         """百度强制 concurrency=1，忽略上层传入的更大值。"""
         return await super().translate_batch(
             texts, source_lang, target_lang, concurrency=1,
             all_texts=all_texts, context_size=context_size,
+            progress_cb=progress_cb,
         )
 
     async def _do_translate(self, text: str, source_lang: str, target_lang: str) -> str:

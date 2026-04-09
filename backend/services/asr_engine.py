@@ -15,10 +15,23 @@ import os
 import wave
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import sherpa_onnx
+
+# 进度回调签名：fraction ∈ [0, 1]，表示当前 ASR 阶段内部完成度
+ProgressCallback = Callable[[float], None]
+
+
+def _safe_progress(cb: Optional[ProgressCallback], fraction: float) -> None:
+    """调用进度回调，吞掉所有异常——上报失败永远不该影响主流程。"""
+    if cb is None:
+        return
+    try:
+        cb(fraction)
+    except Exception as e:
+        logger.warning(f"Progress callback failed: {e}")
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +82,15 @@ class ASREngine(ABC):
         self,
         audio_path: str,
         language: str = "ja",
+        progress_cb: Optional[ProgressCallback] = None,
     ) -> List[Segment]:
+        """
+        转录音频。
+
+        Args:
+            progress_cb: 可选进度回调，参数 fraction ∈ [0, 1]。
+                         可能从工作线程被调用，实现需自行保证线程安全。
+        """
         pass
 
 
@@ -170,22 +191,39 @@ class SherpaOnnxOnlineEngine(ASREngine):
             logger.error(f"Failed to initialize OnlineRecognizer: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize OnlineRecognizer: {e}")
 
-    async def transcribe(self, audio_path: str, language: str = None) -> List[Segment]:
+    async def transcribe(
+        self,
+        audio_path: str,
+        language: str = None,
+        progress_cb: Optional[ProgressCallback] = None,
+    ) -> List[Segment]:
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
         if self.recognizer is None:
             raise RuntimeError("Recognizer not initialized")
 
         # Online 流式模型是单语言固定的，language 参数不影响识别行为
-        return await asyncio.get_running_loop().run_in_executor(None, self._transcribe_sync, audio_path)
+        return await asyncio.get_running_loop().run_in_executor(
+            None, self._transcribe_sync, audio_path, progress_cb
+        )
 
-    def _transcribe_sync(self, audio_path: str) -> List[Segment]:
+    def _transcribe_sync(
+        self,
+        audio_path: str,
+        progress_cb: Optional[ProgressCallback] = None,
+    ) -> List[Segment]:
         samples, sample_rate = _read_wave(audio_path)
         stream = self.recognizer.create_stream()
 
         chunk_size = int(0.1 * sample_rate)
         segments: List[Segment] = []
         current_time = 0.0
+
+        total = max(len(samples), 1)
+        _safe_progress(progress_cb, 0.0)
+        # 节流：每 ~50 个 chunk（约 5s 音频）回调一次，避免高频调用
+        report_interval = max(1, (total // chunk_size) // 50 or 1)
+        chunk_idx = 0
 
         for i in range(0, len(samples), chunk_size):
             chunk = samples[i : i + chunk_size]
@@ -202,6 +240,9 @@ class SherpaOnnxOnlineEngine(ASREngine):
                 stream = self.recognizer.create_stream()
 
             current_time += len(chunk) / sample_rate
+            chunk_idx += 1
+            if chunk_idx % report_interval == 0:
+                _safe_progress(progress_cb, min(0.99, (i + chunk_size) / total))
 
         text = self.recognizer.get_result(stream).strip()
         if text:
@@ -212,6 +253,7 @@ class SherpaOnnxOnlineEngine(ASREngine):
                     text=text,
                 )
             )
+        _safe_progress(progress_cb, 1.0)
         return segments
 
 
@@ -327,7 +369,12 @@ class SherpaOnnxOfflineEngine(ASREngine):
             logger.error(f"Failed to initialize OfflineRecognizer ({self.model_type}): {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize OfflineRecognizer ({self.model_type}): {e}")
 
-    async def transcribe(self, audio_path: str, language: str = None) -> List[Segment]:
+    async def transcribe(
+        self,
+        audio_path: str,
+        language: str = None,
+        progress_cb: Optional[ProgressCallback] = None,
+    ) -> List[Segment]:
         """
         转录音频。
 
@@ -336,6 +383,7 @@ class SherpaOnnxOfflineEngine(ASREngine):
             language: 可选，指定语言代码（如 "ja", "zh", "en"）。
                      如果为 None 或空，使用初始化时的默认语言。
                      Whisper 模型支持运行时指定语言。
+            progress_cb: 进度回调（颗粒度有限，仅在开始/结束上报）。
         """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -354,7 +402,12 @@ class SherpaOnnxOfflineEngine(ASREngine):
                         self._initialize_recognizer(effective_lang)
                         self.default_language = effective_lang
 
-        return await asyncio.get_running_loop().run_in_executor(None, self._transcribe_sync, audio_path)
+        _safe_progress(progress_cb, 0.0)
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, self._transcribe_sync, audio_path
+        )
+        _safe_progress(progress_cb, 1.0)
+        return result
 
     def _transcribe_sync(self, audio_path: str) -> List[Segment]:
         samples, sample_rate = _read_wave(audio_path)
@@ -546,7 +599,12 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
             logger.error(f"Failed to initialize VadOfflineEngine: {e}", exc_info=True)
             raise RuntimeError(f"Failed to initialize VadOfflineEngine: {e}")
 
-    async def transcribe(self, audio_path: str, language: str = None) -> List[Segment]:
+    async def transcribe(
+        self,
+        audio_path: str,
+        language: str = None,
+        progress_cb: Optional[ProgressCallback] = None,
+    ) -> List[Segment]:
         """
         转录音频。
 
@@ -554,6 +612,7 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
             audio_path: 音频文件路径
             language: 可选，指定语言代码（如 "ja", "zh", "en"）。
                      Whisper 模型支持运行时指定语言，其他模型忽略此参数。
+            progress_cb: 进度回调，0..1。VAD 投喂占前 30%，decode 占后 70%。
         """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -569,31 +628,52 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
                         self._initialize(effective_lang)
                         self.default_language = effective_lang
 
-        return await asyncio.get_running_loop().run_in_executor(None, self._transcribe_sync, audio_path)
+        return await asyncio.get_running_loop().run_in_executor(
+            None, self._transcribe_sync, audio_path, progress_cb
+        )
 
-    def _transcribe_sync(self, audio_path: str) -> List[Segment]:
+    def _transcribe_sync(
+        self,
+        audio_path: str,
+        progress_cb: Optional[ProgressCallback] = None,
+    ) -> List[Segment]:
         """
         转录音频（参考官方示例优化）。
-        
+
         改进：
         1. 批量处理 VAD 段落
         2. 过滤无意义的识别结果
+        3. 进度上报：VAD 投喂占 0–30%，decode 阶段占 30–100%
         """
+        # VAD 投喂阶段：0 → 30%
+        VAD_SHARE = 0.3
+        _safe_progress(progress_cb, 0.0)
+
         samples, sample_rate = _read_wave(audio_path)
-        
+
         # 官方示例：window_size = config.silero_vad.window_size (512 for 16kHz)
         window_size = self.vad.config.silero_vad.window_size
 
         # 逐窗口喂入 VAD（参考官方示例）
         buffer = samples
+        total_samples = max(len(buffer), 1)
+        # 每 ~50 步上报一次，避免高频回调
+        total_steps = max(total_samples // window_size, 1)
+        vad_report_interval = max(1, total_steps // 50)
+        step_idx = 0
+
         for i in range(0, len(buffer), window_size):
             chunk = buffer[i: i + window_size]
             if len(chunk) < window_size:
                 break
             self.vad.accept_waveform(chunk)
+            step_idx += 1
+            if step_idx % vad_report_interval == 0:
+                _safe_progress(progress_cb, min(VAD_SHARE - 0.001, (i / total_samples) * VAD_SHARE))
 
         # 处理剩余音频
         self.vad.flush()
+        _safe_progress(progress_cb, VAD_SHARE)
 
         # 批量处理 VAD 段落（参考官方示例的优化方式）
         segments: List[Segment] = []
@@ -614,18 +694,24 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
 
             self.vad.pop()
 
-        # 批量解码
-        for s in streams:
+        # 批量解码：VAD_SHARE → 1.0 线性推进
+        total_streams = max(len(streams), 1)
+        # 节流：每 ~50 段上报一次（短视频段少时退化为每段都报）
+        decode_report_interval = max(1, total_streams // 50)
+        for idx, s in enumerate(streams):
             self.recognizer.decode_stream(s)
+            if (idx + 1) % decode_report_interval == 0 or (idx + 1) == total_streams:
+                progressed = VAD_SHARE + (1.0 - VAD_SHARE) * ((idx + 1) / total_streams)
+                _safe_progress(progress_cb, min(0.99, progressed))
 
         # 收集结果并过滤
         for (start_time, duration), stream in zip(vad_segments, streams):
             text = stream.result.text.strip()
-            
+
             # 过滤无意义的识别结果（参考官方示例）
             if not text or text in (".", "The.", "。"):
                 continue
-                
+
             segments.append(Segment(
                 start=start_time,
                 end=start_time + duration,
@@ -633,6 +719,7 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
             ))
 
         logger.info(f"VAD+ASR transcription complete: {len(segments)} segments")
+        _safe_progress(progress_cb, 1.0)
         return segments
 
 
@@ -650,17 +737,24 @@ class CloudASREngine(ASREngine):
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
 
-    async def transcribe(self, audio_path: str, language: str = None) -> List[Segment]:
+    async def transcribe(
+        self,
+        audio_path: str,
+        language: str = None,
+        progress_cb: Optional[ProgressCallback] = None,
+    ) -> List[Segment]:
         """
         转录音频。
 
         Args:
             audio_path: 音频文件路径
             language: 语言代码（如 "ja", "zh", "en"），传给云端 API
+            progress_cb: 进度回调，云端 API 是单次请求只在开始/结束上报。
         """
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        _safe_progress(progress_cb, 0.0)
         effective_lang = language if language else "ja"
         try:
             import httpx
@@ -701,6 +795,7 @@ class CloudASREngine(ASREngine):
                 )
             else:
                 raise RuntimeError("Invalid response format from cloud ASR API")
+            _safe_progress(progress_cb, 1.0)
             return segments
 
         except Exception as e:

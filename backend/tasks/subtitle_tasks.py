@@ -8,7 +8,7 @@ import logging
 import os
 import shutil
 import threading
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from celery import Task
 
 from .celery_app import celery_app
@@ -38,6 +38,7 @@ from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
 from services.model_manager import ModelManager
 from services.task_log_capture import TaskLogCapture
+from services.progress_reporter import TaskProgressReporter
 from config.settings import settings
 from models.base import SessionLocal
 
@@ -312,6 +313,7 @@ async def _translate_segments(
     target_lang: str = "zh",
     concurrency: Optional[int] = None,
     context_size: int = 0,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> List[SubtitleSegment]:
     """
     并发翻译 ASR 识别的文本片段。
@@ -321,6 +323,7 @@ async def _translate_segments(
 
     Args:
         context_size: 上下文窗口大小，前后各 N 条（0=禁用，仅 LLM 翻译器生效）。
+        progress_cb: 翻译进度回调 (done, total)。
     """
     if not segments:
         return []
@@ -333,6 +336,7 @@ async def _translate_segments(
         concurrency=concurrency,
         all_texts=texts if context_size > 0 else None,
         context_size=context_size,
+        progress_cb=progress_cb,
     )
 
     subtitle_segments: List[SubtitleSegment] = []
@@ -403,12 +407,32 @@ async def _translate_to_multi_targets(
     target_langs: List[str],
     concurrency: Optional[int] = None,
     context_size: int = 0,
+    progress_cb: Optional[Callable[[float], None]] = None,
 ) -> Dict[str, List[SubtitleSegment]]:
     """按语言维度串行翻译到多个目标语言，段落维度由 translate_batch 并发。
 
     对于 source_lang == target_lang 且非 auto 模式的语言，跳过翻译直接返回源文本
     （与单语言路径行为一致）。返回 dict: {lang_code: subtitle_segments}。
+
+    Args:
+        progress_cb: 翻译阶段整体进度回调 fraction ∈ [0, 1]。
     """
+    # 计算需要实际翻译的语言数量来分配进度
+    translate_langs = [
+        tl for tl in target_langs
+        if not (source_lang == tl and translation_source_lang != "auto")
+    ]
+    total_segs = len(segments) * len(translate_langs) if translate_langs else 0
+    completed_segs = 0
+
+    def _per_lang_cb(done: int, total: int) -> None:
+        """每条翻译完成时更新整体进度。"""
+        nonlocal completed_segs
+        if progress_cb and total_segs > 0:
+            # done 是当前语言的完成数；用 completed_segs 累计之前语言的总数
+            fraction = min(0.99, (completed_segs + done) / total_segs)
+            progress_cb(fraction)
+
     results: Dict[str, List[SubtitleSegment]] = {}
     for target_lang in target_langs:
         if source_lang == target_lang and translation_source_lang != "auto":
@@ -426,7 +450,9 @@ async def _translate_to_multi_targets(
             target_lang=target_lang,
             concurrency=concurrency,
             context_size=context_size,
+            progress_cb=_per_lang_cb,
         )
+        completed_segs += len(segments)
     return results
 
 
@@ -528,6 +554,9 @@ def generate_subtitle_task(
         if keep_source:
             logger.info(f"[{task_id}] 启用源语言字幕保留: {source_lang}")
 
+        # 进度上报器：把各阶段内部进度映射到全局百分比，带节流、线程安全
+        reporter = TaskProgressReporter(task_id, SessionLocal)
+
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
         logger.info(f"开始处理任务 {task_id}: {video_path}")
         logger.info(
@@ -546,6 +575,7 @@ def generate_subtitle_task(
 
         # 1. 提取音频
         _mark_step_start("audio")
+        reporter.report("audio", 0.0)
         logger.info(f"[{task_id}] 步骤 1/5: 提取音频")
         logger.info(f"[{task_id}] 视频路径: {video_path}")
         audio_extractor = AudioExtractor(task_work_dir)
@@ -561,10 +591,11 @@ def generate_subtitle_task(
             f"输入: {video_path}\n输出: {audio_path}\n音频大小: {audio_size / 1024 / 1024:.1f} MB",
         )
         _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})))
-        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 20))
+        reporter.report("audio", 1.0)
 
         # 2. 语音识别
         _mark_step_start("asr")
+        reporter.report("asr", 0.0)
         logger.info(f"[{task_id}] 步骤 2/5: 语音识别")
         logger.info(f"[{task_id}] 创建 ASR 引擎...")
         try:
@@ -573,13 +604,17 @@ def generate_subtitle_task(
         except Exception as e:
             logger.error(f"[{task_id}] ASR 引擎创建失败: {e}", exc_info=True)
             raise
-        
+
         logger.info(f"[{task_id}] 开始转录音频: {audio_path}")
         # Whisper 模型支持 transcribe 时指定语言，其他模型忽略
         segments = _run_async(
-            asr_engine_instance.transcribe(audio_path, language=source_lang)
+            asr_engine_instance.transcribe(
+                audio_path,
+                language=source_lang,
+                progress_cb=reporter.for_stage("asr"),
+            )
         )
-        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 60))
+        reporter.report("asr", 1.0)
         logger.info(f"[{task_id}] 语音识别完成，识别到 {len(segments)} 个片段")
         step_logs["asr"] = _format_step_log(
             "asr",
@@ -603,6 +638,7 @@ def generate_subtitle_task(
 
         # 3. 翻译文本（支持多目标语言）
         _mark_step_start("translation")
+        reporter.report("translation", 0.0)
         logger.info(f"[{task_id}] 步骤 3/5: 翻译文本")
 
         # 判断是否有语言需要真正调用翻译服务
@@ -647,6 +683,7 @@ def generate_subtitle_task(
                     target_langs=resolved_target_langs,
                     concurrency=translation_concurrency,
                     context_size=translation_context_size,
+                    progress_cb=reporter.for_stage("translation"),
                 )
             )
             translation_skipped = False
@@ -658,7 +695,7 @@ def generate_subtitle_task(
             emit_langs.append(source_lang)
             logger.info(f"[{task_id}] 追加源语言字幕: {source_lang}")
 
-        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
+        reporter.report("translation", 1.0)
 
         if translation_skipped:
             step_logs["translation"] = _format_step_log(
@@ -692,6 +729,7 @@ def generate_subtitle_task(
 
         # 4. 生成字幕文件（每种语言一份）
         _mark_step_start("subtitle")
+        reporter.report("subtitle", 0.0)
         logger.info(f"[{task_id}] 步骤 4/5: 生成字幕文件")
         subtitle_generator = SubtitleGenerator()
 
@@ -719,7 +757,7 @@ def generate_subtitle_task(
         # 主字幕路径：primary_target_lang 对应那一份；不存在时用 emit_langs 第 0 个
         subtitle_path = subtitle_paths.get(primary_target_lang) or subtitle_paths[emit_langs[0]]
 
-        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 95))
+        reporter.report("subtitle", 1.0)
         step_logs["subtitle"] = _format_step_log(
             "subtitle",
             "生成字幕文件:\n" + "\n".join(subtitle_info_lines),
@@ -738,6 +776,7 @@ def generate_subtitle_task(
 
         # 5. 复制字幕到视频目录 + 刷新 Emby
         _mark_step_start("emby")
+        reporter.report("emby", 0.0)
         logger.info(f"[{task_id}] 步骤 5/6: 复制字幕到视频目录")
         emby_log_lines = []
         emby_copy_skipped = False
@@ -836,6 +875,7 @@ def generate_subtitle_task(
             skipped_steps.append("emby")
         _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs, "skipped_steps": skipped_steps})))
 
+        reporter.report("emby", 1.0)
         _run_async(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
         # 任务完成后再写一次，捕获完成日志
         _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
