@@ -76,6 +76,10 @@ class SystemConfigData(BaseModel):
     vad_min_speech_duration: float = 0.25
     vad_max_speech_duration: float = 20.0
 
+    # 语气词过滤配置
+    filter_filler_words: bool = True          # 过滤纯语气词段落（あ、え、うん 等），减少无意义翻译
+    custom_filler_words: List[str] = []       # 用户自定义语气词（与内置列表合并生效）
+
     # 路径映射配置（Emby 路径前缀 → 本地路径前缀）
     # 格式: [{"name": "映射名称", "emby_prefix": "/me/matched", "local_prefix": "/mnt/drive/matched", "library_ids": []}]
     path_mappings: list = []
@@ -170,6 +174,34 @@ class SystemConfigData(BaseModel):
                 result.append(code)
         return result
     
+    @field_validator('custom_filler_words', mode='before')
+    @classmethod
+    def validate_custom_filler_words(cls, v: Any) -> List[str]:
+        """custom_filler_words: JSON 字符串或列表 → 去重字符串列表"""
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    v = parsed
+                else:
+                    v = [v]
+            except (json.JSONDecodeError, TypeError):
+                v = [v]
+        if not isinstance(v, list):
+            raise ValueError('custom_filler_words 必须为列表')
+        seen = set()
+        result = []
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            word = item.strip()
+            if word and word not in seen:
+                seen.add(word)
+                result.append(word)
+        return result
+
     @field_validator('translation_service')
     @classmethod
     def validate_translation_service(cls, v: str) -> str:

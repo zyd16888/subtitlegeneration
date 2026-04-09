@@ -549,6 +549,13 @@ async def stop_telegram_bot(db: Session = Depends(get_db)):
     )
 
 
+@router.get("/config/filler-words/defaults")
+async def get_default_filler_words():
+    """返回内置默认语气词列表，供前端展示参考。"""
+    from services.segment_filter import DEFAULT_FILLER_WORDS
+    return DEFAULT_FILLER_WORDS
+
+
 @router.get("/config/temp-disk-usage", response_model=dict)
 async def get_temp_disk_usage(db: Session = Depends(get_db)):
     """

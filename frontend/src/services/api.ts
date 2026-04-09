@@ -297,6 +297,14 @@ class ApiClient {
     },
 
     /**
+     * 获取内置默认语气词列表
+     */
+    getDefaultFillerWords: async (): Promise<Record<string, string[]>> => {
+      const response = await this.client.get<Record<string, string[]>>('/api/config/filler-words/defaults');
+      return response.data;
+    },
+
+    /**
      * 手动清理临时文件
      */
     cleanupTemp: async (): Promise<CleanupResult> => {

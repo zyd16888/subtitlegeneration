@@ -671,6 +671,32 @@ def generate_subtitle_task(
         if not segments:
             raise RuntimeError("语音识别未能识别出任何内容，请检查音频是否包含语音或更换 ASR 模型")
 
+        # 2.5. 语气词过滤
+        from services.segment_filter import filter_filler_segments
+
+        filter_enabled = getattr(config, 'filter_filler_words', True)
+        custom_fillers = getattr(config, 'custom_filler_words', []) or []
+        original_count = len(segments)
+        segments, filtered_count = filter_filler_segments(
+            segments, source_lang=source_lang,
+            custom_fillers=custom_fillers, enabled=filter_enabled,
+        )
+        if filtered_count > 0:
+            logger.info(
+                f"[{task_id}] 已过滤 {filtered_count} 个语气词段落 "
+                f"({original_count} → {len(segments)})"
+            )
+            step_logs["asr"] += f"\n语气词过滤: {filtered_count} 段被移除 ({original_count} → {len(segments)})"
+            _run_async(task_manager.update_task_result(
+                task_id, segment_count=len(segments),
+                extra_info=_persist_logs_extra({"step_logs": step_logs}),
+            ))
+        elif filter_enabled:
+            logger.info(f"[{task_id}] 语气词过滤已启用，未发现需过滤段落")
+
+        if not segments:
+            raise RuntimeError("语音识别内容全部为语气词，过滤后无有效字幕段落")
+
         # 3. 翻译文本（支持多目标语言）
         _mark_step_start("translation")
         reporter.report("translation", 0.0)

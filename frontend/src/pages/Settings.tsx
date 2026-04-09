@@ -9,7 +9,7 @@ import {
   InfoCircleOutlined, ReloadOutlined, SyncOutlined,
   LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined,
   PlusOutlined, DeleteOutlined, SwapOutlined,
-  AimOutlined, ClearOutlined, SendOutlined, ThunderboltOutlined,
+  AimOutlined, ClearOutlined, SendOutlined, ThunderboltOutlined, FilterOutlined,
 } from '@ant-design/icons';
 import { api } from '../services/api';
 import type { ASRModel, ModelDownloadProgress, LanguageInfo, Library } from '../types/api';
@@ -67,6 +67,7 @@ const Settings: React.FC = () => {
   const [vadModelsLoading, setVadModelsLoading] = useState(false);
   const [languages, setLanguages] = useState<LanguageInfo[]>([]);
   const [embyLibraries, setEmbyLibraries] = useState<Library[]>([]);
+  const [defaultFillerWords, setDefaultFillerWords] = useState<Record<string, string[]>>({});
 
   const translationService = Form.useWatch('translation_service', form);
   const enableDenoise = Form.useWatch('enable_denoise', form);
@@ -75,6 +76,7 @@ const Settings: React.FC = () => {
   const googleMode = Form.useWatch('google_translate_mode', form);
   const microsoftMode = Form.useWatch('microsoft_translate_mode', form);
   const deeplMode = Form.useWatch('deepl_mode', form);
+  const filterFillerWords = Form.useWatch('filter_filler_words', form);
 
   const loadConfig = async () => {
     setLoading(true);
@@ -190,7 +192,10 @@ const Settings: React.FC = () => {
     const s = new Set<string>(); models.forEach(m => m.languages.forEach(l => s.add(l))); return Array.from(s).sort();
   }, [models]);
 
-  useEffect(() => { loadConfig(); loadModels(); loadVadModels(); loadLanguages(); loadEmbyLibraries(); loadDiskUsage(); loadBotStatus(); loadWorkerStatus(); }, []);
+  useEffect(() => {
+    loadConfig(); loadModels(); loadVadModels(); loadLanguages(); loadEmbyLibraries(); loadDiskUsage(); loadBotStatus(); loadWorkerStatus();
+    api.config.getDefaultFillerWords().then(setDefaultFillerWords).catch(() => {});
+  }, []);
 
   // Worker 状态轮询（每 5 秒）
   useEffect(() => {
@@ -271,6 +276,8 @@ const Settings: React.FC = () => {
         cloud_asr_api_key: form.getFieldValue('cloud_asr_api_key'),
         model_storage_dir: form.getFieldValue('model_storage_dir'),
         github_token: form.getFieldValue('github_token'),
+        filter_filler_words: !!form.getFieldValue('filter_filler_words'),
+        custom_filler_words: form.getFieldValue('custom_filler_words') || [],
       };
       setSavingEngine(true); await api.config.partialUpdateConfig(values); message.success('引擎配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
@@ -708,6 +715,51 @@ const Settings: React.FC = () => {
                 </Col>
               </Row>
               <Text type="secondary" style={{ fontSize: 12 }}>源语言与目标语言相同时将跳过翻译步骤，仅生成转录字幕</Text>
+              <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
+                <Row align="middle" gutter={16}>
+                  <Col flex="auto">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
+                      <FilterOutlined style={{ color: 'var(--accent-amber)' }} />语气词过滤
+                    </div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>移除纯语气词段落（あ、え、うん 等），减少无意义翻译，节省 token 开销</Text>
+                  </Col>
+                  <Col><Form.Item name="filter_filler_words" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
+                </Row>
+                {filterFillerWords && (
+                  <div style={{ marginTop: 12 }}>
+                    <Form.Item
+                      name="custom_filler_words"
+                      label={
+                        <Space>
+                          自定义语气词
+                          <Tooltip title="输入后按回车添加。此处添加的词会与内置词表合并生效。">
+                            <InfoCircleOutlined />
+                          </Tooltip>
+                        </Space>
+                      }
+                      style={{ marginBottom: 8 }}
+                    >
+                      <Select
+                        mode="tags"
+                        placeholder="输入语气词后按回车添加（可选）"
+                        tokenSeparators={[',', '，', ' ']}
+                        dropdownStyle={{ display: 'none' }}
+                        style={{ width: '100%' }}
+                      />
+                    </Form.Item>
+                    {defaultFillerWords['ja'] && (
+                      <div style={{ marginTop: 4 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>已内置 {defaultFillerWords['ja'].length} 个日语语气词：</Text>
+                        <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {defaultFillerWords['ja'].map(w => (
+                            <Tag key={w} style={{ background: 'var(--bg-tag)', border: 'none', fontSize: 11, margin: 0 }}>{w}</Tag>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
                 <Row align="middle" gutter={16}>
                   <Col flex="auto">

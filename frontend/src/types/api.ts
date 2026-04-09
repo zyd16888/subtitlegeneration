@@ -188,6 +188,10 @@ export interface SystemConfig {
   vad_min_speech_duration?: number;
   vad_max_speech_duration?: number;
 
+  // 语气词过滤
+  filter_filler_words?: boolean;
+  custom_filler_words?: string[];
+
   // 路径映射配置
   path_mappings: PathMapping[];
 
