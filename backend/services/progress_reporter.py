@@ -142,6 +142,7 @@ class TaskProgressReporter:
                     .values(progress=pct)
                 )
                 session.commit()
+                logger.debug(f"[{self.task_id}] 进度已更新: {stage}={pct}%")
             finally:
                 session.close()
         except Exception as e:

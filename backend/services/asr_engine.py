@@ -20,6 +20,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 import sherpa_onnx
 
+logger = logging.getLogger(__name__)
+
 # 进度回调签名：fraction ∈ [0, 1]，表示当前 ASR 阶段内部完成度
 ProgressCallback = Callable[[float], None]
 
@@ -32,8 +34,6 @@ def _safe_progress(cb: Optional[ProgressCallback], fraction: float) -> None:
         cb(fraction)
     except Exception as e:
         logger.warning(f"Progress callback failed: {e}")
-
-logger = logging.getLogger(__name__)
 
 
 def _read_wave(audio_path: str) -> Tuple[np.ndarray, int]:
@@ -212,6 +212,7 @@ class SherpaOnnxOnlineEngine(ASREngine):
         audio_path: str,
         progress_cb: Optional[ProgressCallback] = None,
     ) -> List[Segment]:
+        logger.info(f"OnlineEngine._transcribe_sync started, progress_cb={'enabled' if progress_cb else 'None'}")
         samples, sample_rate = _read_wave(audio_path)
         stream = self.recognizer.create_stream()
 
@@ -647,6 +648,7 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
         """
         # VAD 投喂阶段：0 → 30%
         VAD_SHARE = 0.3
+        logger.info(f"VadOfflineEngine._transcribe_sync started, progress_cb={'enabled' if progress_cb else 'None'}")
         _safe_progress(progress_cb, 0.0)
 
         samples, sample_rate = _read_wave(audio_path)
