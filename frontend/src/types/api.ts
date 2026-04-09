@@ -172,6 +172,9 @@ export interface SystemConfig {
   // 翻译并发数（留空使用各 provider 默认值；百度强制串行无视此值）
   translation_concurrency?: number | null;
 
+  // 翻译上下文窗口：当前字幕前后各 N 条作为参考（0=禁用，仅 LLM 翻译器生效）
+  translation_context_size?: number;
+
   // VAD 配置
   enable_vad?: boolean;
   vad_model_id?: string;

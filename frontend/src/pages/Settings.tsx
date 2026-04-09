@@ -228,6 +228,9 @@ const Settings: React.FC = () => {
       // 翻译并发数：undefined 表示用户清空 → 提交 null 让后端回退默认
       const concurrency = form.getFieldValue('translation_concurrency');
       values.translation_concurrency = (concurrency === undefined || concurrency === '') ? null : concurrency;
+      // 翻译上下文窗口
+      const contextSize = form.getFieldValue('translation_context_size');
+      values.translation_context_size = (contextSize === undefined || contextSize === '' || contextSize === null) ? 0 : contextSize;
       setSavingTranslation(true); await api.config.partialUpdateConfig(values); message.success('翻译配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
     finally { setSavingTranslation(false); }
@@ -540,6 +543,26 @@ const Settings: React.FC = () => {
                     min={1}
                     max={32}
                     placeholder="留空 = 使用默认值"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="translation_context_size"
+                  label={
+                    <Space>
+                      上下文窗口
+                      <Tooltip title="翻译时提供当前字幕前后各 N 条作为上下文参考，提高翻译连贯性。仅对 LLM 翻译器（OpenAI/DeepSeek/本地LLM）有效，传统 API 翻译器会忽略此设置。0 = 禁用。推荐值: 2-5。">
+                        <InfoCircleOutlined />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={0}
+                    max={10}
+                    placeholder="0 = 禁用"
                     style={{ width: '100%' }}
                   />
                 </Form.Item>

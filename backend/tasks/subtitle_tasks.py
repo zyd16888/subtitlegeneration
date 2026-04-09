@@ -311,12 +311,16 @@ async def _translate_segments(
     source_lang: str = "ja",
     target_lang: str = "zh",
     concurrency: Optional[int] = None,
+    context_size: int = 0,
 ) -> List[SubtitleSegment]:
     """
     并发翻译 ASR 识别的文本片段。
 
     使用 translate_batch 并发执行，asyncio.gather 保证返回结果与输入索引一一对应，
     SRT 时间轴顺序不会乱。失败的段落 success=False，translated_text 等于 original_text。
+
+    Args:
+        context_size: 上下文窗口大小，前后各 N 条（0=禁用，仅 LLM 翻译器生效）。
     """
     if not segments:
         return []
@@ -327,6 +331,8 @@ async def _translate_segments(
         source_lang=source_lang,
         target_lang=target_lang,
         concurrency=concurrency,
+        all_texts=texts if context_size > 0 else None,
+        context_size=context_size,
     )
 
     subtitle_segments: List[SubtitleSegment] = []
@@ -513,10 +519,13 @@ def generate_subtitle_task(
                 logger.info(f"[{task_id}] 使用自动语言检测模式翻译到 {target_lang}")
             translation_service_instance = _get_translation_service(config)
             translation_concurrency = getattr(config, "translation_concurrency", None)
+            translation_context_size = getattr(config, "translation_context_size", 0) or 0
             logger.info(
                 f"[{task_id}] 翻译并发数: "
                 f"{translation_concurrency if translation_concurrency else f'默认 ({translation_service_instance.default_concurrency})'}"
             )
+            if translation_context_size > 0:
+                logger.info(f"[{task_id}] 翻译上下文窗口: 前后各 {translation_context_size} 条")
             subtitle_segments = _run_async(
                 _translate_segments(
                     segments,
@@ -524,6 +533,7 @@ def generate_subtitle_task(
                     translation_source_lang,
                     target_lang,
                     concurrency=translation_concurrency,
+                    context_size=translation_context_size,
                 )
             )
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 90))
