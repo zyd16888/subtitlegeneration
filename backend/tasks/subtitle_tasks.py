@@ -676,6 +676,14 @@ def generate_subtitle_task(
         else:
             reporter = TaskProgressReporter(task_id, SessionLocal)
 
+        # 持久化阶段配置到 extra_info，供前端动态渲染处理流程
+        _run_async(task_manager.update_task_result(
+            task_id,
+            extra_info={
+                "stage_weights": {k: list(v) for k, v in reporter._stages.items()},
+            },
+        ))
+
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
         logger.info(f"开始处理任务 {task_id}: {video_path}")
         logger.info(
@@ -835,12 +843,19 @@ def generate_subtitle_task(
                 f"({original_count} → {len(segments)})"
             )
             step_logs["asr"] += f"\n语气词过滤: {filtered_count} 段被移除 ({original_count} → {len(segments)})"
+            step_logs["filler_filter"] = _format_step_log(
+                "filler_filter",
+                f"过滤 {filtered_count} 个语气词段落 ({original_count} → {len(segments)})",
+            )
             _run_async(task_manager.update_task_result(
                 task_id, segment_count=len(segments),
                 extra_info=_persist_logs_extra({"step_logs": step_logs}),
             ))
         elif filter_enabled:
             logger.info(f"[{task_id}] 语气词过滤已启用，未发现需过滤段落")
+            step_logs["filler_filter"] = _format_step_log(
+                "filler_filter", "未发现需过滤段落"
+            )
 
         if not segments:
             raise RuntimeError("语音识别内容全部为语气词，过滤后无有效字幕段落")

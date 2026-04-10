@@ -39,6 +39,8 @@ import {
   PlayCircleOutlined,
   MinusCircleOutlined,
   ProfileOutlined,
+  ThunderboltOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { api } from '../services/api';
@@ -155,16 +157,36 @@ const Tasks: React.FC = () => {
     fetchTaskDetail(taskId);
   };
 
+  const STAGE_META: Record<string, { name: string; icon: React.ReactNode }> = {
+    audio:       { name: '音频提取',   icon: <SoundOutlined /> },
+    denoise:     { name: '音频降噪',   icon: <ThunderboltOutlined /> },
+    lid:         { name: '语言检测',   icon: <GlobalOutlined /> },
+    asr:         { name: '语音识别',   icon: <PlayCircleOutlined /> },
+    translation: { name: '翻译文本',   icon: <FileTextOutlined /> },
+    subtitle:    { name: '字幕生成',   icon: <FileTextOutlined /> },
+    emby:        { name: 'Emby 回写',  icon: <CheckCircleFilled /> },
+  };
+
+  const DEFAULT_STAGES = [
+    { key: 'audio',       range: [0, 20] },
+    { key: 'asr',         range: [20, 60] },
+    { key: 'translation', range: [60, 90] },
+    { key: 'subtitle',    range: [90, 95] },
+    { key: 'emby',        range: [95, 100] },
+  ];
+
   const getTaskStages = (task: Task | TaskDetail) => {
-    const stages = [
-      { name: '音频提取', range: [0, 20], key: 'audio', icon: <SoundOutlined /> },
-      { name: '语音识别', range: [20, 60], key: 'asr', icon: <PlayCircleOutlined /> },
-      { name: '翻译文本', range: [60, 90], key: 'translation', icon: <FileTextOutlined /> },
-      { name: '字幕生成', range: [90, 95], key: 'subtitle', icon: <FileTextOutlined /> },
-      { name: 'Emby 回写', range: [95, 100], key: 'emby', icon: <CheckCircleFilled /> },
-    ];
+    const detail = task as TaskDetail;
+    const stageWeights = detail.extra_info?.stage_weights as Record<string, number[]> | undefined;
+
+    const stages = stageWeights
+      ? Object.entries(stageWeights)
+          .map(([key, range]) => ({ key, range }))
+          .sort((a, b) => a.range[0] - b.range[0])
+      : DEFAULT_STAGES;
 
     return stages.map((stage) => {
+      const meta = STAGE_META[stage.key] || { name: stage.key, icon: <PlayCircleOutlined /> };
       let status: 'wait' | 'process' | 'finish' | 'error' = 'wait';
       if (task.status === 'failed' || task.status === 'cancelled') {
         if (task.progress >= stage.range[1]) {
@@ -179,10 +201,12 @@ const Tasks: React.FC = () => {
       } else if (task.progress >= stage.range[0]) {
         status = 'process';
       }
-      return { 
-        ...stage, 
-        status, 
-        progress: Math.min(100, Math.max(0, ((task.progress - stage.range[0]) / (stage.range[1] - stage.range[0])) * 100)) 
+      return {
+        ...stage,
+        name: meta.name,
+        icon: meta.icon,
+        status,
+        progress: Math.min(100, Math.max(0, ((task.progress - stage.range[0]) / (stage.range[1] - stage.range[0])) * 100))
       };
     });
   };
@@ -523,8 +547,22 @@ const Tasks: React.FC = () => {
                 current={getTaskStages(selectedTask).findIndex(s => s.status === 'process')}
                 items={getTaskStages(selectedTask).map(stage => {
                   const stepLog = selectedTask.extra_info?.step_logs?.[stage.key] as string | undefined;
+                  const fillerLog = stage.key === 'asr'
+                    ? selectedTask.extra_info?.step_logs?.filler_filter as string | undefined
+                    : undefined;
                   const skippedSteps = (selectedTask.extra_info?.skipped_steps ?? []) as string[];
                   const isSkipped = skippedSteps.includes(stage.key);
+
+                  const fillerTag = fillerLog ? (
+                    <Tag
+                      icon={<FilterOutlined />}
+                      color="processing"
+                      style={{ marginTop: 6, fontSize: 11 }}
+                    >
+                      {fillerLog}
+                    </Tag>
+                  ) : null;
+
                   let description: React.ReactNode = null;
                   if (stage.status === 'process') {
                     // 处理中：显示进度条，如果有日志也显示
@@ -536,14 +574,20 @@ const Tasks: React.FC = () => {
                             {stepLog}
                           </Text>
                         )}
+                        {fillerTag}
                       </>
                     );
-                  } else if (stepLog) {
+                  } else if (stepLog || fillerTag) {
                     // 完成、失败、跳过：只要有日志就显示
                     description = (
-                      <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'pre-line' }}>
-                        {stepLog}
-                      </Text>
+                      <>
+                        {stepLog && (
+                          <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'pre-line' }}>
+                            {stepLog}
+                          </Text>
+                        )}
+                        {fillerTag}
+                      </>
                     );
                   }
 
