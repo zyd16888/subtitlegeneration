@@ -987,8 +987,8 @@ const Settings: React.FC = () => {
                   </Form.Item>
                 </Col>
                 <Col span={5}>
-                  <Form.Item name="lid_num_segments" label="采样段数" tooltip="从有声区域中均匀选取多少段分别检测，投票决定最终语言。建议 3-5 段">
-                    <InputNumber min={1} max={7} step={1} style={{ width: '100%' }} disabled={!enableLangDetection} />
+                  <Form.Item name="lid_num_segments" label="采样段数" tooltip="从有声区域中均匀选取多少段分别检测，投票决定最终语言。段数越多越准确但耗时更长，建议 5-10 段">
+                    <InputNumber min={1} max={15} step={1} style={{ width: '100%' }} disabled={!enableLangDetection} />
                   </Form.Item>
                 </Col>
               </Row>
