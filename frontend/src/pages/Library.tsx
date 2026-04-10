@@ -21,7 +21,7 @@ import {
   FilterOutlined,
   AppstoreOutlined,
 } from '@ant-design/icons';
-import { api, getImageUrl } from '../services/api';
+import { api, getImageUrl, isRequestCancelled } from '../services/api';
 import type { Library, MediaItem, TaskConfig } from '../types/api';
 import SeriesEpisodesModal from '../components/SeriesEpisodesModal';
 import MediaConfigModal from '../components/MediaConfigModal';
@@ -132,6 +132,7 @@ const LibraryPage: React.FC = () => {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined);
   const [searchText, setSearchText] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_error, setError] = useState<string | null>(null);
   const [embyConfigured, setEmbyConfigured] = useState(true);
@@ -180,19 +181,22 @@ const LibraryPage: React.FC = () => {
 
     setLoading(true);
     try {
+      const signal = api.createAbortSignal('media-items');
       const response = await api.media.getMediaItems({
         library_id: selectedLibrary,
         item_type: selectedType,
         search: searchText || undefined,
         limit: pageSize,
         offset: (currentPage - 1) * pageSize,
-      });
+      }, signal);
       setMediaItems(response.items);
       setTotal(response.total);
     } catch (err: any) {
+      if (isRequestCancelled(err)) return;
       setError(err.message || '获取媒体项失败');
     } finally {
       setLoading(false);
+      setInitialLoading(false);
     }
   };
 
@@ -203,6 +207,9 @@ const LibraryPage: React.FC = () => {
 
   useEffect(() => {
     fetchMediaItems();
+    return () => {
+      api.cancelRequest('media-items');
+    };
   }, [selectedLibrary, selectedType, searchText, currentPage, pageSize]);
 
   const handleItemClick = (item: MediaItem) => {
@@ -300,14 +307,14 @@ const LibraryPage: React.FC = () => {
         </Row>
       </div>
 
-      {loading ? (
+      {initialLoading ? (
         <div style={{ textAlign: 'center', padding: '100px' }}><Spin size="large" tip="正在同步媒体库..." /></div>
       ) : !selectedLibrary ? (
         <Empty description="请从上方选择一个媒体库开始浏览" style={{ marginTop: 100 }} />
-      ) : mediaItems.length === 0 ? (
+      ) : mediaItems.length === 0 && !loading ? (
         <Empty description="该媒体库中没有找到符合条件的媒体项" style={{ marginTop: 100 }} />
       ) : (
-        <>
+        <Spin spinning={loading} tip="加载中...">
           <Row gutter={[20, 20]}>
             {mediaItems.map((item) => (
               <Col key={item.id} xs={12} sm={8} md={6} lg={4} xl={3}>
@@ -345,7 +352,7 @@ const LibraryPage: React.FC = () => {
               pageSizeOptions={['12', '24', '48', '96']}
             />
           </div>
-        </>
+        </Spin>
       )}
 
       {selectedSeries && (

@@ -20,7 +20,7 @@ import {
   GlobalOutlined,
   InfoCircleOutlined,
 } from '@ant-design/icons';
-import { api, getImageUrl } from '../services/api';
+import { api, getImageUrl, isRequestCancelled } from '../services/api';
 import type { MediaItem, TaskConfig, SystemConfig } from '../types/api';
 
 const { Text } = Typography;
@@ -73,9 +73,11 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
   const fetchEpisodes = async () => {
     setLoading(true);
     try {
-      const data = await api.media.getSeriesEpisodes(seriesId);
+      const signal = api.createAbortSignal('series-episodes');
+      const data = await api.media.getSeriesEpisodes(seriesId, signal);
       setEpisodes(data.map(ep => ({ ...ep })));
     } catch (err: any) {
+      if (isRequestCancelled(err)) return;
       message.error('获取剧集集数失败');
     } finally {
       setLoading(false);
@@ -98,6 +100,9 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
       fetchGlobalConfig();
       setSelectedRowKeys([]);
     }
+    return () => {
+      api.cancelRequest('series-episodes');
+    };
   }, [visible, seriesId]);
 
   // 更新单集配置

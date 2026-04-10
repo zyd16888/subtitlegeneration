@@ -68,6 +68,31 @@ export function getImageUrl(url?: string): string | undefined {
  */
 class ApiClient {
   private client: AxiosInstance;
+  private abortControllers = new Map<string, AbortController>();
+
+  /**
+   * Create an AbortSignal for a keyed request, cancelling any in-flight request with the same key
+   */
+  createAbortSignal(key: string): AbortSignal {
+    const existing = this.abortControllers.get(key);
+    if (existing) {
+      existing.abort();
+    }
+    const controller = new AbortController();
+    this.abortControllers.set(key, controller);
+    return controller.signal;
+  }
+
+  /**
+   * Cancel an in-flight request by key
+   */
+  cancelRequest(key: string): void {
+    const controller = this.abortControllers.get(key);
+    if (controller) {
+      controller.abort();
+      this.abortControllers.delete(key);
+    }
+  }
 
   constructor(baseURL: string = '') {
     this.client = axios.create({
@@ -94,6 +119,10 @@ class ApiClient {
     this.client.interceptors.response.use(
       (response: any) => response,
       (error: AxiosError) => {
+        // Silently propagate cancelled requests
+        if (axios.isCancel(error)) {
+          return Promise.reject(error);
+        }
         // 401 未授权时跳转到登录页
         if (error.response?.status === 401) {
           localStorage.removeItem('token');
@@ -151,10 +180,10 @@ class ApiClient {
       search?: string;
       limit?: number;
       offset?: number;
-    }): Promise<PaginatedMediaResponse> => {
+    }, signal?: AbortSignal): Promise<PaginatedMediaResponse> => {
       const response = await this.client.get<PaginatedMediaResponse>(
         '/api/media',
-        { params }
+        { params, signal }
       );
       return response.data;
     },
@@ -162,9 +191,10 @@ class ApiClient {
     /**
      * 获取剧集下的所有集
      */
-    getSeriesEpisodes: async (seriesId: string): Promise<MediaItem[]> => {
+    getSeriesEpisodes: async (seriesId: string, signal?: AbortSignal): Promise<MediaItem[]> => {
       const response = await this.client.get<MediaItem[]>(
-        `/api/series/${seriesId}/episodes`
+        `/api/series/${seriesId}/episodes`,
+        { signal }
       );
       return response.data;
     },
@@ -191,10 +221,10 @@ class ApiClient {
       status?: TaskStatus;
       limit?: number;
       offset?: number;
-    }): Promise<PaginatedTaskResponse> => {
+    }, signal?: AbortSignal): Promise<PaginatedTaskResponse> => {
       const response = await this.client.get<PaginatedTaskResponse>(
         '/api/tasks',
-        { params }
+        { params, signal }
       );
       return response.data;
     },
@@ -471,6 +501,9 @@ class ApiClient {
 
 // 导出单例实例
 export const api = new ApiClient();
+
+// 判断错误是否为请求取消
+export const isRequestCancelled = axios.isCancel;
 
 // 导出类型供外部使用
 export type { ApiClient };

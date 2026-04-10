@@ -43,7 +43,7 @@ import {
   GlobalOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { api } from '../services/api';
+import { api, isRequestCancelled } from '../services/api';
 import type { Task, TaskDetail, TaskStatus } from '../types/api';
 import { LANGUAGE_NAMES, TRANSLATION_SERVICE_NAMES, ASR_ENGINE_NAMES } from '../types/api';
 
@@ -52,7 +52,8 @@ const { Text, Title, Paragraph } = Typography;
 
 const Tasks: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<TaskStatus | undefined>(undefined);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -61,20 +62,25 @@ const Tasks: React.FC = () => {
   const [selectedTask, setSelectedTask] = useState<TaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  const fetchTasks = async () => {
-    setLoading(true);
+  const fetchTasks = async (options?: { showTableLoading?: boolean; isManualRefresh?: boolean }) => {
+    const { showTableLoading = false, isManualRefresh = false } = options || {};
+    if (showTableLoading) setInitialLoading(true);
+    if (isManualRefresh) setRefreshing(true);
     try {
+      const signal = api.createAbortSignal('tasks-list');
       const response = await api.tasks.getTasks({
         status: selectedStatus,
         limit: pageSize,
         offset: (currentPage - 1) * pageSize,
-      });
+      }, signal);
       setTasks(response.items);
       setTotal(response.total);
     } catch (err: any) {
+      if (isRequestCancelled(err)) return;
       message.error(err.message || '获取任务列表失败');
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -91,9 +97,12 @@ const Tasks: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchTasks();
-    const interval = setInterval(fetchTasks, 5000);
-    return () => clearInterval(interval);
+    fetchTasks({ showTableLoading: true });
+    const interval = setInterval(() => fetchTasks(), 5000);
+    return () => {
+      clearInterval(interval);
+      api.cancelRequest('tasks-list');
+    };
   }, [selectedStatus, currentPage, pageSize]);
 
   const handleStatusChange = (value: TaskStatus | undefined) => {
@@ -342,7 +351,7 @@ const Tasks: React.FC = () => {
                 <Option value="cancelled">已取消</Option>
               </Select>
             </div>
-            <Button icon={<ReloadOutlined />} onClick={fetchTasks}>刷新列表</Button>
+            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchTasks({ isManualRefresh: true })}>刷新列表</Button>
           </Space>
         </div>
       </div>
@@ -352,7 +361,7 @@ const Tasks: React.FC = () => {
           columns={columns}
           dataSource={tasks}
           rowKey="id"
-          loading={loading}
+          loading={initialLoading}
           pagination={false}
           className="custom-table"
           expandable={{
