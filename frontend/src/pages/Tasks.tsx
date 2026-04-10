@@ -233,11 +233,46 @@ const Tasks: React.FC = () => {
   };
 
   const formatDuration = (seconds?: number) => {
-    if (!seconds) return '-';
+    if (seconds === undefined || seconds === null || Number.isNaN(seconds)) return '-';
     if (seconds < 60) return `${seconds.toFixed(1)} 秒`;
     const mins = Math.floor(seconds / 60);
     const secs = (seconds % 60).toFixed(0);
     return `${mins} 分 ${secs} 秒`;
+  };
+
+  const formatDateTime = (time?: string) => {
+    if (!time) return '-';
+    return new Date(time).toLocaleString('zh-CN', { hour12: false });
+  };
+
+  const getTaskRuntime = (task: Pick<Task, 'status' | 'started_at' | 'completed_at' | 'processing_time'>) => {
+    if (typeof task.processing_time === 'number' && task.processing_time >= 0) {
+      return task.processing_time;
+    }
+
+    if (!task.started_at) {
+      return undefined;
+    }
+
+    const startedAt = new Date(task.started_at).getTime();
+    if (!Number.isFinite(startedAt)) {
+      return undefined;
+    }
+
+    if (task.status === 'processing') {
+      return Math.max(0, (Date.now() - startedAt) / 1000);
+    }
+
+    if (!task.completed_at) {
+      return undefined;
+    }
+
+    const completedAt = new Date(task.completed_at).getTime();
+    if (!Number.isFinite(completedAt)) {
+      return undefined;
+    }
+
+    return Math.max(0, (completedAt - startedAt) / 1000);
   };
 
   const columns: ColumnsType<Task> = [
@@ -292,11 +327,21 @@ const Tasks: React.FC = () => {
       ),
     },
     {
+      title: '运行时长',
+      key: 'runtime',
+      width: 120,
+      render: (_, record: Task) => (
+        <Text type={record.status === 'processing' ? undefined : 'secondary'} style={{ fontSize: 12 }}>
+          {formatDuration(getTaskRuntime(record))}
+        </Text>
+      ),
+    },
+    {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
       width: 160,
-      render: (time: string) => <Text type="secondary" style={{ fontSize: 12 }}>{new Date(time).toLocaleString('zh-CN', { hour12: false })}</Text>,
+      render: (time: string) => <Text type="secondary" style={{ fontSize: 12 }}>{formatDateTime(time)}</Text>,
     },
     {
       title: '操作',
@@ -482,16 +527,21 @@ const Tasks: React.FC = () => {
             <Card size="small" title={<Space><ClockCircleOutlined /> 时间信息</Space>} style={{ borderRadius: 12 }}>
               <Descriptions column={2} size="small">
                 <Descriptions.Item label="创建时间">
-                  {new Date(selectedTask.created_at).toLocaleString('zh-CN', { hour12: false })}
+                  {formatDateTime(selectedTask.created_at)}
                 </Descriptions.Item>
                 {selectedTask.started_at && (
                   <Descriptions.Item label="开始处理">
-                    {new Date(selectedTask.started_at).toLocaleString('zh-CN', { hour12: false })}
+                    {formatDateTime(selectedTask.started_at)}
                   </Descriptions.Item>
                 )}
                 {selectedTask.completed_at && (
                   <Descriptions.Item label="完成时间">
-                    {new Date(selectedTask.completed_at).toLocaleString('zh-CN', { hour12: false })}
+                    {formatDateTime(selectedTask.completed_at)}
+                  </Descriptions.Item>
+                )}
+                {selectedTask.started_at && (
+                  <Descriptions.Item label={selectedTask.status === 'processing' ? '已运行' : '处理耗时'}>
+                    {formatDuration(getTaskRuntime(selectedTask))}
                   </Descriptions.Item>
                 )}
                 {selectedTask.wait_time && (
