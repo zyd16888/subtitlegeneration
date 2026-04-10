@@ -100,13 +100,14 @@ class LanguageDetector:
         """VAD 预筛 + 多段采样投票检测音频语言。
 
         从音频中扫描 scan_duration 秒，用能量 VAD 找到有人声的区域，
-        均匀挑选 num_segments 段进行语言检测，投票决定最终结果。
+        将时间线均分为 num_segments 个窗口，每个窗口内拼接有声片段
+        凑够 segment_seconds 秒再送 LID 检测，投票决定最终结果。
 
         Args:
             audio_path: 16kHz mono WAV 音频文件路径。
             scan_duration: 扫描音频的最大时长（秒）。
             num_segments: 采样段数（投票数）。
-            segment_seconds: 每段送入 LID 的时长（秒）。
+            segment_seconds: 每段送入 LID 的目标时长（秒）。
 
         Returns:
             检测到的 2 字母语言代码，检测失败时返回 None。
@@ -125,30 +126,32 @@ class LanguageDetector:
                 logger.warning("未找到有声区域，回退到前 30s 检测")
                 return self.detect(audio_path, max_duration=30.0)
 
-            # 2. 均匀选取 num_segments 个区域
-            selected = self._select_segments(
-                speech_regions, num_segments, sample_rate, segment_seconds
+            # 2. 将时间线均分为 num_segments 个窗口，每个窗口内拼接有声片段
+            lid_segments = self._build_lid_segments(
+                samples, speech_regions, num_segments,
+                sample_rate, segment_seconds,
             )
+
+            if not lid_segments:
+                logger.warning("无法构建足够长的采样段，回退到前 30s 检测")
+                return self.detect(audio_path, max_duration=30.0)
 
             logger.info(
                 f"VAD 找到 {len(speech_regions)} 个有声区域，"
-                f"选取 {len(selected)} 段进行语言检测"
+                f"构建 {len(lid_segments)} 段送入 LID 检测"
             )
 
             # 3. 对每段做 LID，收集结果
             votes: List[str] = []
-            for i, (start_sample, end_sample) in enumerate(selected):
-                seg = samples[start_sample:end_sample]
-                if len(seg) < sample_rate:  # 不足 1 秒，跳过
-                    continue
+            for i, (seg_samples, seg_desc) in enumerate(lid_segments):
                 stream = self.slid.create_stream()
-                stream.accept_waveform(sample_rate=sample_rate, waveform=seg)
+                stream.accept_waveform(sample_rate=sample_rate, waveform=seg_samples)
                 lang = self.slid.compute(stream)
                 if lang:
-                    start_s = start_sample / sample_rate
-                    end_s = end_sample / sample_rate
+                    duration = len(seg_samples) / sample_rate
                     logger.info(
-                        f"  段 {i + 1}: {start_s:.1f}s-{end_s:.1f}s → {lang}"
+                        f"  段 {i + 1}: {seg_desc} "
+                        f"({duration:.1f}s 有效语音) → {lang}"
                     )
                     votes.append(lang)
 
@@ -226,32 +229,52 @@ class LanguageDetector:
         return [(r[0] * frame_size, r[1] * frame_size) for r in merged]
 
     @staticmethod
-    def _select_segments(
+    def _build_lid_segments(
+        samples: list,
         regions: List[Tuple[int, int]],
         num_segments: int,
         sample_rate: int,
-        segment_seconds: float,
-    ) -> List[Tuple[int, int]]:
-        """从有声区域中均匀选取 num_segments 段，每段最多 segment_seconds 秒。"""
-        max_samples = int(segment_seconds * sample_rate)
+        target_seconds: float,
+    ) -> List[Tuple[list, str]]:
+        """将时间线均分为 num_segments 个窗口，每个窗口内拼接有声片段。
 
-        # 如果区域数 <= 需要的段数，直接用全部（各自截断到 max_samples）
-        if len(regions) <= num_segments:
-            result = []
-            for start, end in regions:
-                seg_end = min(end, start + max_samples)
-                result.append((start, seg_end))
-            return result
+        返回 [(拼接后的采样列表, 描述字符串), ...] 。
+        每段至少 5 秒有效语音，不足则跳过该窗口。
+        """
+        if not regions:
+            return []
 
-        # 均匀间隔选取
-        step = len(regions) / num_segments
-        result = []
+        target_samples = int(target_seconds * sample_rate)
+        min_samples = int(5.0 * sample_rate)  # 至少 5 秒才送 LID
+
+        # 将 regions 按时间均分为 num_segments 组
+        group_size = max(1, len(regions) // num_segments)
+        result: List[Tuple[list, str]] = []
+
         for i in range(num_segments):
-            idx = int(i * step + step / 2)
-            idx = min(idx, len(regions) - 1)
-            start, end = regions[idx]
-            seg_end = min(end, start + max_samples)
-            result.append((start, seg_end))
+            start_idx = i * group_size
+            # 最后一组包含剩余所有
+            end_idx = len(regions) if i == num_segments - 1 else start_idx + group_size
+            if start_idx >= len(regions):
+                break
+
+            group = regions[start_idx:end_idx]
+            collected: list = []
+            first_time = group[0][0] / sample_rate
+            last_time = first_time
+
+            for reg_start, reg_end in group:
+                remaining = target_samples - len(collected)
+                if remaining <= 0:
+                    break
+                take_end = min(reg_end, reg_start + remaining)
+                collected.extend(samples[reg_start:take_end])
+                last_time = take_end / sample_rate
+
+            if len(collected) >= min_samples:
+                desc = f"窗口 {first_time:.0f}s-{last_time:.0f}s"
+                result.append((collected[:target_samples], desc))
+
         return result
 
     @staticmethod
