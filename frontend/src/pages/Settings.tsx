@@ -318,7 +318,8 @@ const Settings: React.FC = () => {
       await api.config.partialUpdateConfig({
         enable_language_detection: !!form.getFieldValue('enable_language_detection'),
         lid_model_id: form.getFieldValue('lid_model_id') || null,
-        lid_sample_duration: form.getFieldValue('lid_sample_duration') || 30,
+        lid_sample_duration: form.getFieldValue('lid_sample_duration') || 600,
+        lid_num_segments: form.getFieldValue('lid_num_segments') || 3,
         asr_language_model_map: langModelMap,
         model_storage_dir: form.getFieldValue('model_storage_dir'),
         github_token: form.getFieldValue('github_token'),
@@ -980,9 +981,14 @@ const Settings: React.FC = () => {
                     </Select>
                   </Form.Item>
                 </Col>
-                <Col span={6}>
-                  <Form.Item name="lid_sample_duration" label="采样时长 (秒)" tooltip="检测语言时截取音频的前 N 秒，通常 30 秒足够">
-                    <InputNumber min={5} max={120} step={5} style={{ width: '100%' }} disabled={!enableLangDetection} />
+                <Col span={5}>
+                  <Form.Item name="lid_sample_duration" label="扫描时长 (秒)" tooltip="在音频前 N 秒范围内寻找有声片段进行语言检测。长影片建议 600 秒以跳过 OP 音乐">
+                    <InputNumber min={30} max={1800} step={30} style={{ width: '100%' }} disabled={!enableLangDetection} />
+                  </Form.Item>
+                </Col>
+                <Col span={5}>
+                  <Form.Item name="lid_num_segments" label="采样段数" tooltip="从有声区域中均匀选取多少段分别检测，投票决定最终语言。建议 3-5 段">
+                    <InputNumber min={1} max={7} step={1} style={{ width: '100%' }} disabled={!enableLangDetection} />
                   </Form.Item>
                 </Col>
               </Row>

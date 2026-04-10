@@ -67,7 +67,8 @@ class SystemConfigData(BaseModel):
     # 语言检测与自适应模型选择
     enable_language_detection: bool = False          # 启用音频语言检测（Whisper LID）
     lid_model_id: Optional[str] = None               # LID 使用的 Whisper 模型 ID
-    lid_sample_duration: int = 30                     # LID 采样时长（秒），截取音频前 N 秒
+    lid_sample_duration: int = 600                     # LID 扫描时长（秒），在此范围内寻找有声片段
+    lid_num_segments: int = 3                          # LID 采样段数，对多段分别检测后投票
     asr_language_model_map: Dict[str, str] = {}       # 语言→ASR模型映射 {"ja":"model-a","en":"model-b"}
 
     # 降噪配置

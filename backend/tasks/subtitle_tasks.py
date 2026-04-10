@@ -126,13 +126,18 @@ def _detect_language(config, audio_path: str) -> Optional[str]:
         )
         return None
 
-    max_duration = getattr(config, 'lid_sample_duration', 30) or 30
+    scan_duration = getattr(config, 'lid_sample_duration', 600) or 600
+    num_segments = getattr(config, 'lid_num_segments', 3) or 3
     detector = LanguageDetector(
         model_path=str(model_path),
         encoder_file=encoder_file,
         decoder_file=decoder_file,
     )
-    return detector.detect(audio_path, max_duration=float(max_duration))
+    return detector.detect_with_vad(
+        audio_path,
+        scan_duration=float(scan_duration),
+        num_segments=int(num_segments),
+    )
 
 
 def _resolve_model_by_language(
