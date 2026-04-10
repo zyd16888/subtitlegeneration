@@ -10,7 +10,7 @@ import logging
 import os
 import wave
 from collections import Counter
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import sherpa_onnx
@@ -59,12 +59,20 @@ class LanguageDetector:
             f"decoder={decoder_file}"
         )
 
-    def detect(self, audio_path: str, max_duration: float = 30.0) -> Optional[str]:
+    def detect(
+        self,
+        audio_path: str,
+        max_duration: float = 30.0,
+        whitelist_enabled: bool = False,
+        whitelist: Optional[Sequence[str]] = None,
+    ) -> Optional[str]:
         """检测音频语言（简单模式，取前 N 秒）。
 
         Args:
             audio_path: 16kHz mono WAV 音频文件路径。
             max_duration: 最多使用前 N 秒音频做检测，减少开销。
+            whitelist_enabled: 是否启用语言白名单过滤。
+            whitelist: 允许返回的语言白名单。
 
         Returns:
             检测到的 2 字母语言代码（如 "ja", "en", "zh"），
@@ -79,12 +87,17 @@ class LanguageDetector:
             stream = self.slid.create_stream()
             stream.accept_waveform(sample_rate=sample_rate, waveform=samples)
             lang = self.slid.compute(stream)
+            selected_lang = self._pick_language_by_whitelist(
+                [(lang, 1)] if lang else [],
+                whitelist_enabled=whitelist_enabled,
+                whitelist=whitelist,
+            )
 
             logger.info(
-                f"语言检测结果: {lang} "
+                f"语言检测结果: 原始={lang}, 最终={selected_lang} "
                 f"(采样 {len(samples) / sample_rate:.1f}s / {sample_rate}Hz)"
             )
-            return lang if lang else None
+            return selected_lang
 
         except Exception as e:
             logger.error(f"语言检测失败: {e}", exc_info=True)
@@ -96,6 +109,8 @@ class LanguageDetector:
         scan_duration: float = 600.0,
         num_segments: int = 3,
         segment_seconds: float = 15.0,
+        whitelist_enabled: bool = False,
+        whitelist: Optional[Sequence[str]] = None,
     ) -> Optional[str]:
         """VAD 预筛 + 多段采样投票检测音频语言。
 
@@ -108,6 +123,8 @@ class LanguageDetector:
             scan_duration: 扫描音频的最大时长（秒）。
             num_segments: 采样段数（投票数）。
             segment_seconds: 每段送入 LID 的目标时长（秒）。
+            whitelist_enabled: 是否启用语言白名单过滤。
+            whitelist: 允许返回的语言白名单，按投票排序顺延选择。
 
         Returns:
             检测到的 2 字母语言代码，检测失败时返回 None。
@@ -124,7 +141,12 @@ class LanguageDetector:
             speech_regions = self._find_speech_regions(samples_np, sample_rate)
             if not speech_regions:
                 logger.warning("未找到有声区域，回退到前 30s 检测")
-                return self.detect(audio_path, max_duration=30.0)
+                return self.detect(
+                    audio_path,
+                    max_duration=30.0,
+                    whitelist_enabled=whitelist_enabled,
+                    whitelist=whitelist,
+                )
 
             # 2. 将时间线均分为 num_segments 个窗口，每个窗口内拼接有声片段
             lid_segments = self._build_lid_segments(
@@ -134,7 +156,12 @@ class LanguageDetector:
 
             if not lid_segments:
                 logger.warning("无法构建足够长的采样段，回退到前 30s 检测")
-                return self.detect(audio_path, max_duration=30.0)
+                return self.detect(
+                    audio_path,
+                    max_duration=30.0,
+                    whitelist_enabled=whitelist_enabled,
+                    whitelist=whitelist,
+                )
 
             logger.info(
                 f"VAD 找到 {len(speech_regions)} 个有声区域，"
@@ -157,20 +184,71 @@ class LanguageDetector:
 
             if not votes:
                 logger.warning("所有采样段均未检测到语言，回退到前 30s 检测")
-                return self.detect(audio_path, max_duration=30.0)
+                return self.detect(
+                    audio_path,
+                    max_duration=30.0,
+                    whitelist_enabled=whitelist_enabled,
+                    whitelist=whitelist,
+                )
 
             # 4. 投票
             counter = Counter(votes)
-            winner, count = counter.most_common(1)[0]
-            logger.info(
-                f"语言检测投票结果: {winner} ({count}/{len(votes)}) "
-                f"— 详细: {dict(counter)}"
+            ranked_results = counter.most_common()
+            winner, count = ranked_results[0]
+            selected_lang = self._pick_language_by_whitelist(
+                ranked_results,
+                whitelist_enabled=whitelist_enabled,
+                whitelist=whitelist,
             )
-            return winner
+
+            if whitelist_enabled and whitelist:
+                whitelist_list = [code.strip().lower() for code in whitelist if code and code.strip()]
+                if selected_lang:
+                    logger.info(
+                        f"语言检测白名单过滤已启用: whitelist={whitelist_list}, "
+                        f"最终选择={selected_lang}, 原始冠军={winner}"
+                    )
+                else:
+                    logger.warning(
+                        f"语言检测白名单过滤后无可用语言: whitelist={whitelist_list}, "
+                        f"排序结果={ranked_results}"
+                    )
+
+            logger.info(
+                f"语言检测投票结果: 原始冠军={winner} ({count}/{len(votes)}), "
+                f"最终结果={selected_lang}, 详细: {dict(counter)}"
+            )
+            return selected_lang
 
         except Exception as e:
             logger.error(f"VAD 语言检测失败: {e}", exc_info=True)
             return None
+
+    @staticmethod
+    def _pick_language_by_whitelist(
+        ranked_results: Sequence[Tuple[str, int]],
+        whitelist_enabled: bool,
+        whitelist: Optional[Sequence[str]],
+    ) -> Optional[str]:
+        """按投票排序选择语言；启用白名单时跳过不在白名单中的结果。"""
+        if not ranked_results:
+            return None
+
+        if not whitelist_enabled:
+            return ranked_results[0][0]
+
+        normalized_whitelist = {
+            code.strip().lower()
+            for code in (whitelist or [])
+            if isinstance(code, str) and code.strip()
+        }
+        if not normalized_whitelist:
+            return ranked_results[0][0]
+
+        for lang, _ in ranked_results:
+            if lang and lang.lower() in normalized_whitelist:
+                return lang
+        return None
 
     @staticmethod
     def _find_speech_regions(

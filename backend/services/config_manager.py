@@ -11,6 +11,11 @@ from models.config import SystemConfig
 import json
 
 
+_SUPPORTED_LANGUAGE_CODES = {
+    "zh", "en", "ja", "ko", "fr", "de", "es", "ru", "pt", "it", "th", "vi", "ar", "yue",
+}
+
+
 class SystemConfigData(BaseModel):
     """系统配置数据模型"""
     model_config = {"protected_namespaces": ()}
@@ -69,6 +74,8 @@ class SystemConfigData(BaseModel):
     lid_model_id: Optional[str] = None               # LID 使用的 Whisper 模型 ID
     lid_sample_duration: int = 600                     # LID 扫描时长（秒），在此范围内寻找有声片段
     lid_num_segments: int = 3                          # LID 采样段数，对多段分别检测后投票
+    lid_filter_whitelist_enabled: bool = False        # 是否启用 LID 语言白名单过滤
+    lid_filter_whitelist: List[str] = []              # LID 允许返回的语言白名单
     asr_language_model_map: Dict[str, str] = {}       # 语言→ASR模型映射 {"ja":"model-a","en":"model-b"}
 
     # 降噪配置
@@ -207,6 +214,39 @@ class SystemConfigData(BaseModel):
             if word and word not in seen:
                 seen.add(word)
                 result.append(word)
+        return result
+
+    @field_validator('lid_filter_whitelist', mode='before')
+    @classmethod
+    def validate_lid_filter_whitelist(cls, v: Any) -> List[str]:
+        """lid_filter_whitelist: JSON 字符串或列表 → 去重后的合法语言码列表"""
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    v = parsed
+                else:
+                    v = [v]
+            except (json.JSONDecodeError, TypeError):
+                v = [v]
+        if not isinstance(v, list):
+            raise ValueError('lid_filter_whitelist 必须为列表')
+
+        seen = set()
+        result = []
+        for item in v:
+            if not isinstance(item, str):
+                raise ValueError('lid_filter_whitelist 元素必须为字符串')
+            code = item.strip().lower()
+            if not code:
+                continue
+            if code not in _SUPPORTED_LANGUAGE_CODES:
+                raise ValueError(f'lid_filter_whitelist 包含不支持的语言: {code}')
+            if code not in seen:
+                seen.add(code)
+                result.append(code)
         return result
 
     @field_validator('asr_language_model_map', mode='before')

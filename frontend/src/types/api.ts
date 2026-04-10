@@ -154,6 +154,8 @@ export interface SystemConfig {
   lid_model_id?: string;                 // LID 使用的 Whisper 模型 ID
   lid_sample_duration?: number;          // LID 扫描时长（秒），在此范围内寻找有声片段
   lid_num_segments?: number;             // LID 采样段数，对多段分别检测后投票
+  lid_filter_whitelist_enabled?: boolean; // 启用 LID 语言白名单过滤
+  lid_filter_whitelist?: string[];        // LID 允许返回的语言白名单
   asr_language_model_map?: Record<string, string>;  // 语言→ASR模型映射
 
   // 语言配置

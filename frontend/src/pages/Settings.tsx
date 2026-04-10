@@ -93,6 +93,7 @@ const Settings: React.FC = () => {
   const deeplMode = Form.useWatch('deepl_mode', form);
   const filterFillerWords = Form.useWatch('filter_filler_words', form);
   const enableLangDetection = Form.useWatch('enable_language_detection', form);
+  const enableLidWhitelistFilter = Form.useWatch('lid_filter_whitelist_enabled', form);
   const [langModelMap, setLangModelMap] = useState<Record<string, string>>({});
 
   const loadConfig = async () => {
@@ -334,6 +335,8 @@ const Settings: React.FC = () => {
         lid_model_id: form.getFieldValue('lid_model_id') || null,
         lid_sample_duration: form.getFieldValue('lid_sample_duration') || 600,
         lid_num_segments: form.getFieldValue('lid_num_segments') || 3,
+        lid_filter_whitelist_enabled: !!form.getFieldValue('lid_filter_whitelist_enabled'),
+        lid_filter_whitelist: form.getFieldValue('lid_filter_whitelist') || [],
         asr_language_model_map: langModelMap,
         model_storage_dir: form.getFieldValue('model_storage_dir'),
         github_token: form.getFieldValue('github_token'),
@@ -1013,6 +1016,44 @@ const Settings: React.FC = () => {
               </Row>
               {enableLangDetection && (
                 <>
+                  <div style={{ marginTop: 4, marginBottom: 16, padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
+                    <Row align="middle" gutter={16}>
+                      <Col flex="auto">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
+                          <FilterOutlined style={{ color: 'var(--accent-rose)' }} />语言白名单过滤
+                        </div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          开启后，LID 投票结果会按票数排序，若第一名不在白名单内则顺延选择下一名；若所有候选都不在白名单中，则本次语言检测视为无结果并回退默认源语言配置。
+                        </Text>
+                      </Col>
+                      <Col>
+                        <Form.Item name="lid_filter_whitelist_enabled" valuePropName="checked" style={{ margin: 0 }}>
+                          <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                    <Form.Item
+                      name="lid_filter_whitelist"
+                      label="允许的检测语言"
+                      tooltip="建议只保留媒体库里真实可能出现的语言，减少 nn 等小众误判对后续 ASR 选择的影响。"
+                      style={{ marginTop: 12, marginBottom: 0 }}
+                    >
+                      <Select
+                        mode="multiple"
+                        allowClear
+                        placeholder="选择允许作为最终检测结果的语言"
+                        disabled={!enableLidWhitelistFilter}
+                        dropdownStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--glass-border)' }}
+                      >
+                        {languages.map(lang => (
+                          <Option key={lang.code} value={lang.code}>{lang.name} ({lang.code})</Option>
+                        ))}
+                      </Select>
+                    </Form.Item>
+                    <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+                      白名单关闭或留空时，不额外过滤，保持现有投票结果。
+                    </Text>
+                  </div>
                   <div style={{ marginTop: 8, marginBottom: 8 }}>
                     <Text strong style={{ fontSize: 13 }}>语言 → 模型映射</Text>
                     <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>未映射的语言使用上方激活的默认模型</Text>

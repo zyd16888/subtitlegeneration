@@ -137,6 +137,8 @@ def _detect_language(config, audio_path: str) -> Optional[str]:
         audio_path,
         scan_duration=float(scan_duration),
         num_segments=int(num_segments),
+        whitelist_enabled=bool(getattr(config, 'lid_filter_whitelist_enabled', False)),
+        whitelist=getattr(config, 'lid_filter_whitelist', []) or [],
     )
 
 
