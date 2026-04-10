@@ -566,6 +566,22 @@ def generate_subtitle_task(
     audio_path = None
     subtitle_path = None  # finally 安全网用，跟踪是否生成了字幕文件
 
+    # ── 防止已取消/已完成的任务被重新执行 ────────────────────────────
+    # task_acks_late=True 场景下，worker 重启时 broker 会重新投递未确认的消息，
+    # 必须在入口处检查数据库状态，避免覆盖 CANCELLED / COMPLETED / FAILED。
+    try:
+        existing = _run_async(task_manager.get_task(task_id))
+        if existing and existing.status in (
+            TaskStatus.CANCELLED, TaskStatus.COMPLETED, TaskStatus.FAILED,
+        ):
+            logger.info(
+                f"[{task_id}] 任务状态为 {existing.status.value}，跳过执行"
+            )
+            db.close()
+            return {"task_id": task_id, "status": existing.status.value, "skipped": True}
+    except Exception as e:
+        logger.warning(f"[{task_id}] 入口状态检查失败，继续执行: {e}")
+
     # 挂载任务日志捕获器，将处理过程中的所有 logging 输出收集起来供前端展示
     log_capture = TaskLogCapture()
     root_logger = logging.getLogger()

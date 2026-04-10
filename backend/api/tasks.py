@@ -242,15 +242,19 @@ async def create_tasks(
                     pass
 
                 # 提交 Celery 任务（使用全局配置）
-                generate_subtitle_task.delay(
+                # task_id 与 Celery task ID 对齐，便于 revoke 取消
+                generate_subtitle_task.apply_async(
+                    kwargs=dict(
+                        task_id=task.id,
+                        media_item_id=media_item_id,
+                        video_path=audio_url,
+                        asr_model_id=config.asr_model_id,
+                        library_id=request.library_id,
+                        source_language=None,
+                        target_languages=None,
+                        keep_source_subtitle=None,
+                    ),
                     task_id=task.id,
-                    media_item_id=media_item_id,
-                    video_path=audio_url,
-                    asr_model_id=config.asr_model_id,
-                    library_id=request.library_id,
-                    source_language=None,  # 使用全局配置的语言
-                    target_languages=None,  # 使用全局配置的 target_languages
-                    keep_source_subtitle=None,  # 使用全局配置
                 )
 
                 created_tasks.append(task_to_response(task))
@@ -319,19 +323,22 @@ async def create_tasks(
                     pass
 
                 # 提交 Celery 任务（使用自定义配置）
-                generate_subtitle_task.delay(
+                generate_subtitle_task.apply_async(
+                    kwargs=dict(
+                        task_id=task.id,
+                        media_item_id=task_config.media_item_id,
+                        video_path=audio_url,
+                        asr_engine=task_config.asr_engine,
+                        asr_model_id=config.asr_model_id,
+                        translation_service=task_config.translation_service,
+                        openai_model=task_config.openai_model,
+                        library_id=request.library_id,
+                        path_mapping_index=task_config.path_mapping_index,
+                        source_language=task_config.source_language,
+                        target_languages=task_config.target_languages,
+                        keep_source_subtitle=task_config.keep_source_subtitle,
+                    ),
                     task_id=task.id,
-                    media_item_id=task_config.media_item_id,
-                    video_path=audio_url,
-                    asr_engine=task_config.asr_engine,
-                    asr_model_id=config.asr_model_id,
-                    translation_service=task_config.translation_service,
-                    openai_model=task_config.openai_model,
-                    library_id=request.library_id,
-                    path_mapping_index=task_config.path_mapping_index,
-                    source_language=task_config.source_language,
-                    target_languages=task_config.target_languages,
-                    keep_source_subtitle=task_config.keep_source_subtitle,
                 )
 
                 created_tasks.append(task_to_response(task))
@@ -568,16 +575,19 @@ async def retry_task(
                 pass
 
         # 提交 Celery 任务
-        generate_subtitle_task.delay(
+        generate_subtitle_task.apply_async(
+            kwargs=dict(
+                task_id=new_task.id,
+                media_item_id=new_task.media_item_id,
+                video_path=new_task.video_path,
+                asr_engine=new_task.asr_engine,
+                asr_model_id=new_task.asr_model_id,
+                translation_service=new_task.translation_service,
+                source_language=new_task.source_language,
+                target_languages=retry_target_languages,
+                keep_source_subtitle=retry_keep_source,
+            ),
             task_id=new_task.id,
-            media_item_id=new_task.media_item_id,
-            video_path=new_task.video_path,
-            asr_engine=new_task.asr_engine,
-            asr_model_id=new_task.asr_model_id,
-            translation_service=new_task.translation_service,
-            source_language=new_task.source_language,
-            target_languages=retry_target_languages,
-            keep_source_subtitle=retry_keep_source,
         )
 
         return task_to_response(new_task)

@@ -110,16 +110,19 @@ async def _create_subtitle_task(
         db.commit()
 
         # 提交 Celery 任务（TG 任务统一走全局配置）
-        generate_subtitle_task.delay(
+        generate_subtitle_task.apply_async(
+            kwargs=dict(
+                task_id=task.id,
+                media_item_id=media_item_id,
+                video_path=audio_url,
+                asr_engine=config.asr_engine,
+                asr_model_id=getattr(config, "asr_model_id", None),
+                translation_service=config.translation_service,
+                source_language=config.source_language,
+                target_languages=None,
+                keep_source_subtitle=None,
+            ),
             task_id=task.id,
-            media_item_id=media_item_id,
-            video_path=audio_url,
-            asr_engine=config.asr_engine,
-            asr_model_id=getattr(config, "asr_model_id", None),
-            translation_service=config.translation_service,
-            source_language=config.source_language,
-            target_languages=None,  # 使用全局配置
-            keep_source_subtitle=None,  # 使用全局配置
         )
 
         # 增加配额计数

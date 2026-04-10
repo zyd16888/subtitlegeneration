@@ -292,28 +292,40 @@ class TaskManager:
     async def cancel_task(self, task_id: str) -> bool:
         """
         取消任务
-        
-        只能取消处于 PENDING 或 PROCESSING 状态的任务
-        
+
+        只能取消处于 PENDING 或 PROCESSING 状态的任务。
+        同时 revoke 对应的 Celery 任务，释放 worker 槽位并防止重启后重新投递。
+
         Args:
             task_id: 任务 ID
-            
+
         Returns:
             是否成功取消任务
         """
         task = await self.get_task(task_id)
-        
+
         if task is None:
             return False
-        
+
         # 只能取消待处理或处理中的任务
         if task.status not in [TaskStatus.PENDING, TaskStatus.PROCESSING]:
             return False
-        
+
         task.status = TaskStatus.CANCELLED
         task.completed_at = utc_now()
 
         self.db.commit()
+
+        # Revoke Celery 任务：terminate=True 立即终止正在执行的任务，
+        # 同时从 broker 中移除排队中的消息，防止 worker 重启后重新投递。
+        try:
+            from tasks.celery_app import celery_app
+            celery_app.control.revoke(task_id, terminate=True)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Revoke Celery task {task_id} failed (task already cancelled in DB): {e}"
+            )
 
         return True
     

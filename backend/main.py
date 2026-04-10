@@ -188,7 +188,50 @@ async def startup_event():
     except Exception as e:
         logger.error(f"数据库初始化失败: {e}")
         raise
-    
+
+    # ── 启动清理：处理上次运行残留的任务 ─────────────────────────────
+    # 1. CANCELLED 任务：revoke 掉可能还在 broker 中排队的消息
+    # 2. PROCESSING/PENDING 任务：服务已重启，这些任务不会继续执行，标记为 FAILED
+    try:
+        from models.base import SessionLocal as _StartupSession
+        from models.task import Task as _TaskModel, TaskStatus as _TS
+        from config.time_utils import utc_now as _utc_now
+
+        _sdb = _StartupSession()
+        try:
+            # Revoke 已取消的任务（防止 broker 重新投递）
+            cancelled = _sdb.query(_TaskModel).filter(
+                _TaskModel.status == _TS.CANCELLED
+            ).all()
+            if cancelled:
+                from tasks.celery_app import celery_app as _celery
+                for t in cancelled:
+                    try:
+                        _celery.control.revoke(t.id, terminate=True)
+                    except Exception:
+                        pass
+                logger.info(f"启动清理：revoke {len(cancelled)} 个已取消任务的 broker 消息")
+
+            # 将残留的 PROCESSING/PENDING 任务标记为 FAILED
+            stale = _sdb.query(_TaskModel).filter(
+                _TaskModel.status.in_([_TS.PROCESSING, _TS.PENDING])
+            ).all()
+            for t in stale:
+                t.status = _TS.FAILED
+                t.completed_at = _utc_now()
+                t.error_message = "服务重启，任务被中断"
+                try:
+                    _celery.control.revoke(t.id, terminate=True)
+                except Exception:
+                    pass
+            if stale:
+                _sdb.commit()
+                logger.info(f"启动清理：{len(stale)} 个残留任务标记为 FAILED")
+        finally:
+            _sdb.close()
+    except Exception as e:
+        logger.warning(f"启动清理失败（不影响服务启动）: {e}")
+
     # 自动拉起 Celery worker（由主后端进程托管）
     try:
         from services.worker_manager import get_worker_manager
