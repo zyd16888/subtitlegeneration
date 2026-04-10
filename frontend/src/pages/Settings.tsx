@@ -42,6 +42,14 @@ const CATEGORIES: CategoryDef[] = [
   { key: 'cleanup',    icon: <ClearOutlined />,      label: '临时文件管理',       description: '自动清理 · 磁盘占用',      colorVar: '--accent-rose',     colorBgVar: '--accent-rose-bg' },
 ];
 
+const DEFAULT_VAD_FORM_VALUES = {
+  vad_mode: 'energy' as const,
+  vad_threshold: 0.5,
+  vad_min_silence_duration: 0.7,
+  vad_min_speech_duration: 0.5,
+  vad_max_speech_duration: 20,
+};
+
 const Settings: React.FC = () => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(true);
@@ -310,6 +318,12 @@ const Settings: React.FC = () => {
       message.success('音频处理配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
     finally { setSavingAudio(false); }
+  };
+
+  const handleResetVadDefaults = () => {
+    form.setFieldsValue(DEFAULT_VAD_FORM_VALUES);
+    setIsDirty(true);
+    message.success('VAD 参数已恢复为默认值');
   };
 
   const handleSaveModels = async () => {
@@ -858,6 +872,11 @@ const Settings: React.FC = () => {
                       <Radio.Button value="silero">Silero VAD</Radio.Button>
                     </Radio.Group>
                   </Form.Item>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -4, marginBottom: 12 }}>
+                    <Button icon={<ReloadOutlined />} onClick={handleResetVadDefaults}>
+                      恢复默认值
+                    </Button>
+                  </div>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -8, marginBottom: 12 }}>
                     {vadMode === 'silero'
                       ? '• Silero VAD：使用神经网络检测语音段，精确但较慢，可能在嘈杂场景漏检'
