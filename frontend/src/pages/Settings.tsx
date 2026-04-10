@@ -10,6 +10,7 @@ import {
   LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined,
   PlusOutlined, DeleteOutlined, SwapOutlined,
   AimOutlined, ClearOutlined, SendOutlined, ThunderboltOutlined, FilterOutlined,
+  GlobalOutlined, SoundOutlined, DatabaseOutlined,
 } from '@ant-design/icons';
 import { api } from '../services/api';
 import type { ASRModel, ModelDownloadProgress, LanguageInfo, Library } from '../types/api';
@@ -17,7 +18,7 @@ import type { ASRModel, ModelDownloadProgress, LanguageInfo, Library } from '../
 const { Option } = Select;
 const { Text } = Typography;
 
-type CategoryKey = 'emby' | 'path' | 'translation' | 'asr' | 'worker' | 'telegram' | 'cleanup';
+type CategoryKey = 'emby' | 'path' | 'translation' | 'asr' | 'language' | 'audio' | 'models' | 'worker' | 'telegram' | 'cleanup';
 
 interface CategoryDef {
   key: CategoryKey;
@@ -32,7 +33,10 @@ const CATEGORIES: CategoryDef[] = [
   { key: 'emby',       icon: <CloudServerOutlined />, label: 'Emby 核心节点',    description: '服务器地址 · API 密钥',     colorVar: '--accent-cyan',     colorBgVar: '--accent-cyan-bg' },
   { key: 'path',       icon: <SwapOutlined />,       label: '路径映射',           description: '媒体库路径 · 挂载规则',     colorVar: '--accent-amber',    colorBgVar: '--accent-amber-bg' },
   { key: 'translation',icon: <TranslationOutlined />, label: '翻译服务',         description: 'API 配置 · 引擎切换',      colorVar: '--accent-emerald',  colorBgVar: '--accent-emerald-bg' },
-  { key: 'asr',        icon: <AimOutlined />,        label: 'ASR 引擎',           description: '模型管理 · VAD 配置',      colorVar: '--accent-amber',    colorBgVar: '--accent-amber-bg' },
+  { key: 'asr',        icon: <AimOutlined />,         label: 'ASR 引擎',           description: '推理引擎 · 云端 API',      colorVar: '--accent-amber',    colorBgVar: '--accent-amber-bg' },
+  { key: 'language',   icon: <GlobalOutlined />,      label: '语言与字幕',          description: '源/目标语言 · 检测模式',   colorVar: '--accent-cyan',     colorBgVar: '--accent-cyan-bg' },
+  { key: 'audio',      icon: <SoundOutlined />,       label: '音频处理',            description: '降噪 · VAD · 语气词',     colorVar: '--accent-emerald',  colorBgVar: '--accent-emerald-bg' },
+  { key: 'models',     icon: <DatabaseOutlined />,    label: '模型管理',            description: '下载激活 · 自适应映射',    colorVar: '--accent-rose',     colorBgVar: '--accent-rose-bg' },
   { key: 'worker',     icon: <ThunderboltOutlined />, label: '任务 Worker',        description: '后台进程 · 并发控制',      colorVar: '--accent-emerald',  colorBgVar: '--accent-emerald-bg' },
   { key: 'telegram',   icon: <SendOutlined />,       label: 'Telegram 机器人',     description: 'Bot Token · 配额控制',     colorVar: '--accent-cyan',     colorBgVar: '--accent-cyan-bg' },
   { key: 'cleanup',    icon: <ClearOutlined />,      label: '临时文件管理',       description: '自动清理 · 磁盘占用',      colorVar: '--accent-rose',     colorBgVar: '--accent-rose-bg' },
@@ -44,7 +48,10 @@ const Settings: React.FC = () => {
   const [savingAll, setSavingAll] = useState(false);
   const [savingEmby, setSavingEmby] = useState(false);
   const [savingTranslation, setSavingTranslation] = useState(false);
-  const [savingEngine, setSavingEngine] = useState(false);
+  const [savingAsr, setSavingAsr] = useState(false);
+  const [savingLanguage, setSavingLanguage] = useState(false);
+  const [savingAudio, setSavingAudio] = useState(false);
+  const [savingModels, setSavingModels] = useState(false);
   const [savingCleanup, setSavingCleanup] = useState(false);
   const [savingTelegram, setSavingTelegram] = useState(false);
   const [botStatus, setBotStatus] = useState<{ running: boolean; uptime_seconds?: number } | null>(null);
@@ -253,19 +260,44 @@ const Settings: React.FC = () => {
     finally { setSavingTranslation(false); }
   };
 
-  const handleSaveEngine = async () => {
+  const handleSaveAsr = async () => {
     try {
-      // 多目标语言：form 里存的是数组。如果用户清空了，回退到 [source_language or 'zh']
-      const targetLanguages: string[] = form.getFieldValue('target_languages') || [];
-      const primaryTarget = targetLanguages[0] || form.getFieldValue('target_language') || 'zh';
-      const values: any = {
+      setSavingAsr(true);
+      await api.config.partialUpdateConfig({
         asr_engine: form.getFieldValue('asr_engine'),
         asr_model_id: form.getFieldValue('asr_model_id'),
+        max_concurrent_tasks: form.getFieldValue('max_concurrent_tasks'),
+        cloud_asr_url: form.getFieldValue('cloud_asr_url'),
+        cloud_asr_api_key: form.getFieldValue('cloud_asr_api_key'),
+      });
+      message.success('引擎配置已保存');
+    } catch (err: any) { message.error(err.message || '保存失败'); }
+    finally { setSavingAsr(false); }
+  };
+
+  const handleSaveLanguage = async () => {
+    try {
+      const targetLanguages: string[] = form.getFieldValue('target_languages') || [];
+      const primaryTarget = targetLanguages[0] || form.getFieldValue('target_language') || 'zh';
+      setSavingLanguage(true);
+      await api.config.partialUpdateConfig({
         source_language: form.getFieldValue('source_language'),
         target_language: primaryTarget,
         target_languages: targetLanguages.length > 0 ? targetLanguages : [primaryTarget],
         keep_source_subtitle: !!form.getFieldValue('keep_source_subtitle'),
         source_language_detection: form.getFieldValue('source_language_detection'),
+        filter_filler_words: !!form.getFieldValue('filter_filler_words'),
+        custom_filler_words: form.getFieldValue('custom_filler_words') || [],
+      });
+      message.success('语言配置已保存');
+    } catch (err: any) { message.error(err.message || '保存失败'); }
+    finally { setSavingLanguage(false); }
+  };
+
+  const handleSaveAudio = async () => {
+    try {
+      setSavingAudio(true);
+      await api.config.partialUpdateConfig({
         enable_denoise: form.getFieldValue('enable_denoise'),
         enable_vad: form.getFieldValue('enable_vad'),
         vad_mode: form.getFieldValue('vad_mode'),
@@ -274,21 +306,26 @@ const Settings: React.FC = () => {
         vad_min_silence_duration: form.getFieldValue('vad_min_silence_duration'),
         vad_min_speech_duration: form.getFieldValue('vad_min_speech_duration'),
         vad_max_speech_duration: form.getFieldValue('vad_max_speech_duration'),
-        max_concurrent_tasks: form.getFieldValue('max_concurrent_tasks'),
-        cloud_asr_url: form.getFieldValue('cloud_asr_url'),
-        cloud_asr_api_key: form.getFieldValue('cloud_asr_api_key'),
-        model_storage_dir: form.getFieldValue('model_storage_dir'),
-        github_token: form.getFieldValue('github_token'),
-        filter_filler_words: !!form.getFieldValue('filter_filler_words'),
-        custom_filler_words: form.getFieldValue('custom_filler_words') || [],
+      });
+      message.success('音频处理配置已保存');
+    } catch (err: any) { message.error(err.message || '保存失败'); }
+    finally { setSavingAudio(false); }
+  };
+
+  const handleSaveModels = async () => {
+    try {
+      setSavingModels(true);
+      await api.config.partialUpdateConfig({
         enable_language_detection: !!form.getFieldValue('enable_language_detection'),
         lid_model_id: form.getFieldValue('lid_model_id') || null,
         lid_sample_duration: form.getFieldValue('lid_sample_duration') || 30,
         asr_language_model_map: langModelMap,
-      };
-      setSavingEngine(true); await api.config.partialUpdateConfig(values); message.success('引擎配置已保存');
+        model_storage_dir: form.getFieldValue('model_storage_dir'),
+        github_token: form.getFieldValue('github_token'),
+      });
+      message.success('模型配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
-    finally { setSavingEngine(false); }
+    finally { setSavingModels(false); }
   };
 
   const handleSaveCleanup = async () => {
@@ -613,8 +650,8 @@ const Settings: React.FC = () => {
           <div className="cat-hero">
             <div className="cat-icon" style={{ background: 'var(' + activeCat.colorBgVar + ')', color: 'var(' + activeCat.colorVar + ')' }}>{activeCat.icon}</div>
             <div>
-              <h2 className="cat-title">ASR 识别引擎</h2>
-              <p className="cat-sub">配置语音识别模型与 VAD 参数，决定音频转文字的核心能力</p>
+              <h2 className="cat-title">ASR 引擎</h2>
+              <p className="cat-sub">选择语音识别推理引擎，配置本地模型或云端 API</p>
             </div>
           </div>
           <div className="cat-section">
@@ -633,244 +670,12 @@ const Settings: React.FC = () => {
                       {models.filter(m => m.installed).map(m => <Option key={m.id} value={m.id}>{m.name} {m.active && <Tag color="success" style={{ marginLeft: 8 }}>当前激活</Tag>}</Option>)}
                     </Select>
                   </Form.Item>
-                  <Text type="secondary" style={{ fontSize: 12 }}>在下方模型列表中下载并激活模型后自动应用</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>在「模型管理」中下载并激活模型后自动应用</Text>
                 </Col>
                 <Col span={8}>
                   <Form.Item name="max_concurrent_tasks" label="并行处理线程数" tooltip="修改并保存后会自动重启 Celery Worker"><InputNumber min={1} max={16} style={{ width: '100%' }} /></Form.Item>
                 </Col>
               </Row>
-              <Row gutter={24} style={{ marginTop: 16 }}>
-                <Col span={12}>
-                  <Form.Item name="source_language" label="源语言（音频语言）">
-                    <Select placeholder="选择源语言" dropdownStyle={{ background: 'var(--bg-elevated)' }}>
-                      {languages.map(lang => <Option key={lang.code} value={lang.code}>{lang.name} ({lang.code})</Option>)}
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item
-                    name="target_languages"
-                    label={
-                      <Space>
-                        目标语言（字幕语言）
-                        <Tooltip title="可多选：同时生成多份字幕。第一个语言为主目标（默认展示），所有语言都会复制到视频目录。">
-                          <InfoCircleOutlined />
-                        </Tooltip>
-                      </Space>
-                    }
-                  >
-                    <Select
-                      mode="multiple"
-                      placeholder="选择目标语言（可多选）"
-                      dropdownStyle={{ background: 'var(--bg-elevated)' }}
-                      allowClear
-                    >
-                      {languages.map(lang => <Option key={lang.code} value={lang.code}>{lang.name} ({lang.code})</Option>)}
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
-              <Row gutter={24} style={{ marginTop: 8 }}>
-                <Col span={24}>
-                  <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
-                    <Row align="middle" gutter={16}>
-                      <Col flex="auto">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
-                          <InfoCircleOutlined style={{ color: 'var(--accent-cyan)' }} />保留源语言字幕
-                        </div>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          除目标语言字幕外，额外输出一份未经翻译的源语言字幕文件（使用 ASR 原文）。
-                        </Text>
-                      </Col>
-                      <Col>
-                        <Form.Item name="keep_source_subtitle" valuePropName="checked" style={{ margin: 0 }}>
-                          <Switch />
-                        </Form.Item>
-                      </Col>
-                    </Row>
-                  </div>
-                </Col>
-              </Row>
-              <Row gutter={24} style={{ marginTop: 16 }}>
-                <Col span={24}>
-                  <Form.Item 
-                    name="source_language_detection" 
-                    label={
-                      <Space>
-                        源语言检测模式
-                        <Tooltip title="Auto 模式：翻译时自动检测实际语言（推荐）。Fixed 模式：强制使用配置的源语言。">
-                          <InfoCircleOutlined />
-                        </Tooltip>
-                      </Space>
-                    }
-                    initialValue="auto"
-                  >
-                    <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
-                      <Option value="auto">
-                        <Space>
-                          自动检测 (Auto)
-                          <Tag color="success" style={{ marginLeft: 4, border: 'none' }}>推荐</Tag>
-                        </Space>
-                      </Option>
-                      <Option value="fixed">固定语言 (Fixed)</Option>
-                    </Select>
-                  </Form.Item>
-                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -16 }}>
-                    • Auto 模式：翻译服务自动检测 ASR 输出的实际语言，适用于多语言视频或不确定语言的场景<br />
-                    • Fixed 模式：强制使用配置的源语言，适用于确定所有视频都是同一语言的场景
-                  </Text>
-                </Col>
-              </Row>
-              <Text type="secondary" style={{ fontSize: 12 }}>源语言与目标语言相同时将跳过翻译步骤，仅生成转录字幕</Text>
-              <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
-                <Row align="middle" gutter={16}>
-                  <Col flex="auto">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
-                      <FilterOutlined style={{ color: 'var(--accent-amber)' }} />语气词过滤
-                    </div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>移除纯语气词段落（あ、え、うん 等），减少无意义翻译，节省 token 开销</Text>
-                  </Col>
-                  <Col><Form.Item name="filter_filler_words" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
-                </Row>
-                {filterFillerWords && (
-                  <div style={{ marginTop: 12 }}>
-                    <Form.Item
-                      name="custom_filler_words"
-                      label={
-                        <Space>
-                          自定义语气词
-                          <Tooltip title="输入后按回车添加。此处添加的词会与内置词表合并生效。">
-                            <InfoCircleOutlined />
-                          </Tooltip>
-                        </Space>
-                      }
-                      style={{ marginBottom: 8 }}
-                    >
-                      <Select
-                        mode="tags"
-                        placeholder="输入语气词后按回车添加（可选）"
-                        tokenSeparators={[',', '，', ' ']}
-                        dropdownStyle={{ display: 'none' }}
-                        style={{ width: '100%' }}
-                      />
-                    </Form.Item>
-                    {defaultFillerWords['ja'] && (
-                      <div style={{ marginTop: 4 }}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>已内置 {defaultFillerWords['ja'].length} 个日语语气词：</Text>
-                        <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                          {defaultFillerWords['ja'].map(w => (
-                            <Tag key={w} style={{ background: 'var(--bg-tag)', border: 'none', fontSize: 11, margin: 0 }}>{w}</Tag>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
-                <Row align="middle" gutter={16}>
-                  <Col flex="auto">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
-                      <InfoCircleOutlined style={{ color: 'var(--accent-cyan)' }} />音频降噪 (Denoise)
-                    </div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>启用后使用频谱门控算法降低背景噪声，提升嘈杂场景下的识别准确率（建议配合 VAD 使用）</Text>
-                  </Col>
-                  <Col><Form.Item name="enable_denoise" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
-                </Row>
-              </div>
-              <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
-                <Row align="middle" gutter={16}>
-                  <Col flex="auto">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
-                      <InfoCircleOutlined style={{ color: 'var(--accent-amber)' }} />语音活动检测 (VAD)
-                    </div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>启用后对音频进行分段处理，获得更精确的字幕时间戳（仅离线模型有效）</Text>
-                  </Col>
-                  <Col><Form.Item name="enable_vad" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
-                </Row>
-                {enableVad && (
-                  <div style={{ marginTop: 12 }}>
-                    <Form.Item name="vad_mode" label="分段模式" style={{ marginBottom: 12 }}>
-                      <Radio.Group>
-                        <Radio.Button value="energy">能量分段（推荐）</Radio.Button>
-                        <Radio.Button value="silero">Silero VAD</Radio.Button>
-                      </Radio.Group>
-                    </Form.Item>
-                    <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -8, marginBottom: 12 }}>
-                      {vadMode === 'silero'
-                        ? '• Silero VAD：使用神经网络检测语音段，精确但较慢，可能在嘈杂场景漏检'
-                        : '• 能量分段：按静音位置切分音频，速度极快，不做语音判断不会漏检（建议配合降噪使用）'}
-                    </Text>
-                    {vadMode === 'silero' && (
-                      <>
-                        <Row gutter={24}>
-                          <Col span={16}>
-                            <Form.Item name="vad_model_id" label="VAD 模型">
-                              <Select placeholder={vadModels.filter(m => m.installed).length ? '选择 VAD 模型' : '请先下载 VAD 模型'} dropdownStyle={{ background: 'var(--bg-elevated)' }} loading={vadModelsLoading} disabled={!vadModels.some(m => m.installed)}>
-                                {vadModels.filter(m => m.installed).map(m => <Option key={m.id} value={m.id}>{m.name} {m.active && <Tag color="success" style={{ marginLeft: 8 }}>激活</Tag>}</Option>)}
-                              </Select>
-                            </Form.Item>
-                          </Col>
-                          <Col span={8}>
-                            <Form.Item label=" "><Button onClick={loadVadModels} loading={vadModelsLoading} icon={<ReloadOutlined />} type="text" size="small">刷新</Button></Form.Item>
-                          </Col>
-                        </Row>
-                        {vadModelsLoading ? (
-                          <div style={{ textAlign: 'center', padding: 16 }}><LoadingOutlined spin style={{ fontSize: 20, color: 'var(--accent-cyan)' }} /><div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 12 }}>加载中...</div></div>
-                        ) : vadModels.length > 0 && (
-                          <div style={{ marginBottom: 12 }}>
-                            {vadModels.map(m => {
-                              const progress = downloadProgress[m.id];
-                              const isDownloading = progress && (progress.status === 'downloading' || progress.status === 'extracting');
-                              return (
-                                <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--glass-border)' }}>
-                                  <Space>
-                                    <Text style={{ color: 'var(--text-primary)' }}>{m.name}</Text>
-                                    <Tag style={{ background: 'var(--bg-tag)', border: 'none', fontSize: 10 }}>{m.size}</Tag>
-                                    {m.installed && <Tag color="success" style={{ background: 'var(--accent-emerald-bg)', border: '1px solid var(--accent-emerald)', color: 'var(--accent-emerald)' }}>已安装</Tag>}
-                                  </Space>
-                                  <Space>
-                                    {isDownloading ? (
-                                      <Space size={4}><LoadingOutlined spin style={{ fontSize: 12, color: 'var(--accent-cyan)' }} /><Text style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{progress.progress}%</Text></Space>
-                                    ) : m.installed ? (
-                                      <Button type="link" size="small" onClick={() => api.models.activateVadModel(m.id).then(() => { loadVadModels(); loadConfig(); })} style={{ padding: 0, color: 'var(--accent-cyan)' }}>{m.active ? '已激活' : '激活'}</Button>
-                                    ) : (
-                                      <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => handleVadDownload(m.id)} style={{ padding: 0, color: 'var(--accent-emerald)' }}>下载</Button>
-                                    )}
-                                  </Space>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </>
-                    )}
-                    <Collapse ghost size="small" items={[{
-                      key: 'vad-advanced',
-                      label: <Text type="secondary" style={{ fontSize: 12 }}>高级参数</Text>,
-                      children: (
-                        <>
-                          {vadMode === 'silero' && (
-                            <Row gutter={24}>
-                              <Col span={12}><Form.Item name="vad_threshold" label="语音检测阈值"><Slider min={0.1} max={0.9} step={0.05} marks={{ 0.2: '0.2', 0.5: '0.5', 0.8: '0.8' }} /></Form.Item></Col>
-                              <Col span={12}><Form.Item name="vad_max_speech_duration" label="最大语音段长度 (秒)"><InputNumber min={1} max={60} step={1} style={{ width: '100%' }} /></Form.Item></Col>
-                            </Row>
-                          )}
-                          {vadMode !== 'silero' && (
-                            <Row gutter={24}>
-                              <Col span={12}><Form.Item name="vad_max_speech_duration" label="最大语音段长度 (秒)"><InputNumber min={1} max={60} step={1} style={{ width: '100%' }} /></Form.Item></Col>
-                            </Row>
-                          )}
-                          <Row gutter={24}>
-                            <Col span={12}><Form.Item name="vad_min_silence_duration" label="最小静音时长 (秒)"><InputNumber min={0.1} max={5} step={0.1} style={{ width: '100%' }} /></Form.Item></Col>
-                            <Col span={12}><Form.Item name="vad_min_speech_duration" label="最小语音时长 (秒)"><InputNumber min={0.05} max={5} step={0.05} style={{ width: '100%' }} /></Form.Item></Col>
-                          </Row>
-                        </>
-                      ),
-                    }]} />
-                  </div>
-                )}
-              </div>
             </div>
             <div className="engine-block cloud">
               <div className="engine-label"><CloudServerOutlined style={{ marginRight: 6 }} />云端 API 配置</div>
@@ -880,7 +685,271 @@ const Settings: React.FC = () => {
               </Row>
               <Text type="secondary" style={{ fontSize: 12 }}>配置云端 API 后，可在创建任务时选择使用云端识别（速度更快，需要网络）</Text>
             </div>
-            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--glass-border)', background: 'var(--bg-subtle)' }}>
+          </div>
+          <div className="cat-footer">
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAsr} loading={savingAsr} style={{ background: 'var(--accent-amber)', borderColor: 'var(--accent-amber)' }}>保存配置</Button>
+          </div>
+        </div>
+      );
+
+      case 'language': return (
+        <div className="cat-panel">
+          <div className="cat-hero">
+            <div className="cat-icon" style={{ background: 'var(' + activeCat.colorBgVar + ')', color: 'var(' + activeCat.colorVar + ')' }}>{activeCat.icon}</div>
+            <div>
+              <h2 className="cat-title">语言与字幕</h2>
+              <p className="cat-sub">配置音频源语言、字幕目标语言和语言检测策略</p>
+            </div>
+          </div>
+          <div className="cat-section">
+            <Row gutter={24}>
+              <Col span={12}>
+                <Form.Item name="source_language" label="源语言（音频语言）">
+                  <Select placeholder="选择源语言" dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                    {languages.map(lang => <Option key={lang.code} value={lang.code}>{lang.name} ({lang.code})</Option>)}
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="target_languages"
+                  label={
+                    <Space>
+                      目标语言（字幕语言）
+                      <Tooltip title="可多选：同时生成多份字幕。第一个语言为主目标（默认展示），所有语言都会复制到视频目录。">
+                        <InfoCircleOutlined />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <Select mode="multiple" placeholder="选择目标语言（可多选）" dropdownStyle={{ background: 'var(--bg-elevated)' }} allowClear>
+                    {languages.map(lang => <Option key={lang.code} value={lang.code}>{lang.name} ({lang.code})</Option>)}
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+            <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)', marginBottom: 16 }}>
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
+                    <InfoCircleOutlined style={{ color: 'var(--accent-cyan)' }} />保留源语言字幕
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    除目标语言字幕外，额外输出一份未经翻译的源语言字幕文件（使用 ASR 原文）。
+                  </Text>
+                </Col>
+                <Col>
+                  <Form.Item name="keep_source_subtitle" valuePropName="checked" style={{ margin: 0 }}>
+                    <Switch />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </div>
+            <Form.Item
+              name="source_language_detection"
+              label={
+                <Space>
+                  源语言检测模式
+                  <Tooltip title="Auto 模式：翻译时自动检测实际语言（推荐）。Fixed 模式：强制使用配置的源语言。">
+                    <InfoCircleOutlined />
+                  </Tooltip>
+                </Space>
+              }
+              initialValue="auto"
+            >
+              <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                <Option value="auto">
+                  <Space>
+                    自动检测 (Auto)
+                    <Tag color="success" style={{ marginLeft: 4, border: 'none' }}>推荐</Tag>
+                  </Space>
+                </Option>
+                <Option value="fixed">固定语言 (Fixed)</Option>
+              </Select>
+            </Form.Item>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -16, marginBottom: 16 }}>
+              • Auto 模式：翻译服务自动检测 ASR 输出的实际语言，适用于多语言视频或不确定语言的场景<br />
+              • Fixed 模式：强制使用配置的源语言，适用于确定所有视频都是同一语言的场景
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>源语言与目标语言相同时将跳过翻译步骤，仅生成转录字幕</Text>
+            <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
+                    <FilterOutlined style={{ color: 'var(--accent-amber)' }} />语气词过滤
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>移除纯语气词段落（あ、え、うん 等），减少无意义翻译，节省 token 开销</Text>
+                </Col>
+                <Col><Form.Item name="filter_filler_words" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
+              </Row>
+              {filterFillerWords && (
+                <div style={{ marginTop: 12 }}>
+                  <Form.Item
+                    name="custom_filler_words"
+                    label={
+                      <Space>
+                        自定义语气词
+                        <Tooltip title="输入后按回车添加。此处添加的词会与内置词表合并生效。">
+                          <InfoCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                    }
+                    style={{ marginBottom: 8 }}
+                  >
+                    <Select mode="tags" placeholder="输入语气词后按回车添加（可选）" tokenSeparators={[',', '，', ' ']} dropdownStyle={{ display: 'none' }} style={{ width: '100%' }} />
+                  </Form.Item>
+                  {defaultFillerWords['ja'] && (
+                    <div style={{ marginTop: 4 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>已内置 {defaultFillerWords['ja'].length} 个日语语气词：</Text>
+                      <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {defaultFillerWords['ja'].map(w => (
+                          <Tag key={w} style={{ background: 'var(--bg-tag)', border: 'none', fontSize: 11, margin: 0 }}>{w}</Tag>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="cat-footer">
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveLanguage} loading={savingLanguage} style={{ background: 'var(--accent-cyan)', borderColor: 'var(--accent-cyan)' }}>保存配置</Button>
+          </div>
+        </div>
+      );
+
+      case 'audio': return (
+        <div className="cat-panel">
+          <div className="cat-hero">
+            <div className="cat-icon" style={{ background: 'var(' + activeCat.colorBgVar + ')', color: 'var(' + activeCat.colorVar + ')' }}>{activeCat.icon}</div>
+            <div>
+              <h2 className="cat-title">音频处理</h2>
+              <p className="cat-sub">配置音频降噪与 VAD 分段，优化语音识别效果</p>
+            </div>
+          </div>
+          <div className="cat-section">
+            <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)', marginBottom: 16 }}>
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
+                    <InfoCircleOutlined style={{ color: 'var(--accent-cyan)' }} />音频降噪 (Denoise)
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>启用后使用频谱门控算法降低背景噪声，提升嘈杂场景下的识别准确率（建议配合 VAD 使用）</Text>
+                </Col>
+                <Col><Form.Item name="enable_denoise" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
+              </Row>
+            </div>
+            <div style={{ padding: 12, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500, color: 'var(--text-primary)' }}>
+                    <InfoCircleOutlined style={{ color: 'var(--accent-amber)' }} />语音活动检测 (VAD)
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>启用后对音频进行分段处理，获得更精确的字幕时间戳（仅离线模型有效）</Text>
+                </Col>
+                <Col><Form.Item name="enable_vad" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
+              </Row>
+              {enableVad && (
+                <div style={{ marginTop: 12 }}>
+                  <Form.Item name="vad_mode" label="分段模式" style={{ marginBottom: 12 }}>
+                    <Radio.Group>
+                      <Radio.Button value="energy">能量分段（推荐）</Radio.Button>
+                      <Radio.Button value="silero">Silero VAD</Radio.Button>
+                    </Radio.Group>
+                  </Form.Item>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: -8, marginBottom: 12 }}>
+                    {vadMode === 'silero'
+                      ? '• Silero VAD：使用神经网络检测语音段，精确但较慢，可能在嘈杂场景漏检'
+                      : '• 能量分段：按静音位置切分音频，速度极快，不做语音判断不会漏检（建议配合降噪使用）'}
+                  </Text>
+                  {vadMode === 'silero' && (
+                    <>
+                      <Row gutter={24}>
+                        <Col span={16}>
+                          <Form.Item name="vad_model_id" label="VAD 模型">
+                            <Select placeholder={vadModels.filter(m => m.installed).length ? '选择 VAD 模型' : '请先下载 VAD 模型'} dropdownStyle={{ background: 'var(--bg-elevated)' }} loading={vadModelsLoading} disabled={!vadModels.some(m => m.installed)}>
+                              {vadModels.filter(m => m.installed).map(m => <Option key={m.id} value={m.id}>{m.name} {m.active && <Tag color="success" style={{ marginLeft: 8 }}>激活</Tag>}</Option>)}
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col span={8}>
+                          <Form.Item label=" "><Button onClick={loadVadModels} loading={vadModelsLoading} icon={<ReloadOutlined />} type="text" size="small">刷新</Button></Form.Item>
+                        </Col>
+                      </Row>
+                      {vadModelsLoading ? (
+                        <div style={{ textAlign: 'center', padding: 16 }}><LoadingOutlined spin style={{ fontSize: 20, color: 'var(--accent-cyan)' }} /><div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 12 }}>加载中...</div></div>
+                      ) : vadModels.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                          {vadModels.map(m => {
+                            const progress = downloadProgress[m.id];
+                            const isDownloading = progress && (progress.status === 'downloading' || progress.status === 'extracting');
+                            return (
+                              <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--glass-border)' }}>
+                                <Space>
+                                  <Text style={{ color: 'var(--text-primary)' }}>{m.name}</Text>
+                                  <Tag style={{ background: 'var(--bg-tag)', border: 'none', fontSize: 10 }}>{m.size}</Tag>
+                                  {m.installed && <Tag color="success" style={{ background: 'var(--accent-emerald-bg)', border: '1px solid var(--accent-emerald)', color: 'var(--accent-emerald)' }}>已安装</Tag>}
+                                </Space>
+                                <Space>
+                                  {isDownloading ? (
+                                    <Space size={4}><LoadingOutlined spin style={{ fontSize: 12, color: 'var(--accent-cyan)' }} /><Text style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{progress.progress}%</Text></Space>
+                                  ) : m.installed ? (
+                                    <Button type="link" size="small" onClick={() => api.models.activateVadModel(m.id).then(() => { loadVadModels(); loadConfig(); })} style={{ padding: 0, color: 'var(--accent-cyan)' }}>{m.active ? '已激活' : '激活'}</Button>
+                                  ) : (
+                                    <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => handleVadDownload(m.id)} style={{ padding: 0, color: 'var(--accent-emerald)' }}>下载</Button>
+                                  )}
+                                </Space>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <Collapse ghost size="small" items={[{
+                    key: 'vad-advanced',
+                    label: <Text type="secondary" style={{ fontSize: 12 }}>高级参数</Text>,
+                    children: (
+                      <>
+                        {vadMode === 'silero' && (
+                          <Row gutter={24}>
+                            <Col span={12}><Form.Item name="vad_threshold" label="语音检测阈值"><Slider min={0.1} max={0.9} step={0.05} marks={{ 0.2: '0.2', 0.5: '0.5', 0.8: '0.8' }} /></Form.Item></Col>
+                            <Col span={12}><Form.Item name="vad_max_speech_duration" label="最大语音段长度 (秒)"><InputNumber min={1} max={60} step={1} style={{ width: '100%' }} /></Form.Item></Col>
+                          </Row>
+                        )}
+                        {vadMode !== 'silero' && (
+                          <Row gutter={24}>
+                            <Col span={12}><Form.Item name="vad_max_speech_duration" label="最大语音段长度 (秒)"><InputNumber min={1} max={60} step={1} style={{ width: '100%' }} /></Form.Item></Col>
+                          </Row>
+                        )}
+                        <Row gutter={24}>
+                          <Col span={12}><Form.Item name="vad_min_silence_duration" label="最小静音时长 (秒)"><InputNumber min={0.1} max={5} step={0.1} style={{ width: '100%' }} /></Form.Item></Col>
+                          <Col span={12}><Form.Item name="vad_min_speech_duration" label="最小语音时长 (秒)"><InputNumber min={0.05} max={5} step={0.05} style={{ width: '100%' }} /></Form.Item></Col>
+                        </Row>
+                      </>
+                    ),
+                  }]} />
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="cat-footer">
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAudio} loading={savingAudio} style={{ background: 'var(--accent-emerald)', borderColor: 'var(--accent-emerald)' }}>保存配置</Button>
+          </div>
+        </div>
+      );
+
+      case 'models': return (
+        <div className="cat-panel">
+          <div className="cat-hero">
+            <div className="cat-icon" style={{ background: 'var(' + activeCat.colorBgVar + ')', color: 'var(' + activeCat.colorVar + ')' }}>{activeCat.icon}</div>
+            <div>
+              <h2 className="cat-title">模型管理</h2>
+              <p className="cat-sub">下载、激活 ASR 模型，配置语言自适应映射</p>
+            </div>
+          </div>
+          <div className="cat-section">
+            <div style={{ padding: '16px 24px', marginBottom: 16, borderRadius: 8, background: 'var(--bg-subtle)', border: '1px solid var(--glass-border)' }}>
               <Row gutter={12}>
                 <Col flex="auto"><Input placeholder="搜索模型名称..." allowClear value={modelSearch} onChange={e => setModelSearch(e.target.value)} /></Col>
                 <Col flex="180px">
@@ -1017,7 +1086,7 @@ const Settings: React.FC = () => {
           <div className="cat-footer">
             <Space>
               <Button icon={<ReloadOutlined />} onClick={async () => { setModelsLoading(true); try { const data = await api.models.refreshModels(); setModels(data); } catch {} finally { setModelsLoading(false); } loadVadModels(); }} loading={modelsLoading} type="text">刷新模型列表</Button>
-              <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveEngine} loading={savingEngine} style={{ background: 'var(--accent-amber)', borderColor: 'var(--accent-amber)' }}>保存配置</Button>
+              <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveModels} loading={savingModels} style={{ background: 'var(--accent-rose)', borderColor: 'var(--accent-rose)' }}>保存配置</Button>
             </Space>
           </div>
         </div>
@@ -1105,7 +1174,7 @@ const Settings: React.FC = () => {
             </Row>
           </div>
           <div className="cat-footer">
-            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveEngine} loading={savingEngine} style={{ background: 'var(--accent-emerald)', borderColor: 'var(--accent-emerald)' }}>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAsr} loading={savingAsr} style={{ background: 'var(--accent-emerald)', borderColor: 'var(--accent-emerald)' }}>
               保存并应用
             </Button>
           </div>
