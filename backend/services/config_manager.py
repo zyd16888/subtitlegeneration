@@ -64,6 +64,12 @@ class SystemConfigData(BaseModel):
     # 翻译上下文窗口大小：当前字幕前后各 N 条作为参考（0=禁用，仅 LLM 翻译器生效，推荐 2-5）
     translation_context_size: int = 0
 
+    # 语言检测与自适应模型选择
+    enable_language_detection: bool = False          # 启用音频语言检测（Whisper LID）
+    lid_model_id: Optional[str] = None               # LID 使用的 Whisper 模型 ID
+    lid_sample_duration: int = 30                     # LID 采样时长（秒），截取音频前 N 秒
+    asr_language_model_map: Dict[str, str] = {}       # 语言→ASR模型映射 {"ja":"model-a","en":"model-b"}
+
     # 降噪配置
     enable_denoise: bool = False
 
@@ -201,6 +207,23 @@ class SystemConfigData(BaseModel):
                 seen.add(word)
                 result.append(word)
         return result
+
+    @field_validator('asr_language_model_map', mode='before')
+    @classmethod
+    def validate_asr_language_model_map(cls, v: Any) -> Dict[str, str]:
+        """asr_language_model_map: JSON 字符串或 dict → dict[str, str]"""
+        if v is None or v == "":
+            return {}
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, dict):
+                    return {str(k): str(val) for k, val in parsed.items() if k and val}
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        if isinstance(v, dict):
+            return {str(k): str(val) for k, val in v.items() if k and val}
+        return {}
 
     @field_validator('translation_service')
     @classmethod

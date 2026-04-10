@@ -246,6 +246,7 @@ async def create_tasks(
                     task_id=task.id,
                     media_item_id=media_item_id,
                     video_path=audio_url,
+                    asr_model_id=config.asr_model_id,
                     library_id=request.library_id,
                     source_language=None,  # 使用全局配置的语言
                     target_languages=None,  # 使用全局配置的 target_languages
@@ -323,6 +324,7 @@ async def create_tasks(
                     media_item_id=task_config.media_item_id,
                     video_path=audio_url,
                     asr_engine=task_config.asr_engine,
+                    asr_model_id=config.asr_model_id,
                     translation_service=task_config.translation_service,
                     openai_model=task_config.openai_model,
                     library_id=request.library_id,
@@ -571,6 +573,7 @@ async def retry_task(
             media_item_id=new_task.media_item_id,
             video_path=new_task.video_path,
             asr_engine=new_task.asr_engine,
+            asr_model_id=new_task.asr_model_id,
             translation_service=new_task.translation_service,
             source_language=new_task.source_language,
             target_languages=retry_target_languages,

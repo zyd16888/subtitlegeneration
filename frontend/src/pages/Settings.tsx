@@ -77,6 +77,8 @@ const Settings: React.FC = () => {
   const microsoftMode = Form.useWatch('microsoft_translate_mode', form);
   const deeplMode = Form.useWatch('deepl_mode', form);
   const filterFillerWords = Form.useWatch('filter_filler_words', form);
+  const enableLangDetection = Form.useWatch('enable_language_detection', form);
+  const [langModelMap, setLangModelMap] = useState<Record<string, string>>({});
 
   const loadConfig = async () => {
     setLoading(true);
@@ -87,6 +89,7 @@ const Settings: React.FC = () => {
         config.target_languages = config.target_language ? [config.target_language] : [];
       }
       form.setFieldsValue(config);
+      setLangModelMap(config.asr_language_model_map || {});
       setIsDirty(false);
     } catch (err: any) { message.error(err.message || '加载配置失败'); }
     finally { setLoading(false); }
@@ -278,6 +281,10 @@ const Settings: React.FC = () => {
         github_token: form.getFieldValue('github_token'),
         filter_filler_words: !!form.getFieldValue('filter_filler_words'),
         custom_filler_words: form.getFieldValue('custom_filler_words') || [],
+        enable_language_detection: !!form.getFieldValue('enable_language_detection'),
+        lid_model_id: form.getFieldValue('lid_model_id') || null,
+        lid_sample_duration: form.getFieldValue('lid_sample_duration') || 30,
+        asr_language_model_map: langModelMap,
       };
       setSavingEngine(true); await api.config.partialUpdateConfig(values); message.success('引擎配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
@@ -884,6 +891,113 @@ const Settings: React.FC = () => {
               </Row>
             </div>
             <Table columns={columns} dataSource={filteredModels} rowKey="id" pagination={{ pageSize: 10, showSizeChanger: false, showTotal: (total) => '共 ' + total + ' 个模型', style: { marginRight: 16 } }} loading={modelsLoading} className="custom-table" style={{ background: 'transparent' }} />
+            <div className="engine-block local" style={{ marginTop: 16 }}>
+              <div className="engine-label"><AimOutlined style={{ marginRight: 6 }} />语言检测与自适应模型</div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+                启用后，任务执行时先用 Whisper 检测音频语言，再按映射自动切换 ASR 模型。适合媒体库含多种语言的场景。
+              </Text>
+              <Row gutter={24} align="middle">
+                <Col span={4}>
+                  <Form.Item name="enable_language_detection" valuePropName="checked" style={{ marginBottom: 8 }}>
+                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                  </Form.Item>
+                </Col>
+                <Col span={10}>
+                  <Form.Item name="lid_model_id" label="LID 检测模型" tooltip="用于语言检测的 Whisper 模型，推荐 whisper-tiny（轻量快速）">
+                    <Select placeholder="选择已下载的 Whisper 模型" allowClear disabled={!enableLangDetection} dropdownStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--glass-border)' }}>
+                      {models.filter(m => m.installed && m.model_type === 'whisper').map(m => (
+                        <Option key={m.id} value={m.id}>{m.name} ({m.size})</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item name="lid_sample_duration" label="采样时长 (秒)" tooltip="检测语言时截取音频的前 N 秒，通常 30 秒足够">
+                    <InputNumber min={5} max={120} step={5} style={{ width: '100%' }} disabled={!enableLangDetection} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              {enableLangDetection && (
+                <>
+                  <div style={{ marginTop: 8, marginBottom: 8 }}>
+                    <Text strong style={{ fontSize: 13 }}>语言 → 模型映射</Text>
+                    <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>未映射的语言使用上方激活的默认模型</Text>
+                  </div>
+                  {Object.entries(langModelMap).map(([lang, modelId]) => (
+                    <Row key={lang} gutter={12} align="middle" style={{ marginBottom: 8 }}>
+                      <Col span={6}>
+                        <Select
+                          value={lang}
+                          style={{ width: '100%' }}
+                          dropdownStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--glass-border)' }}
+                          onChange={(newLang) => {
+                            const updated = { ...langModelMap };
+                            delete updated[lang];
+                            updated[newLang] = modelId;
+                            setLangModelMap(updated);
+                            setIsDirty(true);
+                          }}
+                        >
+                          {languages.map(l => (
+                            <Option key={l.code} value={l.code} disabled={l.code !== lang && langModelMap.hasOwnProperty(l.code)}>{l.name} ({l.code})</Option>
+                          ))}
+                        </Select>
+                      </Col>
+                      <Col span={2} style={{ textAlign: 'center' }}>
+                        <Text type="secondary">→</Text>
+                      </Col>
+                      <Col span={13}>
+                        <Select
+                          value={modelId}
+                          style={{ width: '100%' }}
+                          dropdownStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--glass-border)' }}
+                          placeholder="选择已下载的 ASR 模型"
+                          onChange={(newModel) => {
+                            setLangModelMap({ ...langModelMap, [lang]: newModel });
+                            setIsDirty(true);
+                          }}
+                        >
+                          {models.filter(m => m.installed).map(m => (
+                            <Option key={m.id} value={m.id}>{m.name} ({m.languages.join(', ')})</Option>
+                          ))}
+                        </Select>
+                      </Col>
+                      <Col span={2}>
+                        <Button
+                          icon={<DeleteOutlined />}
+                          type="text"
+                          danger
+                          onClick={() => {
+                            const updated = { ...langModelMap };
+                            delete updated[lang];
+                            setLangModelMap(updated);
+                            setIsDirty(true);
+                          }}
+                        />
+                      </Col>
+                    </Row>
+                  ))}
+                  <Button
+                    icon={<PlusOutlined />}
+                    type="dashed"
+                    block
+                    style={{ marginTop: 4 }}
+                    onClick={() => {
+                      const usedLangs = new Set(Object.keys(langModelMap));
+                      const nextLang = languages.find(l => !usedLangs.has(l.code));
+                      if (nextLang) {
+                        setLangModelMap({ ...langModelMap, [nextLang.code]: '' });
+                        setIsDirty(true);
+                      } else {
+                        message.warning('所有语言已添加映射');
+                      }
+                    }}
+                  >
+                    添加语言映射
+                  </Button>
+                </>
+              )}
+            </div>
             <div className="engine-block local" style={{ marginTop: 16 }}>
               <div className="engine-label"><CloudServerOutlined style={{ marginRight: 6 }} />模型存储配置</div>
               <Row gutter={24}>

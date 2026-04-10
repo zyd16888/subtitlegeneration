@@ -115,6 +115,7 @@ async def _create_subtitle_task(
             media_item_id=media_item_id,
             video_path=audio_url,
             asr_engine=config.asr_engine,
+            asr_model_id=getattr(config, "asr_model_id", None),
             translation_service=config.translation_service,
             source_language=config.source_language,
             target_languages=None,  # 使用全局配置

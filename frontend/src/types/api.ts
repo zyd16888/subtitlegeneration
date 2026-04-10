@@ -149,6 +149,12 @@ export interface SystemConfig {
   cloud_asr_url?: string;
   cloud_asr_api_key?: string;
 
+  // 语言检测与自适应模型选择
+  enable_language_detection?: boolean;    // 启用音频语言检测（Whisper LID）
+  lid_model_id?: string;                 // LID 使用的 Whisper 模型 ID
+  lid_sample_duration?: number;          // LID 采样时长（秒）
+  asr_language_model_map?: Record<string, string>;  // 语言→ASR模型映射
+
   // 语言配置
   source_language: string;
   target_language: string;  // 主目标语言（始终等于 target_languages[0]）

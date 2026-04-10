@@ -38,6 +38,7 @@ from services.subtitle_generator import SubtitleGenerator, SubtitleSegment
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
 from services.model_manager import ModelManager
+from services.language_detector import LanguageDetector
 from services.task_log_capture import TaskLogCapture
 from services.progress_reporter import TaskProgressReporter
 from config.settings import settings
@@ -91,6 +92,67 @@ def _resolve_vad_model_path(config) -> str:
     if not os.path.exists(full_path):
         raise ValueError(f"VAD 模型文件不存在: {full_path}")
     return full_path
+
+
+def _detect_language(config, audio_path: str) -> Optional[str]:
+    """使用 Whisper LID 检测音频语言。
+
+    Returns:
+        检测到的 2 字母语言代码（如 "ja", "en"），或 None。
+    """
+    if not config.enable_language_detection or not config.lid_model_id:
+        return None
+
+    models_dir = getattr(config, 'model_storage_dir', None) or settings.model_storage_dir
+    github_token = getattr(config, 'github_token', None) or settings.github_token
+    manager = ModelManager(models_dir=models_dir, github_token=github_token)
+
+    meta = manager.get_model_meta(config.lid_model_id)
+    if not meta:
+        logger.warning(f"LID 模型 {config.lid_model_id} 元数据不存在，跳过语言检测")
+        return None
+
+    model_path = manager.get_model_path(config.lid_model_id)
+    if not model_path:
+        logger.warning(f"LID 模型 {config.lid_model_id} 未安装，跳过语言检测")
+        return None
+
+    file_map = meta.get("files", {})
+    encoder_file = file_map.get("encoder", "")
+    decoder_file = file_map.get("decoder", "")
+    if not encoder_file or not decoder_file:
+        logger.warning(
+            f"LID 模型 {config.lid_model_id} 缺少 encoder/decoder 文件映射，跳过语言检测"
+        )
+        return None
+
+    max_duration = getattr(config, 'lid_sample_duration', 30) or 30
+    detector = LanguageDetector(
+        model_path=str(model_path),
+        encoder_file=encoder_file,
+        decoder_file=decoder_file,
+    )
+    return detector.detect(audio_path, max_duration=float(max_duration))
+
+
+def _resolve_model_by_language(
+    detected_lang: Optional[str],
+    language_model_map: Dict[str, str],
+    default_model_id: Optional[str],
+) -> tuple:
+    """根据检测到的语言和映射选择 ASR 模型。
+
+    Returns:
+        (asr_model_id, effective_source_language):
+        - asr_model_id: 映射命中时返回映射模型 ID，否则返回 default_model_id
+        - effective_source_language: 检测到语言时返回该语言，否则 None（使用配置默认）
+    """
+    if not detected_lang:
+        return default_model_id, None
+    mapped = language_model_map.get(detected_lang)
+    if mapped:
+        return mapped, detected_lang
+    return default_model_id, detected_lang
 
 
 def _get_asr_engine(config, source_language: str = None) -> ASREngine:
@@ -474,6 +536,7 @@ def generate_subtitle_task(
     media_item_id: str,
     video_path: str,
     asr_engine: str = None,
+    asr_model_id: str = None,
     translation_service: str = None,
     openai_model: str = None,
     library_id: str = None,
@@ -486,12 +549,14 @@ def generate_subtitle_task(
     字幕生成主任务
 
     1. 提取音频 (20%)
+    1.8 语言检测（可选）
     2. 语音识别 (60%)
     3. 翻译文本 (90%)
     4. 生成字幕文件 (95%)
     5. 回写 Emby (100%)
 
     Args:
+        asr_model_id: 任务级 ASR 模型覆盖；None 时使用 config.asr_model_id
         target_languages: 任务级多目标语言覆盖；None 时使用 config.target_languages
         keep_source_subtitle: 任务级源语言字幕开关；None 时使用 config.keep_source_subtitle
     """
@@ -528,6 +593,8 @@ def generate_subtitle_task(
         # 应用自定义配置覆盖
         if asr_engine:
             config.asr_engine = asr_engine
+        if asr_model_id:
+            config.asr_model_id = asr_model_id
         if translation_service:
             config.translation_service = translation_service
         if openai_model:
@@ -560,11 +627,32 @@ def generate_subtitle_task(
             logger.info(f"[{task_id}] 启用源语言字幕保留: {source_lang}")
 
         # 进度上报器：把各阶段内部进度映射到全局百分比，带节流、线程安全
-        if getattr(config, 'enable_denoise', False):
+        has_denoise = getattr(config, 'enable_denoise', False)
+        has_lid = config.enable_language_detection and config.lid_model_id
+        if has_denoise and has_lid:
+            reporter = TaskProgressReporter(task_id, SessionLocal, stage_weights={
+                "audio": (0, 13),
+                "denoise": (13, 22),
+                "lid": (22, 25),
+                "asr": (25, 60),
+                "translation": (60, 90),
+                "subtitle": (90, 95),
+                "emby": (95, 100),
+            })
+        elif has_denoise:
             reporter = TaskProgressReporter(task_id, SessionLocal, stage_weights={
                 "audio": (0, 15),
                 "denoise": (15, 25),
                 "asr": (25, 60),
+                "translation": (60, 90),
+                "subtitle": (90, 95),
+                "emby": (95, 100),
+            })
+        elif has_lid:
+            reporter = TaskProgressReporter(task_id, SessionLocal, stage_weights={
+                "audio": (0, 18),
+                "lid": (18, 22),
+                "asr": (22, 60),
                 "translation": (60, 90),
                 "subtitle": (90, 95),
                 "emby": (95, 100),
@@ -627,6 +715,50 @@ def generate_subtitle_task(
                 step_logs["denoise"] = _format_step_log("denoise", f"降噪失败: {e}，使用原始音频")
             reporter.report("denoise", 1.0)
             _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})))
+
+        # 1.8. 语言检测（可选）
+        if config.enable_language_detection and config.lid_model_id:
+            reporter.report("lid", 0.0)
+            logger.info(f"[{task_id}] 步骤 1.8: 音频语言检测 (LID)")
+            try:
+                detected_lang = _detect_language(config, audio_path)
+                if detected_lang:
+                    logger.info(f"[{task_id}] 检测到音频语言: {detected_lang}")
+                    resolved_model_id, resolved_source_lang = _resolve_model_by_language(
+                        detected_lang,
+                        config.asr_language_model_map,
+                        config.asr_model_id,
+                    )
+                    if resolved_model_id and resolved_model_id != config.asr_model_id:
+                        logger.info(
+                            f"[{task_id}] 按语言映射切换 ASR 模型: "
+                            f"{config.asr_model_id} → {resolved_model_id}"
+                        )
+                        config.asr_model_id = resolved_model_id
+                    if resolved_source_lang:
+                        source_lang = resolved_source_lang
+                        # 同步更新翻译源语言（除非处于 auto 模式由翻译服务自行检测）
+                        if translation_source_lang != "auto":
+                            translation_source_lang = resolved_source_lang
+                        logger.info(f"[{task_id}] 源语言更新为: {source_lang}")
+                    step_logs["lid"] = _format_step_log(
+                        "lid",
+                        f"检测语言: {detected_lang}\n"
+                        f"ASR 模型: {config.asr_model_id}\n"
+                        f"源语言: {source_lang}",
+                    )
+                else:
+                    logger.info(f"[{task_id}] 语言检测未返回结果，使用默认配置")
+                    step_logs["lid"] = _format_step_log(
+                        "lid", "未检测到语言，使用默认配置"
+                    )
+            except Exception as e:
+                logger.warning(f"[{task_id}] 语言检测失败，使用默认配置: {e}", exc_info=True)
+                step_logs["lid"] = _format_step_log("lid", f"检测失败: {e}，使用默认配置")
+            reporter.report("lid", 1.0)
+            _run_async(task_manager.update_task_result(
+                task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})
+            ))
 
         # 2. 语音识别
         _mark_step_start("asr")
