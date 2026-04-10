@@ -59,6 +59,11 @@ def _read_wave(audio_path: str) -> Tuple[np.ndarray, int]:
     if num_channels > 1:
         samples = samples[::num_channels]  # 取第一声道
 
+    if len(samples) == 0:
+        raise RuntimeError(
+            f"Audio file is empty (0 samples): {audio_path}"
+        )
+
     return samples, sample_rate
 
 

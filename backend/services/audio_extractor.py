@@ -102,7 +102,7 @@ class AudioExtractor:
             
             logger.info(f"FFmpeg completed successfully")
             if stderr:
-                logger.debug(f"FFmpeg stderr: {stderr.decode()[:500]}")  # 只记录前500字符
+                logger.debug(f"FFmpeg stderr: {stderr.decode('utf-8', errors='replace')[:500]}")  # 只记录前500字符
             
             # 验证输出文件
             if os.path.exists(output_path):
@@ -115,7 +115,7 @@ class AudioExtractor:
             return output_path
             
         except ffmpeg.Error as e:
-            stderr_msg = e.stderr.decode() if e.stderr else str(e)
+            stderr_msg = e.stderr.decode('utf-8', errors='replace') if e.stderr else str(e)
             error_msg = f"FFmpeg error while extracting audio: {stderr_msg}"
             logger.error(error_msg)
             logger.error(f"FFmpeg command failed for input: {video_path}")
@@ -160,7 +160,7 @@ class AudioExtractor:
             }
             
         except ffmpeg.Error as e:
-            error_msg = f"FFmpeg error while probing video: {e.stderr.decode() if e.stderr else str(e)}"
+            error_msg = f"FFmpeg error while probing video: {e.stderr.decode('utf-8', errors='replace') if e.stderr else str(e)}"
             logger.error(error_msg)
             raise RuntimeError(error_msg)
         except Exception as e:
