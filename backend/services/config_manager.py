@@ -79,8 +79,8 @@ class SystemConfigData(BaseModel):
     vad_mode: str = "energy"  # "silero" 或 "energy"
     vad_model_id: Optional[str] = None
     vad_threshold: float = 0.5
-    vad_min_silence_duration: float = 0.5
-    vad_min_speech_duration: float = 0.25
+    vad_min_silence_duration: float = 0.7
+    vad_min_speech_duration: float = 0.5
     vad_max_speech_duration: float = 20.0
 
     # 语气词过滤配置

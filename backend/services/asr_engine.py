@@ -479,10 +479,13 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
     """
 
     DEFAULT_VAD_THRESHOLD = 0.2
-    DEFAULT_VAD_MIN_SILENCE_DURATION = 0.25
-    DEFAULT_VAD_MIN_SPEECH_DURATION = 0.25
-    DEFAULT_VAD_MAX_SPEECH_DURATION = 5.0
+    DEFAULT_VAD_MIN_SILENCE_DURATION = 0.7
+    DEFAULT_VAD_MIN_SPEECH_DURATION = 0.5  # 提高到 0.5s，避免过短片段
+    DEFAULT_VAD_MAX_SPEECH_DURATION = 20.0
     FRAME_DURATION_MS = 30  # energy 模式帧长
+    MIN_SEGMENT_DURATION_S = 0.8
+    RETRY_PADDING_S = 0.25
+    MAX_RETRY_DEPTH = 2
 
     def __init__(
         self,
@@ -733,6 +736,146 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
             return self._transcribe_sync_silero(audio_path, progress_cb)
         return self._transcribe_sync_energy(audio_path, progress_cb)
 
+    @staticmethod
+    def _is_retryable_decode_error(exc: Exception) -> bool:
+        """识别由 ONNX shape/broadcast 触发的可恢复解码错误。"""
+        message = str(exc).lower()
+        retryable_markers = (
+            "invalid expand shape",
+            "expand node",
+            "expand",
+            "broadcast",
+            "shape",
+        )
+        return any(marker in message for marker in retryable_markers)
+
+    def _try_decode_samples(
+        self,
+        seg_samples: np.ndarray,
+        sample_rate: int,
+    ) -> str:
+        """单次创建 stream 并解码，返回识别文本。"""
+        stream = self.recognizer.create_stream()
+        stream.accept_waveform(sample_rate, seg_samples)
+        self.recognizer.decode_stream(stream)
+        return stream.result.text.strip()
+
+    def _decode_segment_with_retry(
+        self,
+        samples: np.ndarray,
+        sample_rate: int,
+        start_sample: int,
+        end_sample: int,
+        *,
+        depth: int = 0,
+        add_padding: bool = False,
+    ) -> List[Segment]:
+        """
+        对单个分段做安全解码。
+
+        失败时按以下顺序补救：
+        1. 前后加 padding 再试一次
+        2. 仍失败则二分成两个子段递归解码
+        3. 超过最大深度后跳过，不抛出异常
+        """
+        total_samples = len(samples)
+        if total_samples == 0:
+            return []
+
+        pad_samples = int(sample_rate * self.RETRY_PADDING_S) if add_padding else 0
+        decode_start = max(0, start_sample - pad_samples)
+        decode_end = min(total_samples, end_sample + pad_samples)
+        decode_samples = samples[decode_start:decode_end]
+
+        min_segment_samples = int(sample_rate * self.MIN_SEGMENT_DURATION_S)
+        duration_s = max(0.0, (end_sample - start_sample) / sample_rate)
+        if len(decode_samples) < min_segment_samples:
+            logger.warning(
+                "Skipping segment due to short duration: start=%.2fs end=%.2fs duration=%.2fs",
+                start_sample / sample_rate,
+                end_sample / sample_rate,
+                duration_s,
+            )
+            return []
+
+        try:
+            text = self._try_decode_samples(decode_samples, sample_rate)
+            if not text or text in (".", "The.", "。"):
+                return []
+            return [
+                Segment(
+                    start=start_sample / sample_rate,
+                    end=end_sample / sample_rate,
+                    text=text,
+                )
+            ]
+        except RuntimeError as exc:
+            if not self._is_retryable_decode_error(exc):
+                raise
+
+            logger.warning(
+                "Retryable decode error: start=%.2fs end=%.2fs duration=%.2fs depth=%d padded=%s error=%s",
+                start_sample / sample_rate,
+                end_sample / sample_rate,
+                duration_s,
+                depth,
+                add_padding,
+                exc,
+            )
+
+            if not add_padding:
+                return self._decode_segment_with_retry(
+                    samples,
+                    sample_rate,
+                    start_sample,
+                    end_sample,
+                    depth=depth,
+                    add_padding=True,
+                )
+
+            if depth >= self.MAX_RETRY_DEPTH or (end_sample - start_sample) < (min_segment_samples * 2):
+                logger.warning(
+                    "Skipping segment after retries: start=%.2fs end=%.2fs duration=%.2fs",
+                    start_sample / sample_rate,
+                    end_sample / sample_rate,
+                    duration_s,
+                )
+                return []
+
+            mid_sample = start_sample + ((end_sample - start_sample) // 2)
+            if mid_sample <= start_sample or mid_sample >= end_sample:
+                logger.warning(
+                    "Skipping unsplittable segment after retries: start=%.2fs end=%.2fs duration=%.2fs",
+                    start_sample / sample_rate,
+                    end_sample / sample_rate,
+                    duration_s,
+                )
+                return []
+
+            logger.info(
+                "Splitting segment for retry: start=%.2fs end=%.2fs depth=%d",
+                start_sample / sample_rate,
+                end_sample / sample_rate,
+                depth + 1,
+            )
+            left_segments = self._decode_segment_with_retry(
+                samples,
+                sample_rate,
+                start_sample,
+                mid_sample,
+                depth=depth + 1,
+                add_padding=True,
+            )
+            right_segments = self._decode_segment_with_retry(
+                samples,
+                sample_rate,
+                mid_sample,
+                end_sample,
+                depth=depth + 1,
+                add_padding=True,
+            )
+            return left_segments + right_segments
+
     # ── silero 模式 ─────────────────────────────────────────────────
 
     def _transcribe_sync_silero(
@@ -765,33 +908,29 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
         self.vad.flush()
         _safe_progress(progress_cb, VAD_SHARE)
 
-        streams = []
-        vad_segments = []
+        decode_ranges: List[Tuple[int, int]] = []
         while not self.vad.empty():
-            start_time = self.vad.front.start / sample_rate
+            start_sample = int(self.vad.front.start)
             seg_samples = self.vad.front.samples
-            duration = len(seg_samples) / sample_rate
-
-            stream = self.recognizer.create_stream()
-            stream.accept_waveform(sample_rate, seg_samples)
-            streams.append(stream)
-            vad_segments.append((start_time, duration))
+            end_sample = start_sample + len(seg_samples)
+            decode_ranges.append((start_sample, end_sample))
             self.vad.pop()
 
-        total_streams = max(len(streams), 1)
+        total_streams = max(len(decode_ranges), 1)
         decode_report_interval = max(1, total_streams // 50)
-        for idx, s in enumerate(streams):
-            self.recognizer.decode_stream(s)
+        segments: List[Segment] = []
+        for idx, (start_sample, end_sample) in enumerate(decode_ranges):
+            segments.extend(
+                self._decode_segment_with_retry(
+                    samples,
+                    sample_rate,
+                    start_sample,
+                    end_sample,
+                )
+            )
             if (idx + 1) % decode_report_interval == 0 or (idx + 1) == total_streams:
                 progressed = VAD_SHARE + (1.0 - VAD_SHARE) * ((idx + 1) / total_streams)
                 _safe_progress(progress_cb, min(0.99, progressed))
-
-        segments: List[Segment] = []
-        for (start_time, duration), stream in zip(vad_segments, streams):
-            text = stream.result.text.strip()
-            if not text or text in (".", "The.", "。"):
-                continue
-            segments.append(Segment(start=start_time, end=start_time + duration, text=text))
 
         logger.info(f"silero VAD + ASR complete: {len(segments)} segments")
         _safe_progress(progress_cb, 1.0)
@@ -825,32 +964,36 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
                     f"(threshold auto-calibrated, min_silence={self.vad_min_silence_duration}s)")
         _safe_progress(progress_cb, SEG_SHARE)
 
-        streams = []
-        seg_times: List[Tuple[float, float]] = []
+        decode_ranges: List[Tuple[int, int]] = []
+        min_segment_samples = int(self.MIN_SEGMENT_DURATION_S * sample_rate)
         for start_frame, end_frame in regions:
             start_sample = start_frame * frame_size
             end_sample = min(end_frame * frame_size, len(samples))
-            seg_samples = samples[start_sample:end_sample]
 
-            stream = self.recognizer.create_stream()
-            stream.accept_waveform(sample_rate, seg_samples)
-            streams.append(stream)
-            seg_times.append((start_sample / sample_rate, end_sample / sample_rate))
+            # 跳过太短的片段
+            if (end_sample - start_sample) < min_segment_samples:
+                logger.debug(
+                    f"Skipping short segment: {(end_sample - start_sample)/sample_rate:.2f}s"
+                )
+                continue
 
-        total_streams = max(len(streams), 1)
+            decode_ranges.append((start_sample, end_sample))
+
+        total_streams = max(len(decode_ranges), 1)
         decode_report_interval = max(1, total_streams // 50)
-        for idx, s in enumerate(streams):
-            self.recognizer.decode_stream(s)
+        segments: List[Segment] = []
+        for idx, (start_sample, end_sample) in enumerate(decode_ranges):
+            segments.extend(
+                self._decode_segment_with_retry(
+                    samples,
+                    sample_rate,
+                    start_sample,
+                    end_sample,
+                )
+            )
             if (idx + 1) % decode_report_interval == 0 or (idx + 1) == total_streams:
                 progressed = SEG_SHARE + (1.0 - SEG_SHARE) * ((idx + 1) / total_streams)
                 _safe_progress(progress_cb, min(0.99, progressed))
-
-        segments: List[Segment] = []
-        for (start_time, end_time), stream in zip(seg_times, streams):
-            text = stream.result.text.strip()
-            if not text:
-                continue
-            segments.append(Segment(start=start_time, end=end_time, text=text))
 
         logger.info(f"Energy segmentation + ASR complete: {len(segments)} segments")
         _safe_progress(progress_cb, 1.0)
