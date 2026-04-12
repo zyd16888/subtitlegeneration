@@ -233,6 +233,8 @@ const Settings: React.FC = () => {
       // 过滤掉 undefined/null 字段，避免未加载或禁用字段覆盖数据库中的有效值
       // （例如 asr_model_id 由模型激活流程管理，不应通过全局保存清空）
       const payload = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== undefined && v !== null));
+      // 合并 langModelMap（不在 Form 中的独立 state）
+      payload.asr_language_model_map = langModelMap;
       await api.config.partialUpdateConfig(payload);
       message.success('核心配置库同步完成');
       setIsDirty(false);
