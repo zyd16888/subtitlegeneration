@@ -527,7 +527,7 @@ async def retry_task(
     db: Session = Depends(get_db)
 ):
     """
-    重试失败的任务
+    重试已结束的任务
     
     创建一个新任务，复制原任务的媒体项信息
     

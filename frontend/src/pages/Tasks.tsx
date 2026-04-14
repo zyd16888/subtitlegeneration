@@ -49,6 +49,7 @@ import { LANGUAGE_NAMES, TRANSLATION_SERVICE_NAMES, ASR_ENGINE_NAMES } from '../
 
 const { Option } = Select;
 const { Text, Title, Paragraph } = Typography;
+const RETRYABLE_TASK_STATUSES: TaskStatus[] = ['completed', 'failed', 'cancelled'];
 
 const Tasks: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -136,7 +137,14 @@ const Tasks: React.FC = () => {
     });
   };
 
-  const handleRetryTask = (taskId: string, mediaTitle?: string) => {
+  const canRetryTask = (status: TaskStatus) => RETRYABLE_TASK_STATUSES.includes(status);
+
+  const handleRetryTask = (
+    taskId: string,
+    mediaTitle?: string,
+    options?: { openNewTaskDetail?: boolean }
+  ) => {
+    const { openNewTaskDetail = false } = options || {};
     Modal.confirm({
       title: '确认重试任务',
       icon: <ExclamationCircleOutlined />,
@@ -151,9 +159,13 @@ const Tasks: React.FC = () => {
       cancelText: '取消',
       onOk: async () => {
         try {
-          await api.tasks.retryTask(taskId);
+          const newTask = await api.tasks.retryTask(taskId);
           message.success('任务已重新提交');
           fetchTasks();
+          if (openNewTaskDetail) {
+            setSelectedTask(null);
+            fetchTaskDetail(newTask.id);
+          }
         } catch (err: any) {
           message.error(err.message || '重试任务失败');
         }
@@ -435,6 +447,17 @@ const Tasks: React.FC = () => {
 
       <Drawer
         title={<Space><EyeOutlined /> 任务详细信息</Space>}
+        extra={
+          selectedTask && canRetryTask(selectedTask.status) ? (
+            <Button
+              type="primary"
+              icon={<ReloadOutlined />}
+              onClick={() => handleRetryTask(selectedTask.id, selectedTask.media_item_title, { openNewTaskDetail: true })}
+            >
+              重试任务
+            </Button>
+          ) : null
+        }
         placement="right"
         width={720}
         onClose={() => setDetailsVisible(false)}

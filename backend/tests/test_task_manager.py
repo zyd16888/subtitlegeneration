@@ -247,17 +247,17 @@ async def test_cancel_non_existent_task(task_manager):
 
 
 @pytest.mark.asyncio
-async def test_retry_task(task_manager):
-    """测试重试失败的任务"""
-    # 创建并标记为失败的任务
+@pytest.mark.parametrize("status", [TaskStatus.FAILED, TaskStatus.COMPLETED, TaskStatus.CANCELLED])
+async def test_retry_terminal_task(task_manager, status):
+    """测试可以重试已结束的任务"""
     original_task = await task_manager.create_task("media-1", "Movie 1", "/path/1.mp4")
     await task_manager.update_task_status(
         original_task.id,
-        TaskStatus.FAILED,
-        error_message="Test error"
+        status,
+        progress=100 if status == TaskStatus.COMPLETED else 50,
+        error_message="Test error" if status == TaskStatus.FAILED else None,
     )
     
-    # 重试任务
     new_task = await task_manager.retry_task(original_task.id)
     
     assert new_task is not None
@@ -271,21 +271,15 @@ async def test_retry_task(task_manager):
 
 
 @pytest.mark.asyncio
-async def test_retry_non_failed_task(task_manager):
-    """测试无法重试非失败状态的任务"""
-    # 创建待处理任务
+@pytest.mark.parametrize("status", [TaskStatus.PENDING, TaskStatus.PROCESSING])
+async def test_retry_non_terminal_task(task_manager, status):
+    """测试无法重试未结束状态的任务"""
     task = await task_manager.create_task("media-1", "Movie 1", "/path/1.mp4")
-    
-    # 尝试重试待处理任务
+
+    if status == TaskStatus.PROCESSING:
+        await task_manager.update_task_status(task.id, status, progress=50)
+
     new_task = await task_manager.retry_task(task.id)
-    assert new_task is None
-    
-    # 创建已完成任务
-    completed_task = await task_manager.create_task("media-2", "Movie 2", "/path/2.mp4")
-    await task_manager.update_task_status(completed_task.id, TaskStatus.COMPLETED, progress=100)
-    
-    # 尝试重试已完成任务
-    new_task = await task_manager.retry_task(completed_task.id)
     assert new_task is None
 
 
