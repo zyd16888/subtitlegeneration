@@ -527,7 +527,7 @@ async def retry_task(
     db: Session = Depends(get_db)
 ):
     """
-    重试已结束的任务
+    重试任务
     
     创建一个新任务，复制原任务的媒体项信息
     
@@ -543,36 +543,51 @@ async def retry_task(
         new_task = await task_manager.retry_task(task_id)
         
         if new_task is None:
-            task = await task_manager.get_task(task_id)
-            if task is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"任务 {task_id} 不存在"
-                )
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"任务 {task_id} 无法重试（当前状态: {task.status}）"
-                )
+            raise HTTPException(
+                status_code=404,
+                detail=f"任务 {task_id} 不存在"
+            )
         
-        # 从原任务的 extra_info 恢复多语言配置
+        # 重试使用当前全局处理配置，便于调整模型/翻译参数后重新跑同一媒体。
+        config_manager = ConfigManager(db)
+        config = await config_manager.get_config()
+        retry_target_languages = (
+            list(config.target_languages)
+            if config.target_languages
+            else [config.target_language]
+        )
+        retry_keep_source = bool(config.keep_source_subtitle)
+        retry_primary_target = (
+            retry_target_languages[0] if retry_target_languages else config.target_language
+        )
+
+        new_task.asr_engine = config.asr_engine
+        new_task.asr_model_id = getattr(config, "asr_model_id", None)
+        new_task.translation_service = config.translation_service
+        new_task.source_language = config.source_language
+        new_task.target_language = retry_primary_target
+        db.commit()
+        db.refresh(new_task)
+
+        # 保留任务来源信息，避免 Telegram 来源任务重试后无法通知用户。
         original_task = await task_manager.get_task(task_id)
         original_extra = (original_task.extra_info or {}) if original_task else {}
-        retry_target_languages = original_extra.get("target_languages")
-        retry_keep_source = original_extra.get("keep_source_subtitle")
+        retry_extra = {
+            "target_languages": retry_target_languages,
+            "keep_source_subtitle": retry_keep_source,
+        }
+        telegram_user_id = (
+            original_extra.get("telegram_user_id")
+            or (original_task.telegram_user_id if original_task else None)
+        )
+        if telegram_user_id:
+            retry_extra["telegram_user_id"] = telegram_user_id
 
-        # 把多语言信息写入新任务的 extra_info
-        if retry_target_languages is not None or retry_keep_source is not None:
-            try:
-                await task_manager.update_task_result(
-                    new_task.id,
-                    extra_info={
-                        "target_languages": retry_target_languages,
-                        "keep_source_subtitle": retry_keep_source,
-                    },
-                )
-            except Exception:
-                pass
+        # 把本次实际使用的多语言/来源信息写入新任务的 extra_info
+        try:
+            await task_manager.update_task_result(new_task.id, extra_info=retry_extra)
+        except Exception:
+            pass
 
         # 提交 Celery 任务
         generate_subtitle_task.apply_async(

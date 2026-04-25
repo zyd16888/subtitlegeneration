@@ -22,7 +22,7 @@ services:
       # 字幕回写需挂载 Emby 媒体目录，例如:
       # - /your/emby/media:/mnt/media
     environment:
-      - DATABASE_URL=sqlite:////data/subtitle_service.db
+      - DATABASE_URL=sqlite:////app/data/subtitle_service.db
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0

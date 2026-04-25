@@ -39,7 +39,7 @@ async def admin_stats(
         config_manager = ConfigManager(db)
         config = await config_manager.get_config()
 
-        active_tasks = db.query(Task).filter(
+        queued_or_running_tasks = db.query(Task).filter(
             Task.status.in_([TaskStatus.PENDING, TaskStatus.PROCESSING])
         ).count()
 
@@ -55,7 +55,8 @@ async def admin_stats(
             f"  👥 总用户: {total_users}\n"
             f"  ✅ 已绑定: {bound_users}\n"
             f"  🚫 已封禁: {banned_users}\n\n"
-            f"系统负载: {active_tasks}/{config.max_concurrent_tasks}"
+            f"执行并发: {stats.processing}/{config.max_concurrent_tasks}\n"
+            f"队列占用: {queued_or_running_tasks}"
         )
     except Exception as e:
         logger.error(f"获取统计异常: {e}")

@@ -79,6 +79,7 @@ celery_app.conf.update(
     
     # 任务路由
     task_routes={
+        "backend.tasks.subtitle_tasks.*": {"queue": "subtitle_generation"},
         "tasks.subtitle_tasks.*": {"queue": "subtitle_generation"},
     },
     

@@ -18,6 +18,30 @@ logger = logging.getLogger(__name__)
 
 # backend/ 目录（celery 需在此目录下运行，才能 import tasks.celery_app）
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
+_WORKER_POOL = "threads"
+_WORKER_QUEUES = "celery,subtitle_generation"
+
+
+def _load_worker_concurrency(default: int = 2) -> int:
+    """读取当前 worker 并发数配置。"""
+    try:
+        from models.base import SessionLocal
+        from models.config import SystemConfig
+
+        db = SessionLocal()
+        try:
+            row = db.query(SystemConfig).filter(
+                SystemConfig.key == "max_concurrent_tasks"
+            ).first()
+            if row and row.value:
+                value = int(str(row.value).strip('"'))
+                if 1 <= value <= 16:
+                    return value
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"读取 worker 并发数失败，使用默认值 {default}: {e}")
+    return default
 
 
 class WorkerManager:
@@ -55,6 +79,7 @@ class WorkerManager:
             if self.is_running():
                 return {"running": True, "message": "Worker 已在运行"}
 
+            concurrency = _load_worker_concurrency()
             cmd = [
                 sys.executable,
                 "-m",
@@ -63,6 +88,9 @@ class WorkerManager:
                 "tasks.celery_app",
                 "worker",
                 "--loglevel=info",
+                f"--pool={_WORKER_POOL}",
+                f"--concurrency={concurrency}",
+                f"--queues={_WORKER_QUEUES}",
             ]
 
             popen_kwargs: Dict[str, Any] = {
@@ -78,10 +106,16 @@ class WorkerManager:
             try:
                 self._process = subprocess.Popen(cmd, **popen_kwargs)
                 self._started_at = time.time()
-                logger.info(f"Celery worker 已启动, PID={self._process.pid}")
+                logger.info(
+                    f"Celery worker 已启动, PID={self._process.pid}, "
+                    f"pool={_WORKER_POOL}, concurrency={concurrency}, queues={_WORKER_QUEUES}"
+                )
                 return {
                     "running": True,
-                    "message": f"Worker 已启动 (PID {self._process.pid})",
+                    "message": (
+                        f"Worker 已启动 (PID {self._process.pid}, "
+                        f"并发 {concurrency})"
+                    ),
                 }
             except Exception as e:
                 logger.error(f"启动 Celery worker 失败: {e}")

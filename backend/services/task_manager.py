@@ -11,12 +11,6 @@ import uuid
 
 from models.task import Task, TaskStatus
 
-RETRYABLE_TASK_STATUSES = {
-    TaskStatus.COMPLETED,
-    TaskStatus.FAILED,
-    TaskStatus.CANCELLED,
-}
-
 
 class TaskStatistics:
     """任务统计信息"""
@@ -337,25 +331,21 @@ class TaskManager:
     
     async def retry_task(self, task_id: str) -> Optional[Task]:
         """
-        重试已结束的任务
-        
+        重试任务
+
         创建一个新任务，复制原任务的媒体项信息和配置
-        
+
         Args:
             task_id: 原任务 ID
             
         Returns:
-            新创建的任务对象，如果原任务不存在或不是可重试终态则返回 None
+            新创建的任务对象，如果原任务不存在则返回 None
         """
         original_task = await self.get_task(task_id)
-        
+
         if original_task is None:
             return None
-        
-        # 只允许重试已经结束的任务，避免与正在排队/执行中的任务并发冲突
-        if original_task.status not in RETRYABLE_TASK_STATUSES:
-            return None
-        
+
         # 创建新任务，复制原任务的配置（包括用户信息）
         new_task = await self.create_task(
             media_item_id=original_task.media_item_id,

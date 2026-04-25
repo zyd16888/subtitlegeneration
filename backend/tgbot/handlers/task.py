@@ -60,13 +60,6 @@ async def _create_subtitle_task(
         if quota_msg:
             return False, f"❌ {quota_msg}"
 
-        # 系统全局并发检查
-        active_count = db.query(Task).filter(
-            Task.status.in_([TaskStatus.PENDING, TaskStatus.PROCESSING])
-        ).count()
-        if active_count >= config.max_concurrent_tasks:
-            return False, "❌ 系统繁忙，请稍后重试"
-
         # 获取媒体信息
         if not config.emby_url or not config.emby_api_key:
             return False, "❌ Emby 服务未配置"

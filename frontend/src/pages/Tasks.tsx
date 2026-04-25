@@ -49,7 +49,6 @@ import { LANGUAGE_NAMES, TRANSLATION_SERVICE_NAMES, ASR_ENGINE_NAMES } from '../
 
 const { Option } = Select;
 const { Text, Title, Paragraph } = Typography;
-const RETRYABLE_TASK_STATUSES: TaskStatus[] = ['completed', 'failed', 'cancelled'];
 
 const Tasks: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -137,8 +136,6 @@ const Tasks: React.FC = () => {
     });
   };
 
-  const canRetryTask = (status: TaskStatus) => RETRYABLE_TASK_STATUSES.includes(status);
-
   const handleRetryTask = (
     taskId: string,
     mediaTitle?: string,
@@ -152,7 +149,9 @@ const Tasks: React.FC = () => {
         <div>
           <p>确定要重试以下任务吗？</p>
           {mediaTitle && <p style={{ fontWeight: 'bold' }}>{mediaTitle}</p>}
-          <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>将创建新的任务并重新开始处理。</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
+            将使用当前配置创建新的任务，不会取消或覆盖原任务。
+          </p>
         </div>
       ),
       okText: '确认重试',
@@ -370,11 +369,9 @@ const Tasks: React.FC = () => {
               <Button type="text" danger icon={<StopOutlined />} onClick={() => handleCancelTask(record.id, record.media_item_title)} />
             </Tooltip>
           )}
-          {record.status === 'failed' && (
-            <Tooltip title="重试任务">
-              <Button type="text" style={{ color: '#1677ff' }} icon={<ReloadOutlined />} onClick={() => handleRetryTask(record.id, record.media_item_title)} />
-            </Tooltip>
-          )}
+          <Tooltip title="重试任务">
+            <Button type="text" style={{ color: '#1677ff' }} icon={<ReloadOutlined />} onClick={() => handleRetryTask(record.id, record.media_item_title)} />
+          </Tooltip>
         </Space>
       ),
     },
@@ -448,7 +445,7 @@ const Tasks: React.FC = () => {
       <Drawer
         title={<Space><EyeOutlined /> 任务详细信息</Space>}
         extra={
-          selectedTask && canRetryTask(selectedTask.status) ? (
+          selectedTask ? (
             <Button
               type="primary"
               icon={<ReloadOutlined />}
