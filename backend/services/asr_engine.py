@@ -1227,15 +1227,15 @@ class GroqASRProvider(CloudASRProvider):
             with open(audio_path, "rb") as f:
                 audio_data = f.read()
 
-            data = [
-                ("model", self.model),
-                ("response_format", "verbose_json"),
-                ("timestamp_granularities[]", "segment"),
-            ]
+            data = {
+                "model": self.model,
+                "response_format": "verbose_json",
+                "timestamp_granularities[]": "segment",
+            }
             if language:
-                data.append(("language", language))
+                data["language"] = language
             if self.prompt:
-                data.append(("prompt", self.prompt))
+                data["prompt"] = self.prompt
 
             files = {
                 "file": (os.path.basename(audio_path), audio_data, "audio/flac"),
@@ -1260,16 +1260,16 @@ class GroqASRProvider(CloudASRProvider):
         try:
             import httpx
 
-            data = [
-                ("model", self.model),
-                ("url", audio_url),
-                ("response_format", "verbose_json"),
-                ("timestamp_granularities[]", "segment"),
-            ]
+            data = {
+                "model": self.model,
+                "url": audio_url,
+                "response_format": "verbose_json",
+                "timestamp_granularities[]": "segment",
+            }
             if language:
-                data.append(("language", language))
+                data["language"] = language
             if self.prompt:
-                data.append(("prompt", self.prompt))
+                data["prompt"] = self.prompt
 
             headers = {"Authorization": f"Bearer {self.api_key}"}
             async with httpx.AsyncClient(timeout=300.0) as client:
