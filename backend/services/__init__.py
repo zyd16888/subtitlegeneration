@@ -4,7 +4,16 @@
 from .config_manager import ConfigManager, SystemConfigData, ValidationResult
 from .emby_connector import EmbyConnector, Library, MediaItem
 from .audio_extractor import AudioExtractor
-from .asr_engine import ASREngine, SherpaOnnxEngine, SherpaOnnxOnlineEngine, SherpaOnnxOfflineEngine, CloudASREngine, Segment
+from .asr_engine import (
+    ASREngine,
+    SherpaOnnxEngine,
+    SherpaOnnxOnlineEngine,
+    SherpaOnnxOfflineEngine,
+    CloudASREngine,
+    CloudASRProvider,
+    GroqASRProvider,
+    Segment,
+)
 from .model_manager import ModelManager, ModelRegistry, SUPPORTED_LANGUAGES
 from .translation_service import (
     TranslationService,
@@ -28,6 +37,8 @@ __all__ = [
     "SherpaOnnxOnlineEngine",
     "SherpaOnnxOfflineEngine",
     "CloudASREngine",
+    "CloudASRProvider",
+    "GroqASRProvider",
     "ModelManager",
     "SUPPORTED_LANGUAGES",
     "ModelRegistry",

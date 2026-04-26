@@ -125,11 +125,16 @@ async def get_statistics(db: Session = Depends(get_db)):
             else:
                 asr_message = "sherpa-onnx 引擎缺少模型路径"
         elif config.asr_engine == "cloud":
-            if config.cloud_asr_url and config.cloud_asr_api_key:
+            if (
+                config.cloud_asr_provider == "groq"
+                and config.groq_asr_api_key
+                and config.groq_asr_model
+                and config.groq_asr_base_url
+            ):
                 asr_configured = True
-                asr_message = f"已配置 (云端 ASR)"
+                asr_message = f"已配置 (Groq ASR: {config.groq_asr_model})"
             else:
-                asr_message = "云端 ASR 缺少 URL 或 API Key"
+                asr_message = "Groq ASR 缺少 API Key、模型或 Base URL"
         
         # 检查翻译服务配置
         translation_configured = False

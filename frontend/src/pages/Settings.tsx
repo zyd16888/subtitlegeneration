@@ -278,8 +278,12 @@ const Settings: React.FC = () => {
         asr_engine: form.getFieldValue('asr_engine'),
         asr_model_id: form.getFieldValue('asr_model_id'),
         max_concurrent_tasks: form.getFieldValue('max_concurrent_tasks'),
-        cloud_asr_url: form.getFieldValue('cloud_asr_url'),
-        cloud_asr_api_key: form.getFieldValue('cloud_asr_api_key'),
+        cloud_asr_provider: form.getFieldValue('cloud_asr_provider'),
+        groq_asr_api_key: form.getFieldValue('groq_asr_api_key'),
+        groq_asr_model: form.getFieldValue('groq_asr_model'),
+        groq_asr_base_url: form.getFieldValue('groq_asr_base_url'),
+        groq_asr_public_audio_base_url: form.getFieldValue('groq_asr_public_audio_base_url'),
+        groq_asr_prompt: form.getFieldValue('groq_asr_prompt'),
       });
       message.success('引擎配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
@@ -698,12 +702,49 @@ const Settings: React.FC = () => {
               </Row>
             </div>
             <div className="engine-block cloud">
-              <div className="engine-label"><CloudServerOutlined style={{ marginRight: 6 }} />云端 API 配置</div>
+              <div className="engine-label"><CloudServerOutlined style={{ marginRight: 6 }} />云端厂商配置</div>
               <Row gutter={24}>
-                <Col span={12}><Form.Item name="cloud_asr_url" label="API 服务地址"><Input placeholder="https://api.example.com/asr" /></Form.Item></Col>
-                <Col span={12}><Form.Item name="cloud_asr_api_key" label="API 密钥"><Input.Password placeholder="输入云端 API Key" /></Form.Item></Col>
+                <Col span={8}>
+                  <Form.Item name="cloud_asr_provider" label="云端厂商" initialValue="groq">
+                    <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                      <Option value="groq">Groq</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="groq_asr_model" label="Groq 模型" initialValue="whisper-large-v3-turbo">
+                    <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                      <Option value="whisper-large-v3-turbo">whisper-large-v3-turbo</Option>
+                      <Option value="whisper-large-v3">whisper-large-v3</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="groq_asr_api_key" label="Groq API Key">
+                    <Input.Password placeholder="gsk_..." />
+                  </Form.Item>
+                </Col>
               </Row>
-              <Text type="secondary" style={{ fontSize: 12 }}>配置云端 API 后，可在创建任务时选择使用云端识别（速度更快，需要网络）</Text>
+              <Row gutter={24}>
+                <Col span={12}>
+                  <Form.Item name="groq_asr_base_url" label="Groq Base URL" initialValue="https://api.groq.com/openai/v1">
+                    <Input placeholder="https://api.groq.com/openai/v1" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="groq_asr_public_audio_base_url" label="公网音频访问地址">
+                    <Input placeholder="https://subtitle.790366.xyz" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={24}>
+                <Col span={12}>
+                  <Form.Item name="groq_asr_prompt" label="识别 Prompt">
+                    <Input placeholder="可选：提供专有名词、角色名或上下文提示" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Text type="secondary" style={{ fontSize: 12 }}>公网音频访问地址用于大于 24MB 的 FLAC 音频，系统会生成短期签名 URL 供 Groq 拉取；留空时自动回退本地切片。</Text>
             </div>
           </div>
           <div className="cat-footer">

@@ -22,6 +22,7 @@ from services.asr_engine import (
     SherpaOnnxOfflineEngine,
     SherpaOnnxVadOfflineEngine,
     CloudASREngine,
+    GroqASRProvider,
     Segment,
 )
 from services.translation_service import (
@@ -186,10 +187,21 @@ def _get_asr_engine(config, source_language: str = None) -> ASREngine:
         logger.info(f"Using config default language: {source_lang}")
     
     if config.asr_engine == "cloud":
-        if not config.cloud_asr_url or not config.cloud_asr_api_key:
-            raise ValueError("云端 ASR 引擎需要配置 API URL 和 API Key")
-        logger.info(f"Creating CloudASREngine with URL: {config.cloud_asr_url}")
-        return CloudASREngine(config.cloud_asr_url, config.cloud_asr_api_key)
+        provider = getattr(config, "cloud_asr_provider", "groq")
+        logger.info(f"Cloud ASR provider: {provider}")
+        if provider == "groq":
+            if not config.groq_asr_api_key:
+                raise ValueError("Groq ASR 需要配置 API Key")
+            groq_provider = GroqASRProvider(
+                api_key=config.groq_asr_api_key,
+                model=config.groq_asr_model,
+                base_url=config.groq_asr_base_url,
+                public_audio_base_url=config.groq_asr_public_audio_base_url,
+                prompt=config.groq_asr_prompt,
+            )
+            logger.info(f"Creating CloudASREngine with Groq model: {config.groq_asr_model}")
+            return CloudASREngine(groq_provider)
+        raise ValueError(f"不支持的云端 ASR 厂商: {provider}")
 
     if config.asr_engine == "sherpa-onnx":
         # 优先使用 model_id

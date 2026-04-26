@@ -110,9 +110,8 @@ def test_validate_config_cloud_asr_without_credentials(client):
     else:
         db.add(SystemConfig(key="asr_engine", value='"cloud"'))
     
-    # 删除云端 ASR 凭证
-    db.query(SystemConfig).filter(SystemConfig.key == "cloud_asr_url").delete()
-    db.query(SystemConfig).filter(SystemConfig.key == "cloud_asr_api_key").delete()
+    # 删除 Groq ASR 凭证
+    db.query(SystemConfig).filter(SystemConfig.key == "groq_asr_api_key").delete()
     db.commit()
     db.close()
     
@@ -121,8 +120,7 @@ def test_validate_config_cloud_asr_without_credentials(client):
     
     data = response.json()
     assert data["is_valid"] is False
-    assert "云端 ASR URL" in data["missing_fields"]
-    assert "云端 ASR API Key" in data["missing_fields"]
+    assert "Groq ASR API Key" in data["missing_fields"]
 
 
 def test_validate_config_openai_without_key(client):
@@ -193,8 +191,10 @@ def test_validate_config_local_llm(client):
         "emby_url": "http://localhost:8096",
         "emby_api_key": "test_key",
         "asr_engine": "cloud",
-        "cloud_asr_url": "http://localhost:5000",
-        "cloud_asr_api_key": "test_asr_key",
+        "cloud_asr_provider": "groq",
+        "groq_asr_api_key": "test_asr_key",
+        "groq_asr_model": "whisper-large-v3-turbo",
+        "groq_asr_base_url": "https://api.groq.com/openai/v1",
         "translation_service": "local",
         "local_llm_url": "http://localhost:11434"
     })

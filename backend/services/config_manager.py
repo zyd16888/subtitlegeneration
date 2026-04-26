@@ -28,8 +28,12 @@ class SystemConfigData(BaseModel):
     asr_engine: str = "sherpa-onnx"  # sherpa-onnx 或 cloud
     asr_model_path: Optional[str] = None
     asr_model_id: Optional[str] = None
-    cloud_asr_url: Optional[str] = None
-    cloud_asr_api_key: Optional[str] = None
+    cloud_asr_provider: str = "groq"
+    groq_asr_api_key: Optional[str] = None
+    groq_asr_model: str = "whisper-large-v3-turbo"
+    groq_asr_base_url: str = "https://api.groq.com/openai/v1"
+    groq_asr_public_audio_base_url: Optional[str] = None
+    groq_asr_prompt: Optional[str] = None
 
     # 语言配置
     source_language: str = "ja"
@@ -119,7 +123,13 @@ class SystemConfigData(BaseModel):
     # GitHub Token（可选，用于提高模型下载 API 速率限制）
     github_token: Optional[str] = None
     
-    @field_validator('emby_url', 'cloud_asr_url', 'local_llm_url', 'deeplx_url')
+    @field_validator(
+        'emby_url',
+        'groq_asr_base_url',
+        'groq_asr_public_audio_base_url',
+        'local_llm_url',
+        'deeplx_url',
+    )
     @classmethod
     def validate_url(cls, v: Optional[str]) -> Optional[str]:
         """验证 URL 格式"""
@@ -136,6 +146,14 @@ class SystemConfigData(BaseModel):
         """验证 ASR 引擎类型"""
         if v not in ['sherpa-onnx', 'cloud']:
             raise ValueError('ASR 引擎必须是 sherpa-onnx 或 cloud')
+        return v
+
+    @field_validator('cloud_asr_provider')
+    @classmethod
+    def validate_cloud_asr_provider(cls, v: str) -> str:
+        """验证云端 ASR 厂商"""
+        if v not in ['groq']:
+            raise ValueError('云端 ASR 厂商必须是 groq')
         return v
     
     @field_validator('source_language_detection')
@@ -448,16 +466,31 @@ class ConfigManager:
                 errors.append("Emby API Key 已配置但缺少 URL")
         
         # 验证 ASR 配置（只在相关字段更新时验证）
-        if 'asr_engine' in updated_keys or 'asr_model_path' in updated_keys or 'asr_model_id' in updated_keys or 'cloud_asr_url' in updated_keys or 'cloud_asr_api_key' in updated_keys:
+        asr_keys = {
+            'asr_engine',
+            'asr_model_path',
+            'asr_model_id',
+            'cloud_asr_provider',
+            'groq_asr_api_key',
+            'groq_asr_model',
+            'groq_asr_base_url',
+            'groq_asr_public_audio_base_url',
+            'groq_asr_prompt',
+        }
+        if asr_keys & updated_keys:
             if config.asr_engine == "sherpa-onnx":
                 # 必须配置模型路径或模型ID（二选一）
                 if not config.asr_model_path and not config.asr_model_id:
                     errors.append("使用 sherpa-onnx 引擎时必须配置模型路径或选择模型")
             if config.asr_engine == "cloud":
-                if not config.cloud_asr_url:
-                    errors.append("使用云端 ASR 时必须配置 API URL")
-                if not config.cloud_asr_api_key:
-                    errors.append("使用云端 ASR 时必须配置 API Key")
+                if config.cloud_asr_provider != "groq":
+                    errors.append("当前仅支持 Groq 云端 ASR")
+                if not config.groq_asr_api_key:
+                    errors.append("使用 Groq ASR 时必须配置 API Key")
+                if not config.groq_asr_model:
+                    errors.append("使用 Groq ASR 时必须配置模型")
+                if not config.groq_asr_base_url:
+                    errors.append("使用 Groq ASR 时必须配置 Base URL")
         
         # 验证翻译服务配置（只在相关字段更新时验证）
         translation_keys = {'translation_service', 'openai_api_key', 'openai_model', 'openai_base_url', 'deepseek_api_key', 'local_llm_url'}
@@ -538,10 +571,14 @@ class ConfigManager:
             if not config.asr_model_path and not config.asr_model_id:
                 errors.append("使用 sherpa-onnx 引擎时必须配置模型路径或选择模型")
         if config.asr_engine == "cloud":
-            if not config.cloud_asr_url:
-                errors.append("使用云端 ASR 时必须配置 API URL")
-            if not config.cloud_asr_api_key:
-                errors.append("使用云端 ASR 时必须配置 API Key")
+            if config.cloud_asr_provider != "groq":
+                errors.append("当前仅支持 Groq 云端 ASR")
+            if not config.groq_asr_api_key:
+                errors.append("使用 Groq ASR 时必须配置 API Key")
+            if not config.groq_asr_model:
+                errors.append("使用 Groq ASR 时必须配置模型")
+            if not config.groq_asr_base_url:
+                errors.append("使用 Groq ASR 时必须配置 Base URL")
         
         # 验证翻译服务配置
         if config.translation_service == "openai" and not config.openai_api_key:

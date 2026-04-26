@@ -57,13 +57,25 @@ def test_get_asr_engine_cloud():
     """测试创建云端 ASR 引擎"""
     config = SystemConfigData(
         asr_engine="cloud",
-        cloud_asr_url="https://api.example.com",
-        cloud_asr_api_key="test-key"
+        cloud_asr_provider="groq",
+        groq_asr_api_key="test-key",
+        groq_asr_model="whisper-large-v3-turbo",
+        groq_asr_base_url="https://api.groq.com/openai/v1",
     )
     
-    with patch("backend.tasks.subtitle_tasks.CloudASREngine") as mock_engine:
+    with patch("backend.tasks.subtitle_tasks.GroqASRProvider") as mock_provider, \
+            patch("backend.tasks.subtitle_tasks.CloudASREngine") as mock_engine:
+        provider_instance = Mock()
+        mock_provider.return_value = provider_instance
         _get_asr_engine(config)
-        mock_engine.assert_called_once_with("https://api.example.com", "test-key")
+        mock_provider.assert_called_once_with(
+            api_key="test-key",
+            model="whisper-large-v3-turbo",
+            base_url="https://api.groq.com/openai/v1",
+            public_audio_base_url=None,
+            prompt=None,
+        )
+        mock_engine.assert_called_once_with(provider_instance)
 
 
 def test_get_asr_engine_invalid():

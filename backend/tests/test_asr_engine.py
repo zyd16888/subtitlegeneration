@@ -5,7 +5,13 @@ Unit tests for ASR Engine module
 import pytest
 import asyncio
 from unittest.mock import Mock, patch, AsyncMock
-from backend.services.asr_engine import ASREngine, SherpaOnnxEngine, CloudASREngine, Segment
+from backend.services.asr_engine import (
+    ASREngine,
+    SherpaOnnxEngine,
+    CloudASREngine,
+    GroqASRProvider,
+    Segment,
+)
 
 
 class TestSegment:
@@ -34,34 +40,27 @@ class TestCloudASREngine:
     
     def test_initialization(self):
         """Test CloudASREngine initialization"""
-        engine = CloudASREngine(
-            api_url="https://api.example.com",
-            api_key="test_key"
-        )
+        provider = Mock()
+        engine = CloudASREngine(provider)
         
-        assert engine.api_url == "https://api.example.com"
-        assert engine.api_key == "test_key"
-    
-    def test_initialization_empty_url(self):
-        """Test CloudASREngine initialization with empty URL"""
-        with pytest.raises(ValueError, match="API URL cannot be empty"):
-            CloudASREngine(api_url="", api_key="test_key")
-    
-    def test_initialization_empty_key(self):
-        """Test CloudASREngine initialization with empty API key"""
-        with pytest.raises(ValueError, match="API key cannot be empty"):
-            CloudASREngine(api_url="https://api.example.com", api_key="")
+        assert engine.provider is provider
     
     @pytest.mark.asyncio
     async def test_transcribe_file_not_found(self):
         """Test transcribe with non-existent audio file"""
-        engine = CloudASREngine(
-            api_url="https://api.example.com",
-            api_key="test_key"
-        )
+        engine = CloudASREngine(Mock())
         
         with pytest.raises(FileNotFoundError):
             await engine.transcribe("/nonexistent/audio.wav")
+
+
+class TestGroqASRProvider:
+    """Test Groq ASR provider implementation"""
+
+    def test_initialization_empty_key(self):
+        """Test Groq provider initialization with empty API key"""
+        with pytest.raises(ValueError, match="Groq API key cannot be empty"):
+            GroqASRProvider(api_key="")
     
     @pytest.mark.asyncio
     async def test_transcribe_success_with_segments(self, tmp_path):
@@ -69,11 +68,10 @@ class TestCloudASREngine:
         # Create a temporary audio file
         audio_file = tmp_path / "test.wav"
         audio_file.write_bytes(b"fake audio data")
+        flac_file = tmp_path / "test.flac"
+        flac_file.write_bytes(b"fake flac data")
         
-        engine = CloudASREngine(
-            api_url="https://api.example.com",
-            api_key="test_key"
-        )
+        provider = GroqASRProvider(api_key="test_key")
         
         # Mock httpx response
         mock_response = Mock()
@@ -85,12 +83,14 @@ class TestCloudASREngine:
         }
         mock_response.raise_for_status = Mock()
         
-        with patch('httpx.AsyncClient') as mock_client:
+        with patch.object(provider, '_convert_to_flac', return_value=str(flac_file)), \
+                patch('backend.services.asr_engine._get_audio_duration', return_value=5.0), \
+                patch('httpx.AsyncClient') as mock_client:
             mock_client.return_value.__aenter__.return_value.post = AsyncMock(
                 return_value=mock_response
             )
             
-            segments = await engine.transcribe(str(audio_file))
+            segments = await provider.transcribe(str(audio_file), language="ja")
             
             assert len(segments) == 2
             assert segments[0].start == 0.0
@@ -106,11 +106,10 @@ class TestCloudASREngine:
         # Create a temporary audio file
         audio_file = tmp_path / "test.wav"
         audio_file.write_bytes(b"fake audio data")
+        flac_file = tmp_path / "test.flac"
+        flac_file.write_bytes(b"fake flac data")
         
-        engine = CloudASREngine(
-            api_url="https://api.example.com",
-            api_key="test_key"
-        )
+        provider = GroqASRProvider(api_key="test_key")
         
         # Mock httpx response
         mock_response = Mock()
@@ -119,18 +118,19 @@ class TestCloudASREngine:
         }
         mock_response.raise_for_status = Mock()
         
-        with patch('httpx.AsyncClient') as mock_client:
+        with patch.object(provider, '_convert_to_flac', return_value=str(flac_file)), \
+                patch('backend.services.asr_engine._get_audio_duration', return_value=5.0), \
+                patch('httpx.AsyncClient') as mock_client:
             mock_client.return_value.__aenter__.return_value.post = AsyncMock(
                 return_value=mock_response
             )
             
-            with patch.object(engine, '_get_audio_duration', return_value=5.0):
-                segments = await engine.transcribe(str(audio_file))
-                
-                assert len(segments) == 1
-                assert segments[0].start == 0.0
-                assert segments[0].end == 5.0
-                assert segments[0].text == "こんにちは世界"
+            segments = await provider.transcribe(str(audio_file), language="ja")
+
+            assert len(segments) == 1
+            assert segments[0].start == 0.0
+            assert segments[0].end == 5.0
+            assert segments[0].text == "こんにちは世界"
 
 
 class TestSherpaOnnxEngine:

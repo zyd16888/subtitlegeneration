@@ -146,8 +146,12 @@ export interface SystemConfig {
   asr_engine: 'sherpa-onnx' | 'cloud';
   asr_model_path?: string;
   asr_model_id?: string;
-  cloud_asr_url?: string;
-  cloud_asr_api_key?: string;
+  cloud_asr_provider?: 'groq';
+  groq_asr_api_key?: string;
+  groq_asr_model?: string;
+  groq_asr_base_url?: string;
+  groq_asr_public_audio_base_url?: string;
+  groq_asr_prompt?: string;
 
   // 语言检测与自适应模型选择
   enable_language_detection?: boolean;    // 启用音频语言检测（Whisper LID）

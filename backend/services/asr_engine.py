@@ -12,13 +12,18 @@ Supports:
 import asyncio
 import logging
 import os
+import shutil
+import tempfile
 import wave
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
+import ffmpeg
 import numpy as np
 import sherpa_onnx
+
+from services.signed_url import create_asr_audio_token
 
 logger = logging.getLogger(__name__)
 
@@ -1003,16 +1008,361 @@ class SherpaOnnxVadOfflineEngine(ASREngine):
 # ── Cloud ASR Engine ────────────────────────────────────────────────────────
 
 
+class CloudASRProvider(ABC):
+    """云端 ASR 厂商适配接口。"""
+
+    @abstractmethod
+    async def transcribe(
+        self,
+        audio_path: str,
+        language: str = None,
+    ) -> List[Segment]:
+        """调用厂商 API 并返回统一的字幕段。"""
+        pass
+
+
+class GroqASRProvider(CloudASRProvider):
+    """Groq Speech-to-Text adapter."""
+
+    DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+    DEFAULT_MODEL = "whisper-large-v3-turbo"
+    MAX_UPLOAD_BYTES = 24 * 1024 * 1024
+    CHUNK_OVERLAP_SECONDS = 1.5
+    MAX_CHUNK_SECONDS = 600.0
+    MIN_CHUNK_SECONDS = 30.0
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_MODEL,
+        base_url: Optional[str] = None,
+        public_audio_base_url: Optional[str] = None,
+        prompt: Optional[str] = None,
+    ):
+        if not api_key:
+            raise ValueError("Groq API key cannot be empty")
+        self.api_key = api_key
+        self.model = model or self.DEFAULT_MODEL
+        self.base_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        self.public_audio_base_url = (public_audio_base_url or "").rstrip("/")
+        self.prompt = prompt
+
+    async def transcribe(
+        self,
+        audio_path: str,
+        language: str = None,
+    ) -> List[Segment]:
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+        work_dir = self._prepare_work_dir(audio_path)
+        try:
+            flac_path = self._convert_to_flac(audio_path, work_dir)
+            flac_size = os.path.getsize(flac_path)
+            duration = _get_audio_duration(flac_path)
+
+            if flac_size <= self.MAX_UPLOAD_BYTES:
+                logger.info(
+                    "Groq ASR direct upload: file=%s size=%.2fMB duration=%.1fs",
+                    flac_path,
+                    flac_size / 1024 / 1024,
+                    duration,
+                )
+                result = await self._request_transcription(flac_path, language)
+                return self._parse_response(result, flac_path)
+
+            if self.public_audio_base_url:
+                audio_url = self._build_signed_audio_url(flac_path)
+                try:
+                    logger.info(
+                        "Groq ASR URL upload: url=%s size=%.2fMB duration=%.1fs",
+                        audio_url.split("?", 1)[0],
+                        flac_size / 1024 / 1024,
+                        duration,
+                    )
+                    result = await self._request_transcription_url(audio_url, language)
+                    return self._parse_response(result, flac_path)
+                except Exception as e:
+                    logger.warning("Groq ASR URL transcription failed, fallback to chunks: %s", e)
+
+            logger.info(
+                "Groq ASR chunking required: file=%s size=%.2fMB duration=%.1fs",
+                flac_path,
+                flac_size / 1024 / 1024,
+                duration,
+            )
+            return await self._transcribe_chunks(flac_path, language, duration, work_dir)
+        finally:
+            try:
+                shutil.rmtree(work_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning("Failed to cleanup Groq ASR temp dir %s: %s", work_dir, e)
+
+    def _prepare_work_dir(self, audio_path: str) -> str:
+        task_dir = os.path.dirname(audio_path) or None
+        if task_dir:
+            work_dir = os.path.join(task_dir, "groq_asr")
+            if os.path.isdir(work_dir):
+                shutil.rmtree(work_dir, ignore_errors=True)
+            os.makedirs(work_dir, exist_ok=True)
+            return work_dir
+        return tempfile.mkdtemp(prefix="groq_asr_")
+
+    def _convert_to_flac(self, audio_path: str, work_dir: str) -> str:
+        output_path = os.path.join(work_dir, "audio.flac")
+        try:
+            stream = ffmpeg.input(audio_path)
+            stream = ffmpeg.output(
+                stream,
+                output_path,
+                acodec="flac",
+                ar=16000,
+                ac=1,
+            )
+            ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        except ffmpeg.Error as e:
+            stderr_msg = e.stderr.decode("utf-8", errors="replace") if e.stderr else str(e)
+            raise RuntimeError(f"FFmpeg error while converting audio to FLAC: {stderr_msg}")
+
+        if not os.path.exists(output_path):
+            raise RuntimeError(f"FLAC output file not created: {output_path}")
+        return output_path
+
+    def _build_signed_audio_url(self, flac_path: str) -> str:
+        filename = os.path.basename(flac_path)
+        task_dir = os.path.dirname(os.path.dirname(flac_path))
+        task_id = os.path.basename(task_dir)
+        if not task_id:
+            raise RuntimeError("Cannot infer task_id for Groq ASR signed audio URL")
+
+        token = create_asr_audio_token(task_id, filename)
+        return f"{self.public_audio_base_url}/api/asr-audio/{task_id}/{filename}?token={token}"
+
+    async def _transcribe_chunks(
+        self,
+        flac_path: str,
+        language: str,
+        duration: float,
+        work_dir: str,
+    ) -> List[Segment]:
+        if duration <= 0:
+            raise RuntimeError("Cannot chunk audio with unknown duration")
+
+        chunk_duration = self._estimate_chunk_duration(flac_path, duration)
+        logger.info(
+            "Groq ASR chunk plan: chunk_duration=%.1fs overlap=%.1fs",
+            chunk_duration,
+            self.CHUNK_OVERLAP_SECONDS,
+        )
+
+        segments: List[Segment] = []
+        start = 0.0
+        chunk_index = 0
+        while start < duration:
+            remaining = duration - start
+            current_duration = min(chunk_duration, remaining)
+            chunk_path = os.path.join(work_dir, f"chunk_{chunk_index:04d}.flac")
+            self._create_flac_chunk(flac_path, chunk_path, start, current_duration)
+
+            while os.path.getsize(chunk_path) > self.MAX_UPLOAD_BYTES:
+                if current_duration <= self.MIN_CHUNK_SECONDS:
+                    size_mb = os.path.getsize(chunk_path) / 1024 / 1024
+                    raise RuntimeError(
+                        f"Groq ASR chunk still exceeds upload limit: {size_mb:.2f}MB"
+                    )
+                current_duration = max(self.MIN_CHUNK_SECONDS, current_duration / 2)
+                self._create_flac_chunk(flac_path, chunk_path, start, current_duration)
+
+            logger.info(
+                "Groq ASR chunk upload: index=%d start=%.2fs duration=%.2fs size=%.2fMB",
+                chunk_index,
+                start,
+                current_duration,
+                os.path.getsize(chunk_path) / 1024 / 1024,
+            )
+            result = await self._request_transcription(chunk_path, language)
+            chunk_segments = self._parse_response(result, chunk_path, offset=start)
+            segments.extend(chunk_segments)
+
+            if start + current_duration >= duration:
+                break
+            start += max(1.0, current_duration - self.CHUNK_OVERLAP_SECONDS)
+            chunk_index += 1
+
+        return self._deduplicate_segments(segments)
+
+    def _estimate_chunk_duration(self, flac_path: str, duration: float) -> float:
+        bytes_per_second = max(os.path.getsize(flac_path) / duration, 1.0)
+        target = (self.MAX_UPLOAD_BYTES * 0.85) / bytes_per_second
+        return max(self.MIN_CHUNK_SECONDS, min(self.MAX_CHUNK_SECONDS, target))
+
+    def _create_flac_chunk(
+        self,
+        flac_path: str,
+        output_path: str,
+        start: float,
+        duration: float,
+    ) -> None:
+        try:
+            stream = ffmpeg.input(flac_path, ss=start, t=duration)
+            stream = ffmpeg.output(
+                stream,
+                output_path,
+                acodec="flac",
+                ar=16000,
+                ac=1,
+            )
+            ffmpeg.run(stream, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        except ffmpeg.Error as e:
+            stderr_msg = e.stderr.decode("utf-8", errors="replace") if e.stderr else str(e)
+            raise RuntimeError(f"FFmpeg error while creating Groq ASR chunk: {stderr_msg}")
+
+        if not os.path.exists(output_path):
+            raise RuntimeError(f"Groq ASR chunk file not created: {output_path}")
+
+    async def _request_transcription(self, audio_path: str, language: str = None) -> dict:
+        try:
+            import httpx
+
+            with open(audio_path, "rb") as f:
+                audio_data = f.read()
+
+            data = [
+                ("model", self.model),
+                ("response_format", "verbose_json"),
+                ("timestamp_granularities[]", "segment"),
+            ]
+            if language:
+                data.append(("language", language))
+            if self.prompt:
+                data.append(("prompt", self.prompt))
+
+            files = {
+                "file": (os.path.basename(audio_path), audio_data, "audio/flac"),
+            }
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/audio/transcriptions",
+                    headers=headers,
+                    data=data,
+                    files=files,
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Groq ASR API error: {e}")
+            raise RuntimeError(f"Groq transcription failed: {e}")
+
+    async def _request_transcription_url(self, audio_url: str, language: str = None) -> dict:
+        try:
+            import httpx
+
+            data = [
+                ("model", self.model),
+                ("url", audio_url),
+                ("response_format", "verbose_json"),
+                ("timestamp_granularities[]", "segment"),
+            ]
+            if language:
+                data.append(("language", language))
+            if self.prompt:
+                data.append(("prompt", self.prompt))
+
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/audio/transcriptions",
+                    headers=headers,
+                    data=data,
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Groq ASR API error: {e}")
+            raise RuntimeError(f"Groq URL transcription failed: {e}")
+
+    def _parse_response(
+        self,
+        result: dict,
+        audio_path: str,
+        offset: float = 0.0,
+    ) -> List[Segment]:
+        segments: List[Segment] = []
+        for seg in result.get("segments") or []:
+            text = str(seg.get("text", "")).strip()
+            if not text:
+                continue
+            start = offset + float(seg.get("start", 0.0))
+            end = offset + float(seg.get("end", 0.0))
+            segments.append(
+                Segment(
+                    start=start,
+                    end=max(start, end),
+                    text=text,
+                )
+            )
+
+        if segments:
+            return segments
+
+        text = str(result.get("text", "")).strip()
+        if text:
+            return [
+                Segment(
+                    start=offset,
+                    end=offset + _get_audio_duration(audio_path),
+                    text=text,
+                )
+            ]
+
+        raise RuntimeError("Invalid response format from Groq ASR API")
+
+    def _deduplicate_segments(self, segments: List[Segment]) -> List[Segment]:
+        if not segments:
+            return []
+
+        result: List[Segment] = []
+        for segment in sorted(segments, key=lambda s: (s.start, s.end)):
+            if not segment.text:
+                continue
+            if result and self._is_duplicate_segment(result[-1], segment):
+                continue
+            result.append(segment)
+        return result
+
+    @staticmethod
+    def _is_duplicate_segment(prev: Segment, current: Segment) -> bool:
+        if prev.text.strip() != current.text.strip():
+            return False
+        overlap = min(prev.end, current.end) - max(prev.start, current.start)
+        if overlap <= 0:
+            return False
+        min_duration = max(min(prev.duration, current.duration), 0.001)
+        return overlap / min_duration >= 0.5
+
+
+def _get_audio_duration(audio_path: str) -> float:
+    try:
+        with wave.open(audio_path, "rb") as wf:
+            return wf.getnframes() / float(wf.getframerate())
+    except Exception:
+        try:
+            probe = ffmpeg.probe(audio_path)
+            duration = probe.get("format", {}).get("duration")
+            return float(duration) if duration else 0.0
+        except Exception:
+            return 0.0
+
+
 class CloudASREngine(ASREngine):
     """Cloud-based ASR engine."""
 
-    def __init__(self, api_url: str, api_key: str):
-        if not api_url:
-            raise ValueError("API URL cannot be empty")
-        if not api_key:
-            raise ValueError("API key cannot be empty")
-        self.api_url = api_url.rstrip("/")
-        self.api_key = api_key
+    def __init__(self, provider: CloudASRProvider):
+        self.provider = provider
 
     async def transcribe(
         self,
@@ -1034,61 +1384,11 @@ class CloudASREngine(ASREngine):
         _safe_progress(progress_cb, 0.0)
         effective_lang = language if language else "ja"
         try:
-            import httpx
-
-            with open(audio_path, "rb") as f:
-                audio_data = f.read()
-
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/octet-stream",
-            }
-            params = {
-                "language": effective_lang,
-                "format": "wav",
-                "sample_rate": 16000,
-                "channels": 1,
-            }
-
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                response = await client.post(
-                    f"{self.api_url}/transcribe",
-                    headers=headers,
-                    params=params,
-                    content=audio_data,
-                )
-                response.raise_for_status()
-                result = response.json()
-
-            segments: List[Segment] = []
-            if "segments" in result:
-                for seg in result["segments"]:
-                    segments.append(
-                        Segment(start=float(seg["start"]), end=float(seg["end"]), text=seg["text"].strip())
-                    )
-            elif "text" in result:
-                segments.append(
-                    Segment(start=0.0, end=self._get_audio_duration(audio_path), text=result["text"].strip())
-                )
-            else:
-                raise RuntimeError("Invalid response format from cloud ASR API")
+            segments = await self.provider.transcribe(audio_path, effective_lang)
             _safe_progress(progress_cb, 1.0)
             return segments
-
         except Exception as e:
-            if hasattr(e, "response"):
-                raise RuntimeError(f"Cloud ASR API error: {e}")
             raise RuntimeError(f"Transcription failed: {e}")
-
-    @staticmethod
-    def _get_audio_duration(audio_path: str) -> float:
-        try:
-            import wave
-
-            with wave.open(audio_path, "rb") as wf:
-                return wf.getnframes() / float(wf.getframerate())
-        except Exception:
-            return 0.0
 
 
 # ── 向后兼容别名 ────────────────────────────────────────────────────────────
