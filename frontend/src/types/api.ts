@@ -146,12 +146,25 @@ export interface SystemConfig {
   asr_engine: 'sherpa-onnx' | 'cloud';
   asr_model_path?: string;
   asr_model_id?: string;
-  cloud_asr_provider?: 'groq';
+  cloud_asr_provider?: 'groq' | 'openai' | 'fireworks' | 'elevenlabs';
   groq_asr_api_key?: string;
   groq_asr_model?: string;
   groq_asr_base_url?: string;
   groq_asr_public_audio_base_url?: string;
   groq_asr_prompt?: string;
+  openai_asr_api_key?: string;
+  openai_asr_model?: string;
+  openai_asr_base_url?: string;
+  openai_asr_prompt?: string;
+  fireworks_asr_api_key?: string;
+  fireworks_asr_model?: string;
+  fireworks_asr_base_url?: string;
+  fireworks_asr_public_audio_base_url?: string;
+  fireworks_asr_prompt?: string;
+  elevenlabs_asr_api_key?: string;
+  elevenlabs_asr_model?: string;
+  elevenlabs_asr_base_url?: string;
+  elevenlabs_asr_public_audio_base_url?: string;
 
   // 语言检测与自适应模型选择
   enable_language_detection?: boolean;    // 启用音频语言检测（Whisper LID）

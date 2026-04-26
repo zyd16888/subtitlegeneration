@@ -12,6 +12,9 @@ from .asr_engine import (
     CloudASREngine,
     CloudASRProvider,
     GroqASRProvider,
+    OpenAIWhisperASRProvider,
+    FireworksASRProvider,
+    ElevenLabsASRProvider,
     Segment,
 )
 from .model_manager import ModelManager, ModelRegistry, SUPPORTED_LANGUAGES
@@ -39,6 +42,9 @@ __all__ = [
     "CloudASREngine",
     "CloudASRProvider",
     "GroqASRProvider",
+    "OpenAIWhisperASRProvider",
+    "FireworksASRProvider",
+    "ElevenLabsASRProvider",
     "ModelManager",
     "SUPPORTED_LANGUAGES",
     "ModelRegistry",

@@ -59,7 +59,7 @@ class TestGroqASRProvider:
 
     def test_initialization_empty_key(self):
         """Test Groq provider initialization with empty API key"""
-        with pytest.raises(ValueError, match="Groq API key cannot be empty"):
+        with pytest.raises(ValueError, match="Groq ASR API key cannot be empty"):
             GroqASRProvider(api_key="")
     
     @pytest.mark.asyncio

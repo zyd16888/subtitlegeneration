@@ -15,6 +15,8 @@ _SUPPORTED_LANGUAGE_CODES = {
     "zh", "en", "ja", "ko", "fr", "de", "es", "ru", "pt", "it", "th", "vi", "ar", "yue",
 }
 
+_SUPPORTED_CLOUD_ASR_PROVIDERS = {"groq", "openai", "fireworks", "elevenlabs"}
+
 
 class SystemConfigData(BaseModel):
     """系统配置数据模型"""
@@ -34,6 +36,19 @@ class SystemConfigData(BaseModel):
     groq_asr_base_url: str = "https://api.groq.com/openai/v1"
     groq_asr_public_audio_base_url: Optional[str] = None
     groq_asr_prompt: Optional[str] = None
+    openai_asr_api_key: Optional[str] = None
+    openai_asr_model: str = "whisper-1"
+    openai_asr_base_url: str = "https://api.openai.com/v1"
+    openai_asr_prompt: Optional[str] = None
+    fireworks_asr_api_key: Optional[str] = None
+    fireworks_asr_model: str = "whisper-v3-turbo"
+    fireworks_asr_base_url: str = "https://audio-turbo.api.fireworks.ai/v1"
+    fireworks_asr_public_audio_base_url: Optional[str] = None
+    fireworks_asr_prompt: Optional[str] = None
+    elevenlabs_asr_api_key: Optional[str] = None
+    elevenlabs_asr_model: str = "scribe_v2"
+    elevenlabs_asr_base_url: str = "https://api.elevenlabs.io/v1"
+    elevenlabs_asr_public_audio_base_url: Optional[str] = None
 
     # 语言配置
     source_language: str = "ja"
@@ -127,6 +142,11 @@ class SystemConfigData(BaseModel):
         'emby_url',
         'groq_asr_base_url',
         'groq_asr_public_audio_base_url',
+        'openai_asr_base_url',
+        'fireworks_asr_base_url',
+        'fireworks_asr_public_audio_base_url',
+        'elevenlabs_asr_base_url',
+        'elevenlabs_asr_public_audio_base_url',
         'local_llm_url',
         'deeplx_url',
     )
@@ -152,8 +172,8 @@ class SystemConfigData(BaseModel):
     @classmethod
     def validate_cloud_asr_provider(cls, v: str) -> str:
         """验证云端 ASR 厂商"""
-        if v not in ['groq']:
-            raise ValueError('云端 ASR 厂商必须是 groq')
+        if v not in _SUPPORTED_CLOUD_ASR_PROVIDERS:
+            raise ValueError('云端 ASR 厂商必须是 groq、openai、fireworks 或 elevenlabs')
         return v
     
     @field_validator('source_language_detection')
@@ -444,6 +464,45 @@ class ConfigManager:
         self.db.commit()
         
         return config
+
+    def _validate_cloud_asr_config(self, config: SystemConfigData) -> List[str]:
+        errors = []
+        provider = config.cloud_asr_provider
+
+        if provider not in _SUPPORTED_CLOUD_ASR_PROVIDERS:
+            errors.append("当前仅支持 Groq、OpenAI、Fireworks、ElevenLabs 云端 ASR")
+            return errors
+
+        if provider == "groq":
+            if not config.groq_asr_api_key:
+                errors.append("使用 Groq ASR 时必须配置 API Key")
+            if not config.groq_asr_model:
+                errors.append("使用 Groq ASR 时必须配置模型")
+            if not config.groq_asr_base_url:
+                errors.append("使用 Groq ASR 时必须配置 Base URL")
+        elif provider == "openai":
+            if not config.openai_asr_api_key:
+                errors.append("使用 OpenAI ASR 时必须配置 API Key")
+            if not config.openai_asr_model:
+                errors.append("使用 OpenAI ASR 时必须配置模型")
+            if not config.openai_asr_base_url:
+                errors.append("使用 OpenAI ASR 时必须配置 Base URL")
+        elif provider == "fireworks":
+            if not config.fireworks_asr_api_key:
+                errors.append("使用 Fireworks ASR 时必须配置 API Key")
+            if not config.fireworks_asr_model:
+                errors.append("使用 Fireworks ASR 时必须配置模型")
+            if not config.fireworks_asr_base_url:
+                errors.append("使用 Fireworks ASR 时必须配置 Base URL")
+        elif provider == "elevenlabs":
+            if not config.elevenlabs_asr_api_key:
+                errors.append("使用 ElevenLabs ASR 时必须配置 API Key")
+            if not config.elevenlabs_asr_model:
+                errors.append("使用 ElevenLabs ASR 时必须配置模型")
+            if not config.elevenlabs_asr_base_url:
+                errors.append("使用 ElevenLabs ASR 时必须配置 Base URL")
+
+        return errors
     
     async def validate_partial_config(self, config: SystemConfigData, updated_keys: set) -> ValidationResult:
         """
@@ -476,6 +535,19 @@ class ConfigManager:
             'groq_asr_base_url',
             'groq_asr_public_audio_base_url',
             'groq_asr_prompt',
+            'openai_asr_api_key',
+            'openai_asr_model',
+            'openai_asr_base_url',
+            'openai_asr_prompt',
+            'fireworks_asr_api_key',
+            'fireworks_asr_model',
+            'fireworks_asr_base_url',
+            'fireworks_asr_public_audio_base_url',
+            'fireworks_asr_prompt',
+            'elevenlabs_asr_api_key',
+            'elevenlabs_asr_model',
+            'elevenlabs_asr_base_url',
+            'elevenlabs_asr_public_audio_base_url',
         }
         if asr_keys & updated_keys:
             if config.asr_engine == "sherpa-onnx":
@@ -483,14 +555,7 @@ class ConfigManager:
                 if not config.asr_model_path and not config.asr_model_id:
                     errors.append("使用 sherpa-onnx 引擎时必须配置模型路径或选择模型")
             if config.asr_engine == "cloud":
-                if config.cloud_asr_provider != "groq":
-                    errors.append("当前仅支持 Groq 云端 ASR")
-                if not config.groq_asr_api_key:
-                    errors.append("使用 Groq ASR 时必须配置 API Key")
-                if not config.groq_asr_model:
-                    errors.append("使用 Groq ASR 时必须配置模型")
-                if not config.groq_asr_base_url:
-                    errors.append("使用 Groq ASR 时必须配置 Base URL")
+                errors.extend(self._validate_cloud_asr_config(config))
         
         # 验证翻译服务配置（只在相关字段更新时验证）
         translation_keys = {'translation_service', 'openai_api_key', 'openai_model', 'openai_base_url', 'deepseek_api_key', 'local_llm_url'}
@@ -571,14 +636,7 @@ class ConfigManager:
             if not config.asr_model_path and not config.asr_model_id:
                 errors.append("使用 sherpa-onnx 引擎时必须配置模型路径或选择模型")
         if config.asr_engine == "cloud":
-            if config.cloud_asr_provider != "groq":
-                errors.append("当前仅支持 Groq 云端 ASR")
-            if not config.groq_asr_api_key:
-                errors.append("使用 Groq ASR 时必须配置 API Key")
-            if not config.groq_asr_model:
-                errors.append("使用 Groq ASR 时必须配置模型")
-            if not config.groq_asr_base_url:
-                errors.append("使用 Groq ASR 时必须配置 Base URL")
+            errors.extend(self._validate_cloud_asr_config(config))
         
         # 验证翻译服务配置
         if config.translation_service == "openai" and not config.openai_api_key:

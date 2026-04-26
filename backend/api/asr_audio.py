@@ -1,4 +1,4 @@
-"""Groq ASR 临时音频下载端点。"""
+"""云端 ASR 临时音频下载端点。"""
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -23,7 +23,7 @@ async def get_asr_audio(
     给云端 ASR 厂商拉取临时 FLAC 音频。
 
     不使用登录态，只接受短期签名 token；文件范围固定在
-    {temp_dir}/tasks/{task_id}/groq_asr/{filename}。
+    {temp_dir}/tasks/{task_id}/cloud_asr/{filename}。
     """
     try:
         verify_asr_audio_token(token, task_id, filename)
@@ -35,11 +35,23 @@ async def get_asr_audio(
 
     config = await ConfigManager(db).get_config()
     task_dir = os.path.abspath(os.path.join(config.temp_dir, "tasks", task_id))
-    audio_dir = os.path.abspath(os.path.join(task_dir, "groq_asr"))
-    audio_path = os.path.abspath(os.path.join(audio_dir, filename))
+    candidate_dirs = [
+        os.path.abspath(os.path.join(task_dir, "cloud_asr")),
+        os.path.abspath(os.path.join(task_dir, "groq_asr")),
+    ]
+    audio_path = ""
+    audio_dir = ""
+    for candidate_dir in candidate_dirs:
+        candidate_path = os.path.abspath(os.path.join(candidate_dir, filename))
+        if not candidate_path.startswith(candidate_dir + os.sep):
+            continue
+        if os.path.isfile(candidate_path):
+            audio_path = candidate_path
+            audio_dir = candidate_dir
+            break
 
-    if not audio_path.startswith(audio_dir + os.sep):
-        raise HTTPException(status_code=400, detail="非法音频路径")
+    if not audio_path or not audio_dir:
+        raise HTTPException(status_code=404, detail="音频文件不存在")
     if not os.path.isfile(audio_path):
         raise HTTPException(status_code=404, detail="音频文件不存在")
 

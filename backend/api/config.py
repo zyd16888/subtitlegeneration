@@ -366,14 +366,36 @@ async def validate_config(db: Session = Depends(get_db)):
             if not config.asr_model_path and not config.asr_model_id:
                 missing_fields.append("ASR 模型路径或模型选择")
         elif config.asr_engine == "cloud":
-            if config.cloud_asr_provider != "groq":
+            if config.cloud_asr_provider not in {"groq", "openai", "fireworks", "elevenlabs"}:
                 missing_fields.append("云端 ASR 厂商")
-            if not config.groq_asr_api_key:
-                missing_fields.append("Groq ASR API Key")
-            if not config.groq_asr_model:
-                missing_fields.append("Groq ASR 模型")
-            if not config.groq_asr_base_url:
-                missing_fields.append("Groq ASR Base URL")
+            elif config.cloud_asr_provider == "groq":
+                if not config.groq_asr_api_key:
+                    missing_fields.append("Groq ASR API Key")
+                if not config.groq_asr_model:
+                    missing_fields.append("Groq ASR 模型")
+                if not config.groq_asr_base_url:
+                    missing_fields.append("Groq ASR Base URL")
+            elif config.cloud_asr_provider == "openai":
+                if not config.openai_asr_api_key:
+                    missing_fields.append("OpenAI ASR API Key")
+                if not config.openai_asr_model:
+                    missing_fields.append("OpenAI ASR 模型")
+                if not config.openai_asr_base_url:
+                    missing_fields.append("OpenAI ASR Base URL")
+            elif config.cloud_asr_provider == "fireworks":
+                if not config.fireworks_asr_api_key:
+                    missing_fields.append("Fireworks ASR API Key")
+                if not config.fireworks_asr_model:
+                    missing_fields.append("Fireworks ASR 模型")
+                if not config.fireworks_asr_base_url:
+                    missing_fields.append("Fireworks ASR Base URL")
+            elif config.cloud_asr_provider == "elevenlabs":
+                if not config.elevenlabs_asr_api_key:
+                    missing_fields.append("ElevenLabs ASR API Key")
+                if not config.elevenlabs_asr_model:
+                    missing_fields.append("ElevenLabs ASR 模型")
+                if not config.elevenlabs_asr_base_url:
+                    missing_fields.append("ElevenLabs ASR Base URL")
         
         # 检查翻译服务配置
         if not config.translation_service:

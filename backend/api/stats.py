@@ -125,16 +125,39 @@ async def get_statistics(db: Session = Depends(get_db)):
             else:
                 asr_message = "sherpa-onnx 引擎缺少模型路径"
         elif config.asr_engine == "cloud":
-            if (
-                config.cloud_asr_provider == "groq"
-                and config.groq_asr_api_key
-                and config.groq_asr_model
-                and config.groq_asr_base_url
-            ):
+            provider = config.cloud_asr_provider
+            provider_status = {
+                "groq": (
+                    "Groq",
+                    config.groq_asr_api_key,
+                    config.groq_asr_model,
+                    config.groq_asr_base_url,
+                ),
+                "openai": (
+                    "OpenAI",
+                    config.openai_asr_api_key,
+                    config.openai_asr_model,
+                    config.openai_asr_base_url,
+                ),
+                "fireworks": (
+                    "Fireworks",
+                    config.fireworks_asr_api_key,
+                    config.fireworks_asr_model,
+                    config.fireworks_asr_base_url,
+                ),
+                "elevenlabs": (
+                    "ElevenLabs",
+                    config.elevenlabs_asr_api_key,
+                    config.elevenlabs_asr_model,
+                    config.elevenlabs_asr_base_url,
+                ),
+            }
+            label, api_key, model, base_url = provider_status.get(provider, ("云端 ASR", None, None, None))
+            if api_key and model and base_url:
                 asr_configured = True
-                asr_message = f"已配置 (Groq ASR: {config.groq_asr_model})"
+                asr_message = f"已配置 ({label} ASR: {model})"
             else:
-                asr_message = "Groq ASR 缺少 API Key、模型或 Base URL"
+                asr_message = f"{label} ASR 缺少 API Key、模型或 Base URL"
         
         # 检查翻译服务配置
         translation_configured = False

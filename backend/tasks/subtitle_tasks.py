@@ -23,6 +23,9 @@ from services.asr_engine import (
     SherpaOnnxVadOfflineEngine,
     CloudASREngine,
     GroqASRProvider,
+    OpenAIWhisperASRProvider,
+    FireworksASRProvider,
+    ElevenLabsASRProvider,
     Segment,
 )
 from services.translation_service import (
@@ -201,6 +204,40 @@ def _get_asr_engine(config, source_language: str = None) -> ASREngine:
             )
             logger.info(f"Creating CloudASREngine with Groq model: {config.groq_asr_model}")
             return CloudASREngine(groq_provider)
+        if provider == "openai":
+            if not config.openai_asr_api_key:
+                raise ValueError("OpenAI ASR 需要配置 API Key")
+            openai_provider = OpenAIWhisperASRProvider(
+                api_key=config.openai_asr_api_key,
+                model=config.openai_asr_model,
+                base_url=config.openai_asr_base_url,
+                prompt=config.openai_asr_prompt,
+            )
+            logger.info(f"Creating CloudASREngine with OpenAI model: {config.openai_asr_model}")
+            return CloudASREngine(openai_provider)
+        if provider == "fireworks":
+            if not config.fireworks_asr_api_key:
+                raise ValueError("Fireworks ASR 需要配置 API Key")
+            fireworks_provider = FireworksASRProvider(
+                api_key=config.fireworks_asr_api_key,
+                model=config.fireworks_asr_model,
+                base_url=config.fireworks_asr_base_url,
+                public_audio_base_url=config.fireworks_asr_public_audio_base_url,
+                prompt=config.fireworks_asr_prompt,
+            )
+            logger.info(f"Creating CloudASREngine with Fireworks model: {config.fireworks_asr_model}")
+            return CloudASREngine(fireworks_provider)
+        if provider == "elevenlabs":
+            if not config.elevenlabs_asr_api_key:
+                raise ValueError("ElevenLabs ASR 需要配置 API Key")
+            elevenlabs_provider = ElevenLabsASRProvider(
+                api_key=config.elevenlabs_asr_api_key,
+                model=config.elevenlabs_asr_model,
+                base_url=config.elevenlabs_asr_base_url,
+                public_audio_base_url=config.elevenlabs_asr_public_audio_base_url,
+            )
+            logger.info(f"Creating CloudASREngine with ElevenLabs model: {config.elevenlabs_asr_model}")
+            return CloudASREngine(elevenlabs_provider)
         raise ValueError(f"不支持的云端 ASR 厂商: {provider}")
 
     if config.asr_engine == "sherpa-onnx":

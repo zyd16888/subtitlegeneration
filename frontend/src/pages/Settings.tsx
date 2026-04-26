@@ -94,6 +94,7 @@ const Settings: React.FC = () => {
   const filterFillerWords = Form.useWatch('filter_filler_words', form);
   const enableLangDetection = Form.useWatch('enable_language_detection', form);
   const enableLidWhitelistFilter = Form.useWatch('lid_filter_whitelist_enabled', form);
+  const cloudAsrProvider = Form.useWatch('cloud_asr_provider', form) || 'groq';
   const [langModelMap, setLangModelMap] = useState<Record<string, string>>({});
 
   const loadConfig = async () => {
@@ -284,6 +285,19 @@ const Settings: React.FC = () => {
         groq_asr_base_url: form.getFieldValue('groq_asr_base_url'),
         groq_asr_public_audio_base_url: form.getFieldValue('groq_asr_public_audio_base_url'),
         groq_asr_prompt: form.getFieldValue('groq_asr_prompt'),
+        openai_asr_api_key: form.getFieldValue('openai_asr_api_key'),
+        openai_asr_model: form.getFieldValue('openai_asr_model'),
+        openai_asr_base_url: form.getFieldValue('openai_asr_base_url'),
+        openai_asr_prompt: form.getFieldValue('openai_asr_prompt'),
+        fireworks_asr_api_key: form.getFieldValue('fireworks_asr_api_key'),
+        fireworks_asr_model: form.getFieldValue('fireworks_asr_model'),
+        fireworks_asr_base_url: form.getFieldValue('fireworks_asr_base_url'),
+        fireworks_asr_public_audio_base_url: form.getFieldValue('fireworks_asr_public_audio_base_url'),
+        fireworks_asr_prompt: form.getFieldValue('fireworks_asr_prompt'),
+        elevenlabs_asr_api_key: form.getFieldValue('elevenlabs_asr_api_key'),
+        elevenlabs_asr_model: form.getFieldValue('elevenlabs_asr_model'),
+        elevenlabs_asr_base_url: form.getFieldValue('elevenlabs_asr_base_url'),
+        elevenlabs_asr_public_audio_base_url: form.getFieldValue('elevenlabs_asr_public_audio_base_url'),
       });
       message.success('引擎配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
@@ -708,43 +722,149 @@ const Settings: React.FC = () => {
                   <Form.Item name="cloud_asr_provider" label="云端厂商" initialValue="groq">
                     <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
                       <Option value="groq">Groq</Option>
+                      <Option value="openai">OpenAI Whisper</Option>
+                      <Option value="fireworks">Fireworks Whisper</Option>
+                      <Option value="elevenlabs">ElevenLabs Scribe</Option>
                     </Select>
                   </Form.Item>
                 </Col>
-                <Col span={8}>
-                  <Form.Item name="groq_asr_model" label="Groq 模型" initialValue="whisper-large-v3-turbo">
-                    <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
-                      <Option value="whisper-large-v3-turbo">whisper-large-v3-turbo</Option>
-                      <Option value="whisper-large-v3">whisper-large-v3</Option>
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item name="groq_asr_api_key" label="Groq API Key">
-                    <Input.Password placeholder="gsk_..." />
-                  </Form.Item>
-                </Col>
               </Row>
-              <Row gutter={24}>
-                <Col span={12}>
-                  <Form.Item name="groq_asr_base_url" label="Groq Base URL" initialValue="https://api.groq.com/openai/v1">
-                    <Input placeholder="https://api.groq.com/openai/v1" />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item name="groq_asr_public_audio_base_url" label="公网音频访问地址">
-                    <Input placeholder="https://subtitle.790366.xyz" />
-                  </Form.Item>
-                </Col>
-              </Row>
-              <Row gutter={24}>
-                <Col span={12}>
-                  <Form.Item name="groq_asr_prompt" label="识别 Prompt">
-                    <Input placeholder="可选：提供专有名词、角色名或上下文提示" />
-                  </Form.Item>
-                </Col>
-              </Row>
-              <Text type="secondary" style={{ fontSize: 12 }}>公网音频访问地址用于大于 24MB 的 FLAC 音频，系统会生成短期签名 URL 供 Groq 拉取；留空时自动回退本地切片。</Text>
+              {cloudAsrProvider === 'groq' && (
+                <>
+                  <Row gutter={24}>
+                    <Col span={8}>
+                      <Form.Item name="groq_asr_model" label="Groq 模型" initialValue="whisper-large-v3-turbo">
+                        <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                          <Option value="whisper-large-v3-turbo">whisper-large-v3-turbo</Option>
+                          <Option value="whisper-large-v3">whisper-large-v3</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="groq_asr_api_key" label="Groq API Key">
+                        <Input.Password placeholder="gsk_..." />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="groq_asr_base_url" label="Groq Base URL" initialValue="https://api.groq.com/openai/v1">
+                        <Input placeholder="https://api.groq.com/openai/v1" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Row gutter={24}>
+                    <Col span={12}>
+                      <Form.Item name="groq_asr_public_audio_base_url" label="公网音频访问地址">
+                        <Input placeholder="https://subtitle.790366.xyz" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="groq_asr_prompt" label="识别 Prompt">
+                        <Input placeholder="可选：提供专有名词、角色名或上下文提示" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Text type="secondary" style={{ fontSize: 12 }}>大于 24MB 的 FLAC 音频会优先生成短期签名 URL 供 Groq 拉取；留空公网地址时自动回退本地切片。</Text>
+                </>
+              )}
+              {cloudAsrProvider === 'openai' && (
+                <>
+                  <Row gutter={24}>
+                    <Col span={8}>
+                      <Form.Item name="openai_asr_model" label="OpenAI 模型" initialValue="whisper-1">
+                        <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                          <Option value="whisper-1">whisper-1</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="openai_asr_api_key" label="OpenAI API Key">
+                        <Input.Password placeholder="sk-..." />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="openai_asr_base_url" label="OpenAI Base URL" initialValue="https://api.openai.com/v1">
+                        <Input placeholder="https://api.openai.com/v1" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Row gutter={24}>
+                    <Col span={12}>
+                      <Form.Item name="openai_asr_prompt" label="识别 Prompt">
+                        <Input placeholder="可选：提供专有名词、角色名或上下文提示" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Text type="secondary" style={{ fontSize: 12 }}>OpenAI Audio API 不支持直接传音频 URL，大于 24MB 的音频会自动切片上传并合并时间轴。</Text>
+                </>
+              )}
+              {cloudAsrProvider === 'fireworks' && (
+                <>
+                  <Row gutter={24}>
+                    <Col span={8}>
+                      <Form.Item name="fireworks_asr_model" label="Fireworks 模型" initialValue="whisper-v3-turbo">
+                        <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                          <Option value="whisper-v3-turbo">whisper-v3-turbo</Option>
+                          <Option value="whisper-v3">whisper-v3 (使用 audio-prod Base URL)</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="fireworks_asr_api_key" label="Fireworks API Key">
+                        <Input.Password placeholder="fw_..." />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="fireworks_asr_base_url" label="Fireworks Base URL" initialValue="https://audio-turbo.api.fireworks.ai/v1">
+                        <Input placeholder="https://audio-turbo.api.fireworks.ai/v1" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Row gutter={24}>
+                    <Col span={12}>
+                      <Form.Item name="fireworks_asr_public_audio_base_url" label="公网音频访问地址">
+                        <Input placeholder="https://subtitle.790366.xyz" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="fireworks_asr_prompt" label="识别 Prompt">
+                        <Input placeholder="可选：提供专有名词、角色名或上下文提示" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Fireworks 支持 URL 或文件上传；配置公网地址后，大文件优先走签名 URL，失败再回退上传。</Text>
+                </>
+              )}
+              {cloudAsrProvider === 'elevenlabs' && (
+                <>
+                  <Row gutter={24}>
+                    <Col span={8}>
+                      <Form.Item name="elevenlabs_asr_model" label="ElevenLabs 模型" initialValue="scribe_v2">
+                        <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                          <Option value="scribe_v2">scribe_v2</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="elevenlabs_asr_api_key" label="ElevenLabs API Key">
+                        <Input.Password placeholder="输入 API Key" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="elevenlabs_asr_base_url" label="ElevenLabs Base URL" initialValue="https://api.elevenlabs.io/v1">
+                        <Input placeholder="https://api.elevenlabs.io/v1" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Row gutter={24}>
+                    <Col span={12}>
+                      <Form.Item name="elevenlabs_asr_public_audio_base_url" label="公网音频访问地址">
+                        <Input placeholder="https://subtitle.790366.xyz" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Text type="secondary" style={{ fontSize: 12 }}>ElevenLabs Scribe 返回词级时间戳，系统会按时间和标点合并成字幕段；配置公网地址后大文件优先走签名 URL。</Text>
+                </>
+              )}
             </div>
           </div>
           <div className="cat-footer">
