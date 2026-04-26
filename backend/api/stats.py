@@ -151,6 +151,30 @@ async def get_statistics(db: Session = Depends(get_db)):
                     config.elevenlabs_asr_model,
                     config.elevenlabs_asr_base_url,
                 ),
+                "deepgram": (
+                    "Deepgram",
+                    config.deepgram_asr_api_key,
+                    config.deepgram_asr_model,
+                    config.deepgram_asr_base_url,
+                ),
+                "volcengine": (
+                    "火山引擎",
+                    config.volcengine_asr_access_token and config.volcengine_asr_app_id,
+                    config.volcengine_asr_model,
+                    config.volcengine_asr_base_url and config.volcengine_asr_public_audio_base_url,
+                ),
+                "tencent": (
+                    "腾讯云",
+                    config.tencent_asr_secret_id and config.tencent_asr_secret_key,
+                    config.tencent_asr_engine_model_type,
+                    config.tencent_asr_base_url and config.tencent_asr_public_audio_base_url,
+                ),
+                "aliyun": (
+                    "阿里云",
+                    config.aliyun_asr_api_key,
+                    config.aliyun_asr_model,
+                    config.aliyun_asr_base_url and config.aliyun_asr_public_audio_base_url,
+                ),
             }
             label, api_key, model, base_url = provider_status.get(provider, ("云端 ASR", None, None, None))
             if api_key and model and base_url:

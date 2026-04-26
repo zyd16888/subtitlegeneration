@@ -146,7 +146,7 @@ export interface SystemConfig {
   asr_engine: 'sherpa-onnx' | 'cloud';
   asr_model_path?: string;
   asr_model_id?: string;
-  cloud_asr_provider?: 'groq' | 'openai' | 'fireworks' | 'elevenlabs';
+  cloud_asr_provider?: 'groq' | 'openai' | 'fireworks' | 'elevenlabs' | 'deepgram' | 'volcengine' | 'tencent' | 'aliyun';
   groq_asr_api_key?: string;
   groq_asr_model?: string;
   groq_asr_base_url?: string;
@@ -165,6 +165,25 @@ export interface SystemConfig {
   elevenlabs_asr_model?: string;
   elevenlabs_asr_base_url?: string;
   elevenlabs_asr_public_audio_base_url?: string;
+  deepgram_asr_api_key?: string;
+  deepgram_asr_model?: string;
+  deepgram_asr_base_url?: string;
+  deepgram_asr_public_audio_base_url?: string;
+  volcengine_asr_app_id?: string;
+  volcengine_asr_access_token?: string;
+  volcengine_asr_model?: string;
+  volcengine_asr_base_url?: string;
+  volcengine_asr_public_audio_base_url?: string;
+  tencent_asr_secret_id?: string;
+  tencent_asr_secret_key?: string;
+  tencent_asr_engine_model_type?: string;
+  tencent_asr_base_url?: string;
+  tencent_asr_public_audio_base_url?: string;
+  tencent_asr_region?: string;
+  aliyun_asr_api_key?: string;
+  aliyun_asr_model?: string;
+  aliyun_asr_base_url?: string;
+  aliyun_asr_public_audio_base_url?: string;
 
   // 语言检测与自适应模型选择
   enable_language_detection?: boolean;    // 启用音频语言检测（Whisper LID）

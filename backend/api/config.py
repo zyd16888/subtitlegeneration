@@ -366,7 +366,7 @@ async def validate_config(db: Session = Depends(get_db)):
             if not config.asr_model_path and not config.asr_model_id:
                 missing_fields.append("ASR 模型路径或模型选择")
         elif config.asr_engine == "cloud":
-            if config.cloud_asr_provider not in {"groq", "openai", "fireworks", "elevenlabs"}:
+            if config.cloud_asr_provider not in {"groq", "openai", "fireworks", "elevenlabs", "deepgram", "volcengine", "tencent", "aliyun"}:
                 missing_fields.append("云端 ASR 厂商")
             elif config.cloud_asr_provider == "groq":
                 if not config.groq_asr_api_key:
@@ -396,6 +396,42 @@ async def validate_config(db: Session = Depends(get_db)):
                     missing_fields.append("ElevenLabs ASR 模型")
                 if not config.elevenlabs_asr_base_url:
                     missing_fields.append("ElevenLabs ASR Base URL")
+            elif config.cloud_asr_provider == "deepgram":
+                if not config.deepgram_asr_api_key:
+                    missing_fields.append("Deepgram ASR API Key")
+                if not config.deepgram_asr_model:
+                    missing_fields.append("Deepgram ASR 模型")
+                if not config.deepgram_asr_base_url:
+                    missing_fields.append("Deepgram ASR Base URL")
+            elif config.cloud_asr_provider == "volcengine":
+                if not config.volcengine_asr_app_id:
+                    missing_fields.append("火山引擎 ASR App ID")
+                if not config.volcengine_asr_access_token:
+                    missing_fields.append("火山引擎 ASR Access Token")
+                if not config.volcengine_asr_base_url:
+                    missing_fields.append("火山引擎 ASR Base URL")
+                if not config.volcengine_asr_public_audio_base_url:
+                    missing_fields.append("火山引擎 ASR 公网音频访问地址")
+            elif config.cloud_asr_provider == "tencent":
+                if not config.tencent_asr_secret_id:
+                    missing_fields.append("腾讯云 ASR SecretId")
+                if not config.tencent_asr_secret_key:
+                    missing_fields.append("腾讯云 ASR SecretKey")
+                if not config.tencent_asr_engine_model_type:
+                    missing_fields.append("腾讯云 ASR 引擎模型类型")
+                if not config.tencent_asr_base_url:
+                    missing_fields.append("腾讯云 ASR Base URL")
+                if not config.tencent_asr_public_audio_base_url:
+                    missing_fields.append("腾讯云 ASR 公网音频访问地址")
+            elif config.cloud_asr_provider == "aliyun":
+                if not config.aliyun_asr_api_key:
+                    missing_fields.append("阿里云 ASR API Key")
+                if not config.aliyun_asr_model:
+                    missing_fields.append("阿里云 ASR 模型")
+                if not config.aliyun_asr_base_url:
+                    missing_fields.append("阿里云 ASR Base URL")
+                if not config.aliyun_asr_public_audio_base_url:
+                    missing_fields.append("阿里云 ASR 公网音频访问地址")
         
         # 检查翻译服务配置
         if not config.translation_service:

@@ -15,7 +15,16 @@ _SUPPORTED_LANGUAGE_CODES = {
     "zh", "en", "ja", "ko", "fr", "de", "es", "ru", "pt", "it", "th", "vi", "ar", "yue",
 }
 
-_SUPPORTED_CLOUD_ASR_PROVIDERS = {"groq", "openai", "fireworks", "elevenlabs"}
+_SUPPORTED_CLOUD_ASR_PROVIDERS = {
+    "groq",
+    "openai",
+    "fireworks",
+    "elevenlabs",
+    "deepgram",
+    "volcengine",
+    "tencent",
+    "aliyun",
+}
 
 
 class SystemConfigData(BaseModel):
@@ -49,6 +58,25 @@ class SystemConfigData(BaseModel):
     elevenlabs_asr_model: str = "scribe_v2"
     elevenlabs_asr_base_url: str = "https://api.elevenlabs.io/v1"
     elevenlabs_asr_public_audio_base_url: Optional[str] = None
+    deepgram_asr_api_key: Optional[str] = None
+    deepgram_asr_model: str = "nova-3"
+    deepgram_asr_base_url: str = "https://api.deepgram.com/v1"
+    deepgram_asr_public_audio_base_url: Optional[str] = None
+    volcengine_asr_app_id: Optional[str] = None
+    volcengine_asr_access_token: Optional[str] = None
+    volcengine_asr_model: str = "bigmodel"
+    volcengine_asr_base_url: str = "https://openspeech.bytedance.com/api/v1/vc"
+    volcengine_asr_public_audio_base_url: Optional[str] = None
+    tencent_asr_secret_id: Optional[str] = None
+    tencent_asr_secret_key: Optional[str] = None
+    tencent_asr_engine_model_type: str = "16k_ja"
+    tencent_asr_base_url: str = "https://asr.tencentcloudapi.com"
+    tencent_asr_public_audio_base_url: Optional[str] = None
+    tencent_asr_region: str = "ap-guangzhou"
+    aliyun_asr_api_key: Optional[str] = None
+    aliyun_asr_model: str = "fun-asr-mtl"
+    aliyun_asr_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
+    aliyun_asr_public_audio_base_url: Optional[str] = None
 
     # 语言配置
     source_language: str = "ja"
@@ -147,6 +175,14 @@ class SystemConfigData(BaseModel):
         'fireworks_asr_public_audio_base_url',
         'elevenlabs_asr_base_url',
         'elevenlabs_asr_public_audio_base_url',
+        'deepgram_asr_base_url',
+        'deepgram_asr_public_audio_base_url',
+        'volcengine_asr_base_url',
+        'volcengine_asr_public_audio_base_url',
+        'tencent_asr_base_url',
+        'tencent_asr_public_audio_base_url',
+        'aliyun_asr_base_url',
+        'aliyun_asr_public_audio_base_url',
         'local_llm_url',
         'deeplx_url',
     )
@@ -173,7 +209,7 @@ class SystemConfigData(BaseModel):
     def validate_cloud_asr_provider(cls, v: str) -> str:
         """验证云端 ASR 厂商"""
         if v not in _SUPPORTED_CLOUD_ASR_PROVIDERS:
-            raise ValueError('云端 ASR 厂商必须是 groq、openai、fireworks 或 elevenlabs')
+            raise ValueError('云端 ASR 厂商必须是 groq、openai、fireworks、elevenlabs、deepgram、volcengine、tencent 或 aliyun')
         return v
     
     @field_validator('source_language_detection')
@@ -470,7 +506,7 @@ class ConfigManager:
         provider = config.cloud_asr_provider
 
         if provider not in _SUPPORTED_CLOUD_ASR_PROVIDERS:
-            errors.append("当前仅支持 Groq、OpenAI、Fireworks、ElevenLabs 云端 ASR")
+            errors.append("当前仅支持 Groq、OpenAI、Fireworks、ElevenLabs、Deepgram、火山引擎、腾讯云、阿里云 ASR")
             return errors
 
         if provider == "groq":
@@ -501,6 +537,42 @@ class ConfigManager:
                 errors.append("使用 ElevenLabs ASR 时必须配置模型")
             if not config.elevenlabs_asr_base_url:
                 errors.append("使用 ElevenLabs ASR 时必须配置 Base URL")
+        elif provider == "deepgram":
+            if not config.deepgram_asr_api_key:
+                errors.append("使用 Deepgram ASR 时必须配置 API Key")
+            if not config.deepgram_asr_model:
+                errors.append("使用 Deepgram ASR 时必须配置模型")
+            if not config.deepgram_asr_base_url:
+                errors.append("使用 Deepgram ASR 时必须配置 Base URL")
+        elif provider == "volcengine":
+            if not config.volcengine_asr_app_id:
+                errors.append("使用火山引擎 ASR 时必须配置 App ID")
+            if not config.volcengine_asr_access_token:
+                errors.append("使用火山引擎 ASR 时必须配置 Access Token")
+            if not config.volcengine_asr_base_url:
+                errors.append("使用火山引擎 ASR 时必须配置 Base URL")
+            if not config.volcengine_asr_public_audio_base_url:
+                errors.append("使用火山引擎 ASR 时必须配置公网音频访问地址")
+        elif provider == "tencent":
+            if not config.tencent_asr_secret_id:
+                errors.append("使用腾讯云 ASR 时必须配置 SecretId")
+            if not config.tencent_asr_secret_key:
+                errors.append("使用腾讯云 ASR 时必须配置 SecretKey")
+            if not config.tencent_asr_engine_model_type:
+                errors.append("使用腾讯云 ASR 时必须配置引擎模型类型")
+            if not config.tencent_asr_base_url:
+                errors.append("使用腾讯云 ASR 时必须配置 Base URL")
+            if not config.tencent_asr_public_audio_base_url:
+                errors.append("使用腾讯云 ASR 时必须配置公网音频访问地址")
+        elif provider == "aliyun":
+            if not config.aliyun_asr_api_key:
+                errors.append("使用阿里云 ASR 时必须配置 API Key")
+            if not config.aliyun_asr_model:
+                errors.append("使用阿里云 ASR 时必须配置模型")
+            if not config.aliyun_asr_base_url:
+                errors.append("使用阿里云 ASR 时必须配置 Base URL")
+            if not config.aliyun_asr_public_audio_base_url:
+                errors.append("使用阿里云 ASR 时必须配置公网音频访问地址")
 
         return errors
     
@@ -548,6 +620,25 @@ class ConfigManager:
             'elevenlabs_asr_model',
             'elevenlabs_asr_base_url',
             'elevenlabs_asr_public_audio_base_url',
+            'deepgram_asr_api_key',
+            'deepgram_asr_model',
+            'deepgram_asr_base_url',
+            'deepgram_asr_public_audio_base_url',
+            'volcengine_asr_app_id',
+            'volcengine_asr_access_token',
+            'volcengine_asr_model',
+            'volcengine_asr_base_url',
+            'volcengine_asr_public_audio_base_url',
+            'tencent_asr_secret_id',
+            'tencent_asr_secret_key',
+            'tencent_asr_engine_model_type',
+            'tencent_asr_base_url',
+            'tencent_asr_public_audio_base_url',
+            'tencent_asr_region',
+            'aliyun_asr_api_key',
+            'aliyun_asr_model',
+            'aliyun_asr_base_url',
+            'aliyun_asr_public_audio_base_url',
         }
         if asr_keys & updated_keys:
             if config.asr_engine == "sherpa-onnx":

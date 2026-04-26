@@ -15,6 +15,10 @@ from .asr_engine import (
     OpenAIWhisperASRProvider,
     FireworksASRProvider,
     ElevenLabsASRProvider,
+    DeepgramASRProvider,
+    VolcengineASRProvider,
+    TencentASRProvider,
+    AliyunASRProvider,
     Segment,
 )
 from .model_manager import ModelManager, ModelRegistry, SUPPORTED_LANGUAGES
@@ -45,6 +49,10 @@ __all__ = [
     "OpenAIWhisperASRProvider",
     "FireworksASRProvider",
     "ElevenLabsASRProvider",
+    "DeepgramASRProvider",
+    "VolcengineASRProvider",
+    "TencentASRProvider",
+    "AliyunASRProvider",
     "ModelManager",
     "SUPPORTED_LANGUAGES",
     "ModelRegistry",

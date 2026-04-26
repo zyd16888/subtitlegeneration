@@ -10,8 +10,13 @@ Supports:
 """
 
 import asyncio
+import datetime
+import hashlib
+import hmac
+import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import wave
@@ -1551,11 +1556,7 @@ class ElevenLabsASRProvider(OpenAICompatibleASRProvider):
         raise RuntimeError("Invalid response format from ElevenLabs ASR API")
 
     def _segments_from_words(self, words: List[dict], offset: float) -> List[Segment]:
-        segments: List[Segment] = []
-        current: List[dict] = []
-        current_start: Optional[float] = None
-        previous_end: Optional[float] = None
-
+        normalized = []
         for word in words:
             raw_text = str(word.get("text") or word.get("word") or "").strip()
             if not raw_text:
@@ -1565,6 +1566,22 @@ class ElevenLabsASRProvider(OpenAICompatibleASRProvider):
                 end = float(word.get("end", start))
             except (TypeError, ValueError):
                 continue
+            normalized.append({"text": raw_text, "start": start, "end": end})
+        return self._segments_from_word_items(normalized, offset)
+
+    @staticmethod
+    def _segments_from_word_items(words: List[dict], offset: float) -> List[Segment]:
+        segments: List[Segment] = []
+        current: List[dict] = []
+        current_start: Optional[float] = None
+        previous_end: Optional[float] = None
+
+        for word in words:
+            raw_text = str(word.get("text") or "").strip()
+            if not raw_text:
+                continue
+            start = float(word.get("start", 0.0))
+            end = float(word.get("end", start))
 
             gap = start - previous_end if previous_end is not None else 0.0
             should_flush = (
@@ -1572,12 +1589,12 @@ class ElevenLabsASRProvider(OpenAICompatibleASRProvider):
                 and (
                     gap > 1.0
                     or end - (current_start or start) >= 6.0
-                    or len(self._join_word_text(current)) >= 80
-                    or self._join_word_text(current).endswith((".", "?", "!", "。", "？", "！"))
+                    or len(ElevenLabsASRProvider._join_word_text(current)) >= 80
+                    or ElevenLabsASRProvider._join_word_text(current).endswith((".", "?", "!", "。", "？", "！"))
                 )
             )
             if should_flush:
-                segments.append(self._word_segment(current, offset))
+                segments.append(ElevenLabsASRProvider._word_segment(current, offset))
                 current = []
                 current_start = None
 
@@ -1587,15 +1604,16 @@ class ElevenLabsASRProvider(OpenAICompatibleASRProvider):
             previous_end = end
 
         if current:
-            segments.append(self._word_segment(current, offset))
+            segments.append(ElevenLabsASRProvider._word_segment(current, offset))
 
         return segments
 
-    def _word_segment(self, words: List[dict], offset: float) -> Segment:
+    @staticmethod
+    def _word_segment(words: List[dict], offset: float) -> Segment:
         return Segment(
             start=offset + float(words[0]["start"]),
             end=offset + float(words[-1]["end"]),
-            text=self._join_word_text(words),
+            text=ElevenLabsASRProvider._join_word_text(words),
         )
 
     @staticmethod
@@ -1615,6 +1633,668 @@ class ElevenLabsASRProvider(OpenAICompatibleASRProvider):
             or "\uf900" <= char <= "\ufaff"
             for char in text
         )
+
+
+class DeepgramASRProvider(OpenAICompatibleASRProvider):
+    """Deepgram pre-recorded audio adapter."""
+
+    PROVIDER_NAME = "Deepgram"
+    DEFAULT_BASE_URL = "https://api.deepgram.com/v1"
+    DEFAULT_MODEL = "nova-3"
+    MAX_UPLOAD_BYTES = 24 * 1024 * 1024
+    URL_PREFERRED_ABOVE_BYTES = 0
+    SUPPORTS_URL_TRANSCRIPTION = True
+
+    def _auth_headers(self) -> dict:
+        return {"Authorization": f"Token {self.api_key}"}
+
+    def _request_params(self, language: str = None) -> dict:
+        params = {
+            "model": self.model,
+            "smart_format": "true",
+            "punctuate": "true",
+            "utterances": "true",
+        }
+        if language:
+            params["language"] = language
+        return params
+
+    async def _request_transcription(self, audio_path: str, language: str = None) -> dict:
+        try:
+            import httpx
+
+            with open(audio_path, "rb") as f:
+                audio_data = f.read()
+
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/listen",
+                    headers={
+                        **self._auth_headers(),
+                        "Content-Type": "audio/flac",
+                    },
+                    params=self._request_params(language),
+                    content=audio_data,
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Deepgram ASR API error: {e}")
+            raise RuntimeError(f"Deepgram transcription failed: {e}")
+
+    async def _request_transcription_url(self, audio_url: str, language: str = None) -> dict:
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/listen",
+                    headers=self._auth_headers(),
+                    params=self._request_params(language),
+                    json={"url": audio_url},
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Deepgram ASR API error: {e}")
+            raise RuntimeError(f"Deepgram URL transcription failed: {e}")
+
+    def _parse_response(
+        self,
+        result: dict,
+        audio_path: str,
+        offset: float = 0.0,
+    ) -> List[Segment]:
+        segments: List[Segment] = []
+
+        for utterance in result.get("results", {}).get("utterances") or []:
+            text = str(utterance.get("transcript") or "").strip()
+            if not text:
+                continue
+            segments.append(
+                Segment(
+                    start=offset + float(utterance.get("start", 0.0)),
+                    end=offset + float(utterance.get("end", utterance.get("start", 0.0))),
+                    text=text,
+                )
+            )
+        if segments:
+            return segments
+
+        alternative = self._first_deepgram_alternative(result)
+        paragraphs = alternative.get("paragraphs", {}).get("paragraphs") or []
+        for paragraph in paragraphs:
+            for sentence in paragraph.get("sentences") or []:
+                text = str(sentence.get("text") or "").strip()
+                if not text:
+                    continue
+                segments.append(
+                    Segment(
+                        start=offset + float(sentence.get("start", 0.0)),
+                        end=offset + float(sentence.get("end", sentence.get("start", 0.0))),
+                        text=text,
+                    )
+                )
+        if segments:
+            return segments
+
+        words = alternative.get("words") or []
+        if words:
+            return self._segments_from_words(words, offset)
+
+        text = str(alternative.get("transcript") or "").strip()
+        if text:
+            return [Segment(start=offset, end=offset + _get_audio_duration(audio_path), text=text)]
+
+        raise RuntimeError("Invalid response format from Deepgram ASR API")
+
+    @staticmethod
+    def _first_deepgram_alternative(result: dict) -> dict:
+        channels = result.get("results", {}).get("channels") or []
+        if not channels:
+            return {}
+        alternatives = channels[0].get("alternatives") or []
+        return alternatives[0] if alternatives else {}
+
+    def _segments_from_words(self, words: List[dict], offset: float) -> List[Segment]:
+        normalized = []
+        for word in words:
+            text = str(word.get("punctuated_word") or word.get("word") or "").strip()
+            if not text:
+                continue
+            try:
+                start = float(word.get("start", 0.0))
+                end = float(word.get("end", start))
+            except (TypeError, ValueError):
+                continue
+            normalized.append({"text": text, "start": start, "end": end})
+        return ElevenLabsASRProvider._segments_from_word_items(normalized, offset)
+
+
+class AsyncUrlJobASRProvider(OpenAICompatibleASRProvider):
+    """Base class for providers that require a public audio URL and async polling."""
+
+    POLL_INTERVAL_SECONDS = 5.0
+    POLL_TIMEOUT_SECONDS = 1800.0
+    URL_PREFERRED_ABOVE_BYTES = 0
+    SUPPORTS_URL_TRANSCRIPTION = True
+
+    async def transcribe(
+        self,
+        audio_path: str,
+        language: str = None,
+    ) -> List[Segment]:
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+        if not self.public_audio_base_url:
+            raise RuntimeError(f"{self.PROVIDER_NAME} ASR requires a public audio access URL")
+
+        work_dir = self._prepare_work_dir(audio_path)
+        try:
+            flac_path = self._convert_to_flac(audio_path, work_dir)
+            flac_size = os.path.getsize(flac_path)
+            duration = _get_audio_duration(flac_path)
+            audio_url = self._build_signed_audio_url(flac_path)
+            logger.info(
+                "%s ASR async URL submit: url=%s size=%.2fMB duration=%.1fs",
+                self.PROVIDER_NAME,
+                audio_url.split("?", 1)[0],
+                flac_size / 1024 / 1024,
+                duration,
+            )
+            job_id = await self._submit_job(audio_url, language)
+            result = await self._poll_job(job_id)
+            segments = self._parse_response(result, flac_path)
+            if segments:
+                return segments
+            raise RuntimeError(f"Invalid response format from {self.PROVIDER_NAME} ASR API")
+        finally:
+            try:
+                shutil.rmtree(work_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning("Failed to cleanup %s ASR temp dir %s: %s", self.PROVIDER_NAME, work_dir, e)
+
+    async def _submit_job(self, audio_url: str, language: str = None) -> str:
+        raise NotImplementedError
+
+    async def _poll_job(self, job_id: str) -> dict:
+        deadline = asyncio.get_event_loop().time() + self.POLL_TIMEOUT_SECONDS
+        last_status = None
+        while asyncio.get_event_loop().time() < deadline:
+            result, done, failed, status = await self._query_job(job_id)
+            last_status = status
+            if done:
+                return result
+            if failed:
+                raise RuntimeError(f"{self.PROVIDER_NAME} ASR job failed: {status}")
+            await asyncio.sleep(self.POLL_INTERVAL_SECONDS)
+        raise RuntimeError(f"{self.PROVIDER_NAME} ASR job timed out, last status: {last_status}")
+
+    async def _query_job(self, job_id: str) -> Tuple[dict, bool, bool, str]:
+        raise NotImplementedError
+
+
+class VolcengineASRProvider(AsyncUrlJobASRProvider):
+    """Volcengine audio/video subtitle generation adapter."""
+
+    PROVIDER_NAME = "Volcengine"
+    DEFAULT_BASE_URL = "https://openspeech.bytedance.com/api/v1/vc"
+    DEFAULT_MODEL = "bigmodel"
+
+    def __init__(
+        self,
+        api_key: str,
+        app_id: str,
+        model: str = DEFAULT_MODEL,
+        base_url: Optional[str] = None,
+        public_audio_base_url: Optional[str] = None,
+    ):
+        if not app_id:
+            raise ValueError("Volcengine ASR app_id cannot be empty")
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            public_audio_base_url=public_audio_base_url,
+        )
+        self.app_id = app_id
+
+    def _auth_headers(self) -> dict:
+        return {"Authorization": f"Bearer; {self.api_key}"}
+
+    async def _submit_job(self, audio_url: str, language: str = None) -> str:
+        try:
+            import httpx
+
+            payload = {
+                "url": audio_url,
+                "audio_text": "",
+            }
+            params = {
+                "appid": self.app_id,
+                "language": self._map_language(language),
+            }
+            if self.model:
+                params["cluster"] = self.model
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/submit",
+                    headers=self._auth_headers(),
+                    params=params,
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+            job_id = str(data.get("id") or data.get("task_id") or data.get("job_id") or "")
+            if not job_id and isinstance(data.get("resp"), dict):
+                resp = data["resp"]
+                job_id = str(resp.get("id") or resp.get("task_id") or resp.get("job_id") or "")
+            if not job_id:
+                raise RuntimeError(f"Volcengine submit response missing job id: {data}")
+            return job_id
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Volcengine ASR API error: {e}")
+            raise RuntimeError(f"Volcengine submit failed: {e}")
+
+    async def _query_job(self, job_id: str) -> Tuple[dict, bool, bool, str]:
+        try:
+            import httpx
+
+            params = {"appid": self.app_id, "id": job_id}
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.get(
+                    f"{self.base_url}/query",
+                    headers=self._auth_headers(),
+                    params=params,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            code = str(data.get("code", "0"))
+            status = str(data.get("status") or data.get("message") or code)
+            failed = code not in {"0", "20000000"} and any(
+                keyword in status.lower() for keyword in ["fail", "error", "invalid", "not"]
+            )
+            done = bool(self._extract_utterances(data)) or status.lower() in {"success", "done", "completed"}
+            return data, done, failed, status
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Volcengine ASR API error: {e}")
+            raise RuntimeError(f"Volcengine query failed: {e}")
+
+    def _parse_response(self, result: dict, audio_path: str, offset: float = 0.0) -> List[Segment]:
+        segments: List[Segment] = []
+        for utterance in self._extract_utterances(result):
+            text = str(utterance.get("text") or utterance.get("utterance") or "").strip()
+            if not text:
+                continue
+            start = self._time_to_seconds(
+                utterance.get("start_time")
+                or utterance.get("start")
+                or utterance.get("begin_time")
+                or utterance.get("begin")
+            )
+            end = self._time_to_seconds(
+                utterance.get("end_time")
+                or utterance.get("end")
+                or utterance.get("stop_time")
+                or utterance.get("stop")
+            )
+            segments.append(Segment(start=offset + start, end=offset + max(start, end), text=text))
+        return segments
+
+    @staticmethod
+    def _extract_utterances(data: dict) -> List[dict]:
+        for key in ("utterances", "result", "results"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+        if isinstance(data.get("data"), dict):
+            return VolcengineASRProvider._extract_utterances(data["data"])
+        if isinstance(data.get("resp"), dict):
+            return VolcengineASRProvider._extract_utterances(data["resp"])
+        return []
+
+    @staticmethod
+    def _time_to_seconds(value) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return numeric / 1000.0 if numeric > 1000 else numeric
+
+    @staticmethod
+    def _map_language(language: str = None) -> str:
+        mapping = {"en": "en-US", "ja": "ja-JP"}
+        return mapping.get(language or "", language or "ja-JP")
+
+
+class TencentASRProvider(AsyncUrlJobASRProvider):
+    """Tencent Cloud recording file recognition adapter."""
+
+    PROVIDER_NAME = "Tencent"
+    DEFAULT_BASE_URL = "https://asr.tencentcloudapi.com"
+    DEFAULT_MODEL = "16k_ja"
+    API_VERSION = "2019-06-14"
+    SERVICE = "asr"
+    REGION = "ap-guangzhou"
+
+    def __init__(
+        self,
+        api_key: str,
+        secret_id: str,
+        model: str = DEFAULT_MODEL,
+        base_url: Optional[str] = None,
+        public_audio_base_url: Optional[str] = None,
+        region: Optional[str] = None,
+    ):
+        if not secret_id:
+            raise ValueError("Tencent ASR SecretId cannot be empty")
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            public_audio_base_url=public_audio_base_url,
+        )
+        self.secret_id = secret_id
+        self.region = region or self.REGION
+
+    async def _submit_job(self, audio_url: str, language: str = None) -> str:
+        payload = {
+            "EngineModelType": self._engine_model_type(language),
+            "ChannelNum": 1,
+            "ResTextFormat": 0,
+            "SourceType": 0,
+            "Url": audio_url,
+        }
+        data = await self._call_tencent_api("CreateRecTask", payload)
+        response = data.get("Response", {})
+        task_id = (
+            response.get("Data", {}).get("TaskId")
+            if isinstance(response.get("Data"), dict)
+            else None
+        ) or response.get("TaskId")
+        if not task_id:
+            raise RuntimeError(f"Tencent submit response missing TaskId: {data}")
+        return str(task_id)
+
+    async def _query_job(self, job_id: str) -> Tuple[dict, bool, bool, str]:
+        task_id = int(job_id) if str(job_id).isdigit() else job_id
+        data = await self._call_tencent_api("DescribeTaskStatus", {"TaskId": task_id})
+        response = data.get("Response", {})
+        task_data = response.get("Data") if isinstance(response.get("Data"), dict) else response
+        status_value = task_data.get("Status")
+        status_text = str(task_data.get("StatusStr") or status_value)
+        done = status_value == 2 or status_text.lower() in {"success", "done", "completed"}
+        failed = status_value in {3, -1} or status_text.lower() in {"failed", "error"}
+        return task_data, done, failed, status_text
+
+    async def _call_tencent_api(self, action: str, payload: dict) -> dict:
+        try:
+            import httpx
+
+            body = json.dumps(payload, separators=(",", ":"))
+            timestamp = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+            headers = self._sign_headers(action, body, timestamp)
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(self.base_url, headers=headers, content=body)
+                response.raise_for_status()
+                data = response.json()
+            if data.get("Response", {}).get("Error"):
+                raise RuntimeError(data["Response"]["Error"])
+            return data
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Tencent ASR API error: {e}")
+            raise RuntimeError(f"Tencent API call failed: {e}")
+
+    def _sign_headers(self, action: str, body: str, timestamp: int) -> dict:
+        host = self.base_url.replace("https://", "").replace("http://", "").split("/", 1)[0]
+        date = datetime.datetime.utcfromtimestamp(timestamp).strftime("%Y-%m-%d")
+        hashed_payload = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        canonical_request = "\n".join([
+            "POST",
+            "/",
+            "",
+            f"content-type:application/json; charset=utf-8\nhost:{host}\nx-tc-action:{action.lower()}\n",
+            "content-type;host;x-tc-action",
+            hashed_payload,
+        ])
+        credential_scope = f"{date}/{self.SERVICE}/tc3_request"
+        string_to_sign = "\n".join([
+            "TC3-HMAC-SHA256",
+            str(timestamp),
+            credential_scope,
+            hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+        ])
+        secret_date = hmac.new(("TC3" + self.api_key).encode("utf-8"), date.encode("utf-8"), hashlib.sha256).digest()
+        secret_service = hmac.new(secret_date, self.SERVICE.encode("utf-8"), hashlib.sha256).digest()
+        secret_signing = hmac.new(secret_service, b"tc3_request", hashlib.sha256).digest()
+        signature = hmac.new(secret_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        authorization = (
+            "TC3-HMAC-SHA256 "
+            f"Credential={self.secret_id}/{credential_scope}, "
+            "SignedHeaders=content-type;host;x-tc-action, "
+            f"Signature={signature}"
+        )
+        return {
+            "Authorization": authorization,
+            "Content-Type": "application/json; charset=utf-8",
+            "Host": host,
+            "X-TC-Action": action,
+            "X-TC-Timestamp": str(timestamp),
+            "X-TC-Version": self.API_VERSION,
+            "X-TC-Region": self.region,
+        }
+
+    def _parse_response(self, result: dict, audio_path: str, offset: float = 0.0) -> List[Segment]:
+        segments = self._parse_tencent_details(result, offset)
+        if segments:
+            return segments
+        text = str(result.get("Result") or "").strip()
+        if text:
+            parsed = self._parse_tencent_result_text(text, offset)
+            if parsed:
+                return parsed
+            return [Segment(start=offset, end=offset + _get_audio_duration(audio_path), text=text)]
+        return []
+
+    @staticmethod
+    def _parse_tencent_details(result: dict, offset: float) -> List[Segment]:
+        details = result.get("ResultDetail") or result.get("SentenceDetail") or []
+        segments: List[Segment] = []
+        for item in details:
+            text = str(item.get("FinalSentence") or item.get("Text") or item.get("SliceSentence") or "").strip()
+            if not text:
+                continue
+            start = (
+                TencentASRProvider._milliseconds_to_seconds(item.get("StartMs"))
+                if item.get("StartMs") is not None
+                else TencentASRProvider._time_to_seconds(item.get("StartTime") or item.get("BeginTime"))
+            )
+            end = (
+                TencentASRProvider._milliseconds_to_seconds(item.get("EndMs"))
+                if item.get("EndMs") is not None
+                else TencentASRProvider._time_to_seconds(item.get("EndTime") or item.get("End"))
+            )
+            segments.append(Segment(start=offset + start, end=offset + max(start, end), text=text))
+        return segments
+
+    @staticmethod
+    def _parse_tencent_result_text(text: str, offset: float) -> List[Segment]:
+        segments: List[Segment] = []
+        pattern = re.compile(r"\[(\d+(?:\.\d+)?)[:：](\d+(?:\.\d+)?)\]\s*(.+?)(?=\n\[|\Z)", re.S)
+        for match in pattern.finditer(text):
+            start = float(match.group(1))
+            end = float(match.group(2))
+            content = match.group(3).strip()
+            if content:
+                segments.append(Segment(start=offset + start, end=offset + max(start, end), text=content))
+        return segments
+
+    @staticmethod
+    def _time_to_seconds(value) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return numeric / 1000.0 if numeric > 10000 else numeric
+
+    @staticmethod
+    def _milliseconds_to_seconds(value) -> float:
+        try:
+            return float(value) / 1000.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _engine_model_type(self, language: str = None) -> str:
+        if self.model:
+            return self.model
+        mapping = {"en": "16k_en", "ja": "16k_ja"}
+        return mapping.get(language or "", "16k_ja")
+
+
+class AliyunASRProvider(AsyncUrlJobASRProvider):
+    """Alibaba Cloud Model Studio Fun-ASR transcription adapter."""
+
+    PROVIDER_NAME = "Aliyun"
+    DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
+    DEFAULT_MODEL = "fun-asr-mtl"
+
+    def _auth_headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def _submit_job(self, audio_url: str, language: str = None) -> str:
+        try:
+            import httpx
+
+            payload = {
+                "model": self.model,
+                "input": {"file_urls": [audio_url]},
+                "parameters": {
+                    "channel_id": [0],
+                    "language_hints": [self._map_language(language)],
+                },
+            }
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/services/audio/asr/transcription",
+                    headers={
+                        **self._auth_headers(),
+                        "X-DashScope-Async": "enable",
+                    },
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            task_id = str(data.get("output", {}).get("task_id") or "")
+            if not task_id:
+                raise RuntimeError(f"Aliyun submit response missing task_id: {data}")
+            return task_id
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Aliyun ASR API error: {e}")
+            raise RuntimeError(f"Aliyun submit failed: {e}")
+
+    async def _query_job(self, job_id: str) -> Tuple[dict, bool, bool, str]:
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/tasks/{job_id}",
+                    headers={
+                        **self._auth_headers(),
+                        "X-DashScope-Async": "enable",
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            output = data.get("output", data)
+            status = str(output.get("task_status") or data.get("task_status") or "")
+            if status == "SUCCEEDED":
+                return await self._load_transcription_result(output), True, False, status
+            failed = status in {"FAILED", "CANCELED", "UNKNOWN"}
+            return data, False, failed, status
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Aliyun ASR API error: {e}")
+            raise RuntimeError(f"Aliyun query failed: {e}")
+
+    async def _load_transcription_result(self, output: dict) -> dict:
+        try:
+            import httpx
+
+            results = output.get("results") or []
+            for item in results:
+                if item.get("subtask_status") != "SUCCEEDED":
+                    continue
+                transcription_url = item.get("transcription_url")
+                if not transcription_url:
+                    continue
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    response = await client.get(transcription_url)
+                    response.raise_for_status()
+                    return response.json()
+            raise RuntimeError(f"Aliyun task succeeded but no transcription_url found: {output}")
+        except Exception as e:
+            if hasattr(e, "response"):
+                raise RuntimeError(f"Aliyun transcription result download failed: {e}")
+            raise
+
+    def _parse_response(self, result: dict, audio_path: str, offset: float = 0.0) -> List[Segment]:
+        segments: List[Segment] = []
+        for transcript in result.get("transcripts") or []:
+            for sentence in transcript.get("sentences") or []:
+                text = str(sentence.get("text") or "").strip()
+                if not text:
+                    continue
+                start = self._milliseconds_to_seconds(sentence.get("begin_time"))
+                end = self._milliseconds_to_seconds(sentence.get("end_time"))
+                segments.append(
+                    Segment(
+                        start=offset + start,
+                        end=offset + max(start, end),
+                        text=text,
+                    )
+                )
+        if segments:
+            return segments
+
+        text_parts = [
+            str(transcript.get("text") or "").strip()
+            for transcript in result.get("transcripts") or []
+            if str(transcript.get("text") or "").strip()
+        ]
+        if text_parts:
+            return [
+                Segment(
+                    start=offset,
+                    end=offset + _get_audio_duration(audio_path),
+                    text="\n".join(text_parts),
+                )
+            ]
+        return []
+
+    @staticmethod
+    def _milliseconds_to_seconds(value) -> float:
+        try:
+            return float(value) / 1000.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _map_language(language: str = None) -> str:
+        mapping = {"en": "en", "ja": "ja"}
+        return mapping.get(language or "", language or "ja")
 
 
 def _get_audio_duration(audio_path: str) -> float:

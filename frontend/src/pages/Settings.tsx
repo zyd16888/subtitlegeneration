@@ -212,6 +212,21 @@ const Settings: React.FC = () => {
     const s = new Set<string>(); models.forEach(m => m.languages.forEach(l => s.add(l))); return Array.from(s).sort();
   }, [models]);
 
+  const providerLinks = (links: { label: string; href: string }[]) => (
+    <div className="cat-info-banner" style={{ marginTop: 0, marginBottom: 16 }}>
+      <InfoCircleOutlined style={{ marginRight: 8, color: 'var(--accent-cyan)', flexShrink: 0 }} />
+      <span>
+        开通入口：
+        {links.map((link, index) => (
+          <React.Fragment key={link.href}>
+            {index > 0 && <span> · </span>}
+            <a href={link.href} target="_blank" rel="noreferrer">{link.label}</a>
+          </React.Fragment>
+        ))}
+      </span>
+    </div>
+  );
+
   useEffect(() => {
     loadConfig(); loadModels(); loadVadModels(); loadLanguages(); loadEmbyLibraries(); loadDiskUsage(); loadBotStatus(); loadWorkerStatus();
     api.config.getDefaultFillerWords().then(setDefaultFillerWords).catch(() => {});
@@ -298,6 +313,25 @@ const Settings: React.FC = () => {
         elevenlabs_asr_model: form.getFieldValue('elevenlabs_asr_model'),
         elevenlabs_asr_base_url: form.getFieldValue('elevenlabs_asr_base_url'),
         elevenlabs_asr_public_audio_base_url: form.getFieldValue('elevenlabs_asr_public_audio_base_url'),
+        deepgram_asr_api_key: form.getFieldValue('deepgram_asr_api_key'),
+        deepgram_asr_model: form.getFieldValue('deepgram_asr_model'),
+        deepgram_asr_base_url: form.getFieldValue('deepgram_asr_base_url'),
+        deepgram_asr_public_audio_base_url: form.getFieldValue('deepgram_asr_public_audio_base_url'),
+        volcengine_asr_app_id: form.getFieldValue('volcengine_asr_app_id'),
+        volcengine_asr_access_token: form.getFieldValue('volcengine_asr_access_token'),
+        volcengine_asr_model: form.getFieldValue('volcengine_asr_model'),
+        volcengine_asr_base_url: form.getFieldValue('volcengine_asr_base_url'),
+        volcengine_asr_public_audio_base_url: form.getFieldValue('volcengine_asr_public_audio_base_url'),
+        tencent_asr_secret_id: form.getFieldValue('tencent_asr_secret_id'),
+        tencent_asr_secret_key: form.getFieldValue('tencent_asr_secret_key'),
+        tencent_asr_engine_model_type: form.getFieldValue('tencent_asr_engine_model_type'),
+        tencent_asr_base_url: form.getFieldValue('tencent_asr_base_url'),
+        tencent_asr_public_audio_base_url: form.getFieldValue('tencent_asr_public_audio_base_url'),
+        tencent_asr_region: form.getFieldValue('tencent_asr_region'),
+        aliyun_asr_api_key: form.getFieldValue('aliyun_asr_api_key'),
+        aliyun_asr_model: form.getFieldValue('aliyun_asr_model'),
+        aliyun_asr_base_url: form.getFieldValue('aliyun_asr_base_url'),
+        aliyun_asr_public_audio_base_url: form.getFieldValue('aliyun_asr_public_audio_base_url'),
       });
       message.success('引擎配置已保存');
     } catch (err: any) { message.error(err.message || '保存失败'); }
@@ -725,12 +759,20 @@ const Settings: React.FC = () => {
                       <Option value="openai">OpenAI Whisper</Option>
                       <Option value="fireworks">Fireworks Whisper</Option>
                       <Option value="elevenlabs">ElevenLabs Scribe</Option>
+                      <Option value="deepgram">Deepgram</Option>
+                      <Option value="volcengine">火山引擎</Option>
+                      <Option value="tencent">腾讯云</Option>
+                      <Option value="aliyun">阿里云</Option>
                     </Select>
                   </Form.Item>
                 </Col>
               </Row>
               {cloudAsrProvider === 'groq' && (
                 <>
+                  {providerLinks([
+                    { label: 'Groq API Keys', href: 'https://console.groq.com/keys' },
+                    { label: 'Speech-to-Text 文档', href: 'https://console.groq.com/docs/speech-to-text' },
+                  ])}
                   <Row gutter={24}>
                     <Col span={8}>
                       <Form.Item name="groq_asr_model" label="Groq 模型" initialValue="whisper-large-v3-turbo">
@@ -768,6 +810,10 @@ const Settings: React.FC = () => {
               )}
               {cloudAsrProvider === 'openai' && (
                 <>
+                  {providerLinks([
+                    { label: 'OpenAI API Keys', href: 'https://platform.openai.com/api-keys' },
+                    { label: 'Audio Transcriptions 文档', href: 'https://platform.openai.com/docs/api-reference/audio/createTranscription' },
+                  ])}
                   <Row gutter={24}>
                     <Col span={8}>
                       <Form.Item name="openai_asr_model" label="OpenAI 模型" initialValue="whisper-1">
@@ -799,6 +845,10 @@ const Settings: React.FC = () => {
               )}
               {cloudAsrProvider === 'fireworks' && (
                 <>
+                  {providerLinks([
+                    { label: 'Fireworks API Keys', href: 'https://fireworks.ai/account/api-keys' },
+                    { label: 'Audio Transcriptions 文档', href: 'https://docs.fireworks.ai/api-reference/audio-transcriptions' },
+                  ])}
                   <Row gutter={24}>
                     <Col span={8}>
                       <Form.Item name="fireworks_asr_model" label="Fireworks 模型" initialValue="whisper-v3-turbo">
@@ -836,6 +886,10 @@ const Settings: React.FC = () => {
               )}
               {cloudAsrProvider === 'elevenlabs' && (
                 <>
+                  {providerLinks([
+                    { label: 'ElevenLabs API Keys', href: 'https://elevenlabs.io/app/settings/api-keys' },
+                    { label: 'Speech-to-Text 文档', href: 'https://elevenlabs.io/docs/api-reference/speech-to-text/convert' },
+                  ])}
                   <Row gutter={24}>
                     <Col span={8}>
                       <Form.Item name="elevenlabs_asr_model" label="ElevenLabs 模型" initialValue="scribe_v2">
@@ -863,6 +917,159 @@ const Settings: React.FC = () => {
                     </Col>
                   </Row>
                   <Text type="secondary" style={{ fontSize: 12 }}>ElevenLabs Scribe 返回词级时间戳，系统会按时间和标点合并成字幕段；配置公网地址后大文件优先走签名 URL。</Text>
+                </>
+              )}
+              {cloudAsrProvider === 'deepgram' && (
+                <>
+                  {providerLinks([
+                    { label: 'Deepgram Console', href: 'https://console.deepgram.com/' },
+                    { label: 'Pre-recorded Audio 文档', href: 'https://developers.deepgram.com/docs/pre-recorded-audio' },
+                  ])}
+                  <Row gutter={24}>
+                    <Col span={8}>
+                      <Form.Item name="deepgram_asr_model" label="Deepgram 模型" initialValue="nova-3">
+                        <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                          <Option value="nova-3">nova-3</Option>
+                          <Option value="nova-2">nova-2</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="deepgram_asr_api_key" label="Deepgram API Key">
+                        <Input.Password placeholder="输入 API Key" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="deepgram_asr_base_url" label="Deepgram Base URL" initialValue="https://api.deepgram.com/v1">
+                        <Input placeholder="https://api.deepgram.com/v1" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Row gutter={24}>
+                    <Col span={12}>
+                      <Form.Item name="deepgram_asr_public_audio_base_url" label="公网音频访问地址">
+                        <Input placeholder="https://subtitle.790366.xyz" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Text type="secondary" style={{ fontSize: 12 }}>Deepgram 支持 URL 和文件上传；配置公网地址后优先走签名 URL，并返回 utterance/word 时间戳。</Text>
+                </>
+              )}
+              {cloudAsrProvider === 'volcengine' && (
+                <>
+                  {providerLinks([
+                    { label: '火山引擎语音控制台', href: 'https://console.volcengine.com/speech/service' },
+                    { label: '音视频字幕生成文档', href: 'https://www.volcengine.com/docs/6561/80909' },
+                  ])}
+                  <Row gutter={24}>
+                    <Col span={8}>
+                      <Form.Item name="volcengine_asr_app_id" label="火山 App ID">
+                        <Input placeholder="输入 App ID" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="volcengine_asr_access_token" label="Access Token">
+                        <Input.Password placeholder="输入 Access Token" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="volcengine_asr_model" label="模型/集群" initialValue="bigmodel">
+                        <Input placeholder="bigmodel" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Row gutter={24}>
+                    <Col span={12}>
+                      <Form.Item name="volcengine_asr_base_url" label="火山 Base URL" initialValue="https://openspeech.bytedance.com/api/v1/vc">
+                        <Input placeholder="https://openspeech.bytedance.com/api/v1/vc" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="volcengine_asr_public_audio_base_url" label="公网音频访问地址">
+                        <Input placeholder="https://subtitle.790366.xyz" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Text type="secondary" style={{ fontSize: 12 }}>火山引擎字幕接口需要公网可访问音频 URL；系统会按源语言映射 en-US / ja-JP。</Text>
+                </>
+              )}
+              {cloudAsrProvider === 'tencent' && (
+                <>
+                  {providerLinks([
+                    { label: '腾讯云语音识别控制台', href: 'https://console.cloud.tencent.com/asr' },
+                    { label: '录音文件识别文档', href: 'https://cloud.tencent.com/document/api/1093/37823' },
+                  ])}
+                  <Row gutter={24}>
+                    <Col span={8}>
+                      <Form.Item name="tencent_asr_secret_id" label="腾讯云 SecretId">
+                        <Input placeholder="输入 SecretId" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="tencent_asr_secret_key" label="腾讯云 SecretKey">
+                        <Input.Password placeholder="输入 SecretKey" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="tencent_asr_engine_model_type" label="引擎模型类型" initialValue="16k_ja">
+                        <Select dropdownStyle={{ background: 'var(--bg-elevated)' }}>
+                          <Option value="16k_ja">16k_ja</Option>
+                          <Option value="16k_en">16k_en</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Row gutter={24}>
+                    <Col span={8}>
+                      <Form.Item name="tencent_asr_region" label="地域" initialValue="ap-guangzhou">
+                        <Input placeholder="ap-guangzhou" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="tencent_asr_base_url" label="腾讯云 Base URL" initialValue="https://asr.tencentcloudapi.com">
+                        <Input placeholder="https://asr.tencentcloudapi.com" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="tencent_asr_public_audio_base_url" label="公网音频访问地址">
+                        <Input placeholder="https://subtitle.790366.xyz" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Text type="secondary" style={{ fontSize: 12 }}>腾讯云录音文件识别通过公网 URL 创建任务，系统轮询结果并解析时间戳；英文用 16k_en，日语用 16k_ja。</Text>
+                </>
+              )}
+              {cloudAsrProvider === 'aliyun' && (
+                <>
+                  {providerLinks([
+                    { label: '百炼 API Key', href: 'https://bailian.console.aliyun.com/?apiKey=1' },
+                    { label: 'Fun-ASR 录音识别文档', href: 'https://help.aliyun.com/zh/model-studio/fun-asr-recorded-speech-recognition-restful-api' },
+                  ])}
+                  <Row gutter={24}>
+                    <Col span={8}>
+                      <Form.Item name="aliyun_asr_model" label="阿里云模型" initialValue="fun-asr-mtl">
+                        <Input placeholder="fun-asr-mtl" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="aliyun_asr_api_key" label="阿里云 API Key">
+                        <Input.Password placeholder="sk-..." />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="aliyun_asr_base_url" label="阿里云 Base URL" initialValue="https://dashscope.aliyuncs.com/api/v1">
+                        <Input placeholder="https://dashscope.aliyuncs.com/api/v1" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Row gutter={24}>
+                    <Col span={12}>
+                      <Form.Item name="aliyun_asr_public_audio_base_url" label="公网音频访问地址">
+                        <Input placeholder="https://subtitle.790366.xyz" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Text type="secondary" style={{ fontSize: 12 }}>阿里云百炼 Fun-ASR 使用公网 URL 创建异步任务，系统轮询任务并下载 transcription_url 解析句子时间戳。</Text>
                 </>
               )}
             </div>

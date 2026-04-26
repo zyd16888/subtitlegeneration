@@ -26,6 +26,10 @@ from services.asr_engine import (
     OpenAIWhisperASRProvider,
     FireworksASRProvider,
     ElevenLabsASRProvider,
+    DeepgramASRProvider,
+    VolcengineASRProvider,
+    TencentASRProvider,
+    AliyunASRProvider,
     Segment,
 )
 from services.translation_service import (
@@ -238,6 +242,57 @@ def _get_asr_engine(config, source_language: str = None) -> ASREngine:
             )
             logger.info(f"Creating CloudASREngine with ElevenLabs model: {config.elevenlabs_asr_model}")
             return CloudASREngine(elevenlabs_provider)
+        if provider == "deepgram":
+            if not config.deepgram_asr_api_key:
+                raise ValueError("Deepgram ASR 需要配置 API Key")
+            deepgram_provider = DeepgramASRProvider(
+                api_key=config.deepgram_asr_api_key,
+                model=config.deepgram_asr_model,
+                base_url=config.deepgram_asr_base_url,
+                public_audio_base_url=config.deepgram_asr_public_audio_base_url,
+            )
+            logger.info(f"Creating CloudASREngine with Deepgram model: {config.deepgram_asr_model}")
+            return CloudASREngine(deepgram_provider)
+        if provider == "volcengine":
+            if not config.volcengine_asr_access_token:
+                raise ValueError("火山引擎 ASR 需要配置 Access Token")
+            if not config.volcengine_asr_app_id:
+                raise ValueError("火山引擎 ASR 需要配置 App ID")
+            volcengine_provider = VolcengineASRProvider(
+                api_key=config.volcengine_asr_access_token,
+                app_id=config.volcengine_asr_app_id,
+                model=config.volcengine_asr_model,
+                base_url=config.volcengine_asr_base_url,
+                public_audio_base_url=config.volcengine_asr_public_audio_base_url,
+            )
+            logger.info(f"Creating CloudASREngine with Volcengine model: {config.volcengine_asr_model}")
+            return CloudASREngine(volcengine_provider)
+        if provider == "tencent":
+            if not config.tencent_asr_secret_id:
+                raise ValueError("腾讯云 ASR 需要配置 SecretId")
+            if not config.tencent_asr_secret_key:
+                raise ValueError("腾讯云 ASR 需要配置 SecretKey")
+            tencent_provider = TencentASRProvider(
+                api_key=config.tencent_asr_secret_key,
+                secret_id=config.tencent_asr_secret_id,
+                model=config.tencent_asr_engine_model_type,
+                base_url=config.tencent_asr_base_url,
+                public_audio_base_url=config.tencent_asr_public_audio_base_url,
+                region=config.tencent_asr_region,
+            )
+            logger.info(f"Creating CloudASREngine with Tencent model: {config.tencent_asr_engine_model_type}")
+            return CloudASREngine(tencent_provider)
+        if provider == "aliyun":
+            if not config.aliyun_asr_api_key:
+                raise ValueError("阿里云 ASR 需要配置 API Key")
+            aliyun_provider = AliyunASRProvider(
+                api_key=config.aliyun_asr_api_key,
+                model=config.aliyun_asr_model,
+                base_url=config.aliyun_asr_base_url,
+                public_audio_base_url=config.aliyun_asr_public_audio_base_url,
+            )
+            logger.info(f"Creating CloudASREngine with Aliyun model: {config.aliyun_asr_model}")
+            return CloudASREngine(aliyun_provider)
         raise ValueError(f"不支持的云端 ASR 厂商: {provider}")
 
     if config.asr_engine == "sherpa-onnx":
