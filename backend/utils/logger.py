@@ -11,9 +11,27 @@ Requirements: 13.1, 13.2, 13.3, 13.4, 13.5
 """
 import logging
 import sys
+import time
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
+
+
+class SafeTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """Windows 文件被占用时跳过本次轮转，避免日志系统影响服务启动。"""
+
+    def doRollover(self):
+        try:
+            super().doRollover()
+        except PermissionError:
+            if self.stream is None:
+                self.stream = self._open()
+
+            current_time = int(time.time())
+            new_rollover_at = self.computeRollover(current_time)
+            while new_rollover_at <= current_time:
+                new_rollover_at += self.interval
+            self.rolloverAt = new_rollover_at
 
 
 class Logger:
@@ -64,9 +82,12 @@ class Logger:
         # 创建日志记录器
         logger = logging.getLogger(name)
         logger.setLevel(getattr(logging, log_level.upper()))
+        logger.propagate = False
         
-        # 清除已有的处理器
-        logger.handlers.clear()
+        # 清除并关闭已有的处理器，避免 Windows 下文件句柄残留导致轮转失败
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+            handler.close()
         
         # 日志格式
         formatter = logging.Formatter(
@@ -91,7 +112,7 @@ class Logger:
             # when='midnight' 表示每天午夜轮转
             # interval=1 表示每 1 天轮转一次
             # backupCount=30 表示保留最近 30 天的日志
-            file_handler = TimedRotatingFileHandler(
+            file_handler = SafeTimedRotatingFileHandler(
                 filename=log_file,
                 when='midnight',
                 interval=1,

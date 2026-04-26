@@ -1,8 +1,10 @@
 """
 认证服务
 """
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
+
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, Query, status
@@ -10,9 +12,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from config.settings import settings
-from utils.logger import get_logger
 
-logger = get_logger("auth")
+logger = logging.getLogger(__name__)
 
 # 密码加密上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
