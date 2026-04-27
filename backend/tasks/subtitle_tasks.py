@@ -167,12 +167,7 @@ def generate_subtitle_task(
         reporter = runtime.reporter
 
         # 持久化阶段配置到 extra_info，供前端动态渲染处理流程
-        _run_async(task_manager.update_task_result(
-            task_id,
-            extra_info={
-                "stage_weights": {k: list(v) for k, v in reporter._stages.items()},
-            },
-        ))
+        result_persister.persist_stage_weights(reporter)
 
         _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
         logger.info(f"开始处理任务 {task_id}: {video_path}")
@@ -265,15 +260,12 @@ def generate_subtitle_task(
         emit_langs = translation_result.emit_langs
         step_logs = translation_result.step_logs
         skipped_steps = translation_result.skipped_steps
-        _run_async(task_manager.update_task_result(
-            task_id,
-            extra_info=result_persister.with_logs({
-                "step_logs": step_logs,
-                "skipped_steps": skipped_steps,
-                "target_languages": list(resolved_target_langs),
-                "keep_source_subtitle": keep_source,
-            }),
-        ))
+        result_persister.persist_translation_result(
+            step_logs=step_logs,
+            skipped_steps=skipped_steps,
+            target_languages=resolved_target_langs,
+            keep_source_subtitle=keep_source,
+        )
 
         # 4. 生成字幕文件（每种语言一份）
         subtitle_result = generate_subtitle_files(
@@ -290,17 +282,11 @@ def generate_subtitle_task(
         subtitle_path = subtitle_result.subtitle_path
         subtitle_paths = subtitle_result.subtitle_paths
         step_logs = subtitle_result.step_logs
-        _run_async(task_manager.update_task_result(
-            task_id,
+        result_persister.persist_subtitle_result(
             subtitle_path=subtitle_path,
-            extra_info=result_persister.with_logs({
-                "step_logs": step_logs,
-                "subtitles": [
-                    {"lang": lc, "path": p}
-                    for lc, p in subtitle_paths.items()
-                ],
-            }),
-        ))
+            subtitle_paths=subtitle_paths,
+            step_logs=step_logs,
+        )
 
         # 5. 复制字幕到视频目录 + 刷新 Emby
         emby_result = write_subtitles_to_emby(
@@ -318,13 +304,10 @@ def generate_subtitle_task(
         )
         step_logs = emby_result.step_logs
         skipped_steps = emby_result.skipped_steps
-        _run_async(task_manager.update_task_result(
-            task_id,
-            extra_info=result_persister.with_logs({
-                "step_logs": step_logs,
-                "skipped_steps": skipped_steps,
-            }),
-        ))
+        result_persister.persist_emby_result(
+            step_logs=step_logs,
+            skipped_steps=skipped_steps,
+        )
         mark_task_completed(
             task_id=task_id,
             task_manager=task_manager,

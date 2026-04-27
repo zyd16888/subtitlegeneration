@@ -1,7 +1,7 @@
 """
 任务结果持久化辅助。
 """
-from typing import Callable
+from typing import Callable, Dict, List
 
 
 class TaskResultPersister:
@@ -38,6 +38,65 @@ class TaskResultPersister:
         self.update_result(
             segment_count=segment_count,
             extra_info=self.with_logs({"step_logs": step_logs}),
+        )
+
+    def persist_stage_weights(self, reporter) -> None:
+        """持久化阶段权重，供前端渲染处理流程。"""
+        self.update_result(
+            extra_info={
+                "stage_weights": {
+                    name: list(weight)
+                    for name, weight in reporter._stages.items()
+                },
+            }
+        )
+
+    def persist_translation_result(
+        self,
+        step_logs: dict,
+        skipped_steps: List[str],
+        target_languages: List[str],
+        keep_source_subtitle: bool,
+    ) -> None:
+        """持久化翻译阶段结果摘要。"""
+        self.update_result(
+            extra_info=self.with_logs({
+                "step_logs": step_logs,
+                "skipped_steps": skipped_steps,
+                "target_languages": list(target_languages),
+                "keep_source_subtitle": keep_source_subtitle,
+            }),
+        )
+
+    def persist_subtitle_result(
+        self,
+        subtitle_path: str,
+        subtitle_paths: Dict[str, str],
+        step_logs: dict,
+    ) -> None:
+        """持久化字幕文件生成结果。"""
+        self.update_result(
+            subtitle_path=subtitle_path,
+            extra_info=self.with_logs({
+                "step_logs": step_logs,
+                "subtitles": [
+                    {"lang": lang_code, "path": path}
+                    for lang_code, path in subtitle_paths.items()
+                ],
+            }),
+        )
+
+    def persist_emby_result(
+        self,
+        step_logs: dict,
+        skipped_steps: List[str],
+    ) -> None:
+        """持久化 Emby 回写结果。"""
+        self.update_result(
+            extra_info=self.with_logs({
+                "step_logs": step_logs,
+                "skipped_steps": skipped_steps,
+            }),
         )
 
 
