@@ -6,14 +6,12 @@ Celery 任务测试
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
 from backend.tasks.celery_app import celery_app
-from backend.tasks.subtitle_tasks import (
-    generate_subtitle_task,
-    _get_asr_engine,
-    _get_translation_service,
-    _translate_segments
-)
+from backend.tasks.subtitle_tasks import generate_subtitle_task
 from backend.services.asr_engine import Segment
+from backend.services.asr_factory import get_asr_engine
 from backend.services.config_manager import SystemConfigData
+from backend.services.subtitle_translation import translate_segments
+from backend.services.translation_factory import get_translation_service
 
 
 def test_celery_app_configuration():
@@ -48,8 +46,8 @@ def test_get_asr_engine_sherpa_onnx():
         asr_model_path="/path/to/model"
     )
     
-    with patch("backend.tasks.subtitle_tasks.SherpaOnnxEngine") as mock_engine:
-        _get_asr_engine(config)
+    with patch("backend.services.asr_factory.SherpaOnnxOnlineEngine") as mock_engine:
+        get_asr_engine(config)
         mock_engine.assert_called_once_with("/path/to/model")
 
 
@@ -63,11 +61,11 @@ def test_get_asr_engine_cloud():
         groq_asr_base_url="https://api.groq.com/openai/v1",
     )
     
-    with patch("backend.tasks.subtitle_tasks.GroqASRProvider") as mock_provider, \
-            patch("backend.tasks.subtitle_tasks.CloudASREngine") as mock_engine:
+    with patch("backend.services.asr_factory.GroqASRProvider") as mock_provider, \
+            patch("backend.services.asr_factory.CloudASREngine") as mock_engine:
         provider_instance = Mock()
         mock_provider.return_value = provider_instance
-        _get_asr_engine(config)
+        get_asr_engine(config)
         mock_provider.assert_called_once_with(
             api_key="test-key",
             model="whisper-large-v3-turbo",
@@ -83,7 +81,7 @@ def test_get_asr_engine_invalid():
     config = SystemConfigData(asr_engine="invalid")
     
     with pytest.raises(ValueError, match="不支持的 ASR 引擎类型"):
-        _get_asr_engine(config)
+        get_asr_engine(config)
 
 
 def test_get_translation_service_openai():
@@ -94,9 +92,9 @@ def test_get_translation_service_openai():
         openai_model="gpt-4"
     )
     
-    with patch("backend.tasks.subtitle_tasks.OpenAITranslator") as mock_translator:
-        _get_translation_service(config)
-        mock_translator.assert_called_once_with("test-key", "gpt-4")
+    with patch("backend.services.translation_factory.OpenAITranslator") as mock_translator:
+        get_translation_service(config)
+        mock_translator.assert_called_once_with("test-key", "gpt-4", None)
 
 
 def test_get_translation_service_deepseek():
@@ -106,8 +104,8 @@ def test_get_translation_service_deepseek():
         deepseek_api_key="test-key"
     )
     
-    with patch("backend.tasks.subtitle_tasks.DeepSeekTranslator") as mock_translator:
-        _get_translation_service(config)
+    with patch("backend.services.translation_factory.DeepSeekTranslator") as mock_translator:
+        get_translation_service(config)
         mock_translator.assert_called_once_with("test-key")
 
 
@@ -118,8 +116,8 @@ def test_get_translation_service_local():
         local_llm_url="http://localhost:11434"
     )
     
-    with patch("backend.tasks.subtitle_tasks.LocalLLMTranslator") as mock_translator:
-        _get_translation_service(config)
+    with patch("backend.services.translation_factory.LocalLLMTranslator") as mock_translator:
+        get_translation_service(config)
         mock_translator.assert_called_once_with("http://localhost:11434")
 
 
@@ -128,7 +126,7 @@ def test_get_translation_service_invalid():
     config = SystemConfigData(translation_service="invalid")
     
     with pytest.raises(ValueError, match="不支持的翻译服务类型"):
-        _get_translation_service(config)
+        get_translation_service(config)
 
 
 @pytest.mark.asyncio
@@ -140,9 +138,9 @@ async def test_translate_segments_success():
     ]
     
     mock_translator = AsyncMock()
-    mock_translator.translate.side_effect = ["你好", "世界"]
+    mock_translator.translate_batch.return_value = [("你好", True), ("世界", True)]
     
-    result = await _translate_segments(segments, mock_translator)
+    result = await translate_segments(segments, mock_translator)
     
     assert len(result) == 2
     assert result[0].original_text == "こんにちは"
@@ -162,12 +160,9 @@ async def test_translate_segments_with_failure():
     ]
     
     mock_translator = AsyncMock()
-    mock_translator.translate.side_effect = [
-        "你好",
-        Exception("Translation failed")
-    ]
+    mock_translator.translate_batch.return_value = [("你好", True), ("世界", False)]
     
-    result = await _translate_segments(segments, mock_translator)
+    result = await translate_segments(segments, mock_translator)
     
     assert len(result) == 2
     assert result[0].is_translated is True

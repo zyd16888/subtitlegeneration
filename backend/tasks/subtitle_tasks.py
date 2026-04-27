@@ -12,12 +12,6 @@ from typing import List, Optional
 from celery import Task
 
 from .celery_app import celery_app
-from services.asr_factory import (
-    detect_language,
-    get_asr_engine,
-    resolve_vad_model_path,
-    resolve_model_by_language,
-)
 from services.subtitle_pipeline import (
     filter_asr_segments,
     generate_subtitle_files,
@@ -67,12 +61,6 @@ class SubtitleGenerationTask(Task):
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         logger.error(f"Task {task_id} failed: {exc}")
         logger.error(f"Exception info: {einfo}")
-
-
-_resolve_vad_model_path = resolve_vad_model_path
-_detect_language = detect_language
-_resolve_model_by_language = resolve_model_by_language
-_get_asr_engine = get_asr_engine
 
 
 @celery_app.task(
