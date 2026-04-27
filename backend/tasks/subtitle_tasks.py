@@ -10,7 +10,7 @@ import logging
 import os
 import shutil
 import threading
-from typing import Dict, List, Optional
+from typing import List, Optional
 from celery import Task
 
 from .celery_app import celery_app
@@ -25,13 +25,13 @@ from services.asr_factory import (
 from services.path_mapping import apply_path_mapping
 from services.subtitle_pipeline import (
     filter_asr_segments,
+    generate_subtitle_files,
     prepare_audio,
     prepare_task_runtime,
     process_language_detection,
     transcribe_audio,
     translate_subtitles,
 )
-from services.subtitle_generator import SubtitleGenerator
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
 from services.task_log_capture import TaskLogCapture
@@ -303,39 +303,20 @@ def generate_subtitle_task(
 
         # 4. 生成字幕文件（每种语言一份）
         _mark_step_start("subtitle")
-        reporter.report("subtitle", 0.0)
-        logger.info(f"[{task_id}] 步骤 4/5: 生成字幕文件")
-        subtitle_generator = SubtitleGenerator()
-
-        # subtitle_paths: 按语言顺序记录 (lang, path)
-        subtitle_paths: Dict[str, str] = {}
-        subtitle_info_lines: List[str] = []
-        for lang_code in emit_langs:
-            segs = per_lang_segments.get(lang_code, [])
-            if not segs:
-                logger.warning(f"[{task_id}] 语言 {lang_code} 无字幕段，跳过生成")
-                continue
-            path = subtitle_generator.generate_srt(
-                segs, video_path, lang_code, output_dir=task_work_dir
-            )
-            subtitle_paths[lang_code] = path
-            size_kb = os.path.getsize(path) / 1024 if os.path.exists(path) else 0
-            logger.info(f"[{task_id}] 字幕文件生成完成: {path}")
-            subtitle_info_lines.append(
-                f"  - {lang_code}: {path} ({size_kb:.1f} KB, {len(segs)} 段)"
-            )
-
-        if not subtitle_paths:
-            raise RuntimeError("未能生成任何字幕文件")
-
-        # 主字幕路径：primary_target_lang 对应那一份；不存在时用 emit_langs 第 0 个
-        subtitle_path = subtitle_paths.get(primary_target_lang) or subtitle_paths[emit_langs[0]]
-
-        reporter.report("subtitle", 1.0)
-        step_logs["subtitle"] = _format_step_log(
-            "subtitle",
-            "生成字幕文件:\n" + "\n".join(subtitle_info_lines),
+        subtitle_result = generate_subtitle_files(
+            task_id=task_id,
+            video_path=video_path,
+            task_work_dir=task_work_dir,
+            per_lang_segments=per_lang_segments,
+            emit_langs=emit_langs,
+            primary_target_lang=primary_target_lang,
+            reporter=reporter,
+            step_logs=step_logs,
+            format_step_log=_format_step_log,
         )
+        subtitle_path = subtitle_result.subtitle_path
+        subtitle_paths = subtitle_result.subtitle_paths
+        step_logs = subtitle_result.step_logs
         _run_async(task_manager.update_task_result(
             task_id,
             subtitle_path=subtitle_path,

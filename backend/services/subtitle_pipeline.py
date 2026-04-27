@@ -12,7 +12,7 @@ from services.audio_denoiser import denoise_audio
 from services.audio_extractor import AudioExtractor
 from services.progress_reporter import TaskProgressReporter
 from services.segment_filter import filter_filler_segments
-from services.subtitle_generator import SubtitleSegment
+from services.subtitle_generator import SubtitleGenerator, SubtitleSegment
 from services.subtitle_translation import (
     build_source_segments,
     resolve_target_languages,
@@ -78,6 +78,15 @@ class SubtitleTranslationResult:
     translation_skipped: bool
     step_logs: dict
     skipped_steps: List[str]
+
+
+@dataclass
+class SubtitleGenerationResult:
+    """字幕文件生成阶段输出。"""
+
+    subtitle_path: str
+    subtitle_paths: Dict[str, str]
+    step_logs: dict
 
 
 def prepare_task_runtime(
@@ -547,4 +556,62 @@ def translate_subtitles(
         translation_skipped=translation_skipped,
         step_logs=step_logs,
         skipped_steps=skipped_steps,
+    )
+
+
+def generate_subtitle_files(
+    task_id: str,
+    video_path: str,
+    task_work_dir: str,
+    per_lang_segments: Dict[str, List[SubtitleSegment]],
+    emit_langs: List[str],
+    primary_target_lang: str,
+    reporter: TaskProgressReporter,
+    step_logs: dict,
+    format_step_log: Callable[[str, str], str],
+) -> SubtitleGenerationResult:
+    """按语言生成 SRT 文件，并选出主字幕路径。"""
+    reporter.report("subtitle", 0.0)
+    logger.info(f"[{task_id}] 步骤 4/5: 生成字幕文件")
+    subtitle_generator = SubtitleGenerator()
+
+    subtitle_paths: Dict[str, str] = {}
+    subtitle_info_lines: List[str] = []
+    for lang_code in emit_langs:
+        segments = per_lang_segments.get(lang_code, [])
+        if not segments:
+            logger.warning(f"[{task_id}] 语言 {lang_code} 无字幕段，跳过生成")
+            continue
+
+        path = subtitle_generator.generate_srt(
+            segments,
+            video_path,
+            lang_code,
+            output_dir=task_work_dir,
+        )
+        subtitle_paths[lang_code] = path
+        size_kb = os.path.getsize(path) / 1024 if os.path.exists(path) else 0
+        logger.info(f"[{task_id}] 字幕文件生成完成: {path}")
+        subtitle_info_lines.append(
+            f"  - {lang_code}: {path} ({size_kb:.1f} KB, {len(segments)} 段)"
+        )
+
+    if not subtitle_paths:
+        raise RuntimeError("未能生成任何字幕文件")
+
+    subtitle_path = (
+        subtitle_paths.get(primary_target_lang)
+        or subtitle_paths[emit_langs[0]]
+    )
+
+    reporter.report("subtitle", 1.0)
+    step_logs["subtitle"] = format_step_log(
+        "subtitle",
+        "生成字幕文件:\n" + "\n".join(subtitle_info_lines),
+    )
+
+    return SubtitleGenerationResult(
+        subtitle_path=subtitle_path,
+        subtitle_paths=subtitle_paths,
+        step_logs=step_logs,
     )
