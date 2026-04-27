@@ -4,7 +4,6 @@
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
-from models.base import SessionLocal
 from services.subtitle_asr_pipeline import (
     filter_asr_segments,
     process_language_detection,
@@ -72,7 +71,7 @@ class SubtitleTaskRunner:
             config_manager=config_manager,
             task_manager=task_manager,
             result_persister=result_persister,
-            session_factory=SessionLocal,
+            session_factory=self.context.session_factory,
             run_async=self.run_async,
             asr_engine=request.asr_engine,
             asr_model_id=request.asr_model_id,

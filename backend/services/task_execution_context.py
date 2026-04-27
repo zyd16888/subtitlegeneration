@@ -16,6 +16,7 @@ class TaskExecutionContext:
     """任务执行期间共享的资源。"""
 
     db: object
+    session_factory: Callable
     task_manager: TaskManager
     config_manager: ConfigManager
     log_capture: TaskLogCapture
@@ -60,6 +61,7 @@ def create_task_execution_context(
 
     return TaskExecutionContext(
         db=db,
+        session_factory=session_factory,
         task_manager=task_manager,
         config_manager=config_manager,
         log_capture=log_capture,
