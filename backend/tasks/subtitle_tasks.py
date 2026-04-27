@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 import threading
 from typing import List, Optional
 from celery import Task
@@ -35,6 +34,11 @@ from services.task_result_persister import TaskResultPersister, format_step_log
 from services.task_status_guard import (
     ensure_task_leaves_processing,
     skip_if_terminal_task,
+)
+from services.task_lifecycle import (
+    cleanup_task_work_dir,
+    mark_task_completed,
+    mark_task_failed,
 )
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
@@ -321,32 +325,30 @@ def generate_subtitle_task(
                 "skipped_steps": skipped_steps,
             }),
         ))
-        _run_async(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
-        # 任务完成后再写一次，捕获完成日志
-        result_persister.update_result(extra_info=result_persister.with_logs({}))
-        logger.info(f"[{task_id}] 任务完成")
+        mark_task_completed(
+            task_id=task_id,
+            task_manager=task_manager,
+            result_persister=result_persister,
+            run_async=_run_async,
+        )
 
         # 按配置决定是否清理临时文件
-        if config.cleanup_temp_files_on_success:
-            try:
-                shutil.rmtree(task_work_dir)
-                logger.info(f"[{task_id}] 临时文件已清理: {task_work_dir}")
-            except Exception as e:
-                logger.warning(f"[{task_id}] 清理临时文件失败: {e}")
+        cleanup_task_work_dir(
+            task_id=task_id,
+            task_work_dir=task_work_dir,
+            cleanup_enabled=config.cleanup_temp_files_on_success,
+        )
 
         return {"task_id": task_id, "status": "completed", "subtitle_path": subtitle_path}
 
     except Exception as e:
-        error_message = str(e)
-        logger.error(f"[{task_id}] 任务失败: {error_message}", exc_info=True)
-        _run_async(
-            task_manager.update_task_status(task_id, TaskStatus.FAILED, error_message=error_message)
+        mark_task_failed(
+            task_id=task_id,
+            exc=e,
+            task_manager=task_manager,
+            result_persister=result_persister,
+            run_async=_run_async,
         )
-        # 失败时也持久化捕获到的日志，便于排查
-        try:
-            result_persister.update_result(extra_info=result_persister.with_logs({}))
-        except Exception:
-            pass
         raise
 
     finally:
