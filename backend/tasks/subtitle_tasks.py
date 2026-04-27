@@ -3,12 +3,14 @@
 
 协调音频提取、ASR、翻译、字幕生成、Emby 回写的完整流程
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 import shutil
 import threading
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 from celery import Task
 
 from .celery_app import celery_app
@@ -16,40 +18,25 @@ from models.task import TaskStatus
 from services.emby_connector import EmbyConnector
 from services.audio_extractor import AudioExtractor
 from services.audio_denoiser import denoise_audio
-from services.asr_engine import (
-    ASREngine,
-    SherpaOnnxOnlineEngine,
-    SherpaOnnxOfflineEngine,
-    SherpaOnnxVadOfflineEngine,
-    CloudASREngine,
-    GroqASRProvider,
-    OpenAIWhisperASRProvider,
-    FireworksASRProvider,
-    ElevenLabsASRProvider,
-    DeepgramASRProvider,
-    VolcengineASRProvider,
-    TencentASRProvider,
-    AliyunASRProvider,
-    Segment,
+from services.asr_factory import (
+    detect_language,
+    get_asr_engine,
+    resolve_vad_model_path,
+    resolve_model_by_language,
 )
-from services.translation_service import (
-    TranslationService,
-    OpenAITranslator,
-    DeepSeekTranslator,
-    LocalLLMTranslator,
-    GoogleTranslator,
-    MicrosoftTranslator,
-    BaiduTranslator,
-    DeepLTranslator,
+from services.path_mapping import apply_path_mapping
+from services.subtitle_translation import (
+    build_source_segments,
+    resolve_target_languages,
+    translate_segments,
+    translate_to_multi_targets,
 )
-from services.subtitle_generator import SubtitleGenerator, SubtitleSegment
+from services.subtitle_generator import SubtitleGenerator
+from services.translation_factory import get_translation_service
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
-from services.model_manager import ModelManager
-from services.language_detector import LanguageDetector
 from services.task_log_capture import TaskLogCapture
 from services.progress_reporter import TaskProgressReporter
-from config.settings import settings
 from models.base import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -353,285 +340,16 @@ def _get_asr_engine(config, source_language: str = None) -> ASREngine:
     raise ValueError(f"不支持的 ASR 引擎类型: {config.asr_engine}")
 
 
-def _get_translation_service(config) -> TranslationService:
-    """根据配置创建翻译服务实例"""
-    if config.translation_service == "openai":
-        if not config.openai_api_key:
-            raise ValueError("OpenAI 翻译服务需要配置 API Key")
-        return OpenAITranslator(config.openai_api_key, config.openai_model, config.openai_base_url)
-    elif config.translation_service == "deepseek":
-        if not config.deepseek_api_key:
-            raise ValueError("DeepSeek 翻译服务需要配置 API Key")
-        return DeepSeekTranslator(config.deepseek_api_key)
-    elif config.translation_service == "local":
-        if not config.local_llm_url:
-            raise ValueError("本地 LLM 翻译服务需要配置 API URL")
-        return LocalLLMTranslator(config.local_llm_url)
-    elif config.translation_service == "google":
-        mode = getattr(config, "google_translate_mode", "free")
-        api_key = getattr(config, "google_api_key", None)
-        return GoogleTranslator(mode=mode, api_key=api_key)
-    elif config.translation_service == "microsoft":
-        mode = getattr(config, "microsoft_translate_mode", "free")
-        api_key = getattr(config, "microsoft_api_key", None)
-        region = getattr(config, "microsoft_region", "global")
-        return MicrosoftTranslator(mode=mode, api_key=api_key, region=region)
-    elif config.translation_service == "baidu":
-        if not getattr(config, "baidu_app_id", None) or not getattr(config, "baidu_secret_key", None):
-            raise ValueError("百度翻译服务需要配置 APP ID 和 Secret Key")
-        return BaiduTranslator(app_id=config.baidu_app_id, secret_key=config.baidu_secret_key)
-    elif config.translation_service == "deepl":
-        mode = getattr(config, "deepl_mode", "deeplx")
-        api_key = getattr(config, "deepl_api_key", None)
-        deeplx_url = getattr(config, "deeplx_url", None)
-        return DeepLTranslator(mode=mode, api_key=api_key, deeplx_url=deeplx_url)
-    else:
-        raise ValueError(f"不支持的翻译服务类型: {config.translation_service}")
-
-
-def _apply_path_mapping(
-    emby_path: str,
-    path_mappings: list,
-    path_mapping_index: Optional[int] = None,
-    library_id: Optional[str] = None,
-) -> Optional[str]:
-    """
-    将 Emby 服务器上的视频路径映射为本地可访问路径。
-
-    支持跨平台路径转换：
-    - Linux → Windows: /mnt/media/film.mkv → Z:/Media/film.mkv
-    - Windows → Linux: Z:/Media/film.mkv → /mnt/media/film.mkv
-    - 同平台: 直接前缀替换
-
-    匹配优先级：
-    1. 明确指定 path_mapping_index
-    2. library_id 匹配映射规则的 library_ids
-    3. emby_prefix 前缀匹配（最长前缀优先）
-    """
-    if not path_mappings:
-        return None
-
-    def _do_replace(emby_path: str, emby_prefix: str, local_prefix: str) -> Optional[str]:
-        """
-        执行路径替换，自动处理跨平台分隔符。
-
-        - 统一用正斜杠做前缀匹配
-        - 替换后根据 local_prefix 的风格决定输出分隔符
-        """
-        # 统一正斜杠做匹配
-        norm_path = emby_path.replace("\\", "/")
-        norm_emby_prefix = emby_prefix.replace("\\", "/").rstrip("/")
-        norm_local_prefix = local_prefix.replace("\\", "/").rstrip("/")
-
-        if not norm_path.startswith(norm_emby_prefix):
-            return None
-
-        # 替换前缀，得到统一正斜杠的结果
-        suffix = norm_path[len(norm_emby_prefix):]  # 保留开头的 /
-        result = norm_local_prefix + suffix
-
-        # 判断 local_prefix 是否是 Windows 风格（盘符开头，如 Z:/ 或 Z:\）
-        is_windows_local = (
-            len(local_prefix) >= 2 and local_prefix[1] == ':'
-        )
-        if is_windows_local:
-            # 转为 Windows 反斜杠
-            result = result.replace("/", "\\")
-
-        return result
-
-    # 1. 指定索引
-    if path_mapping_index is not None:
-        if 0 <= path_mapping_index < len(path_mappings):
-            m = path_mappings[path_mapping_index]
-            emby_prefix = m.get("emby_prefix", "")
-            local_prefix = m.get("local_prefix", "")
-            result = _do_replace(emby_path, emby_prefix, local_prefix)
-            if result:
-                return result
-            # 前缀不匹配也强制替换（用户明确指定），只取文件名拼接
-            norm_local = local_prefix.replace("\\", "/").rstrip("/")
-            basename = emby_path.replace("\\", "/").split("/")[-1]
-            fallback = norm_local + "/" + basename
-            is_windows_local = len(local_prefix) >= 2 and local_prefix[1] == ':'
-            return fallback.replace("/", "\\") if is_windows_local else fallback
-        return None
-
-    # 2. library_id 匹配
-    if library_id:
-        for m in path_mappings:
-            lib_ids = m.get("library_ids", [])
-            if library_id in lib_ids:
-                result = _do_replace(emby_path, m.get("emby_prefix", ""), m.get("local_prefix", ""))
-                if result:
-                    return result
-
-    # 3. 前缀匹配（最长前缀优先）
-    best_match = None
-    best_len = 0
-    for m in path_mappings:
-        norm_prefix = m.get("emby_prefix", "").replace("\\", "/").rstrip("/")
-        norm_path = emby_path.replace("\\", "/")
-        if norm_path.startswith(norm_prefix) and len(norm_prefix) > best_len:
-            best_match = m
-            best_len = len(norm_prefix)
-
-    if best_match:
-        result = _do_replace(emby_path, best_match["emby_prefix"], best_match["local_prefix"])
-        if result:
-            return result
-
-    return None
-
-
-async def _translate_segments(
-    segments: List[Segment],
-    translation_service: TranslationService,
-    source_lang: str = "ja",
-    target_lang: str = "zh",
-    concurrency: Optional[int] = None,
-    context_size: int = 0,
-    progress_cb: Optional[Callable[[int, int], None]] = None,
-) -> List[SubtitleSegment]:
-    """
-    并发翻译 ASR 识别的文本片段。
-
-    使用 translate_batch 并发执行，asyncio.gather 保证返回结果与输入索引一一对应，
-    SRT 时间轴顺序不会乱。失败的段落 success=False，translated_text 等于 original_text。
-
-    Args:
-        context_size: 上下文窗口大小，前后各 N 条（0=禁用，仅 LLM 翻译器生效）。
-        progress_cb: 翻译进度回调 (done, total)。
-    """
-    if not segments:
-        return []
-
-    texts = [s.text for s in segments]
-    results = await translation_service.translate_batch(
-        texts,
-        source_lang=source_lang,
-        target_lang=target_lang,
-        concurrency=concurrency,
-        all_texts=texts if context_size > 0 else None,
-        context_size=context_size,
-        progress_cb=progress_cb,
-    )
-
-    subtitle_segments: List[SubtitleSegment] = []
-    for segment, (translated_text, success) in zip(segments, results):
-        subtitle_segments.append(
-            SubtitleSegment(
-                start=segment.start,
-                end=segment.end,
-                original_text=segment.text,
-                translated_text=translated_text,
-                is_translated=success,
-            )
-        )
-    return subtitle_segments
-
-
-def _build_source_segments(segments: List[Segment]) -> List[SubtitleSegment]:
-    """构造"源语言字幕"的 SubtitleSegment 列表。
-
-    直接用 ASR 识别文本，is_translated=False 让 SubtitleGenerator 回落到 original_text。
-    """
-    return [
-        SubtitleSegment(
-            start=s.start,
-            end=s.end,
-            original_text=s.text,
-            translated_text=s.text,
-            is_translated=False,
-        )
-        for s in segments
-    ]
-
-
-def _resolve_target_languages(
-    config,
-    task_override: Optional[List[str]] = None,
-) -> List[str]:
-    """解析本次任务要生成的目标语言列表。
-
-    优先级：任务级 override > config.target_languages > [config.target_language]
-    返回结果去重保持顺序。
-    """
-    candidates: List[str]
-    if task_override:
-        candidates = list(task_override)
-    elif getattr(config, "target_languages", None):
-        candidates = list(config.target_languages)
-    else:
-        candidates = [config.target_language]
-
-    seen = set()
-    result: List[str] = []
-    for code in candidates:
-        if not code:
-            continue
-        code = code.strip()
-        if code and code not in seen:
-            seen.add(code)
-            result.append(code)
-    return result
-
-
-async def _translate_to_multi_targets(
-    segments: List[Segment],
-    translation_service: TranslationService,
-    source_lang: str,
-    translation_source_lang: str,
-    target_langs: List[str],
-    concurrency: Optional[int] = None,
-    context_size: int = 0,
-    progress_cb: Optional[Callable[[float], None]] = None,
-) -> Dict[str, List[SubtitleSegment]]:
-    """按语言维度串行翻译到多个目标语言，段落维度由 translate_batch 并发。
-
-    对于 source_lang == target_lang 且非 auto 模式的语言，跳过翻译直接返回源文本
-    （与单语言路径行为一致）。返回 dict: {lang_code: subtitle_segments}。
-
-    Args:
-        progress_cb: 翻译阶段整体进度回调 fraction ∈ [0, 1]。
-    """
-    # 计算需要实际翻译的语言数量来分配进度
-    translate_langs = [
-        tl for tl in target_langs
-        if not (source_lang == tl and translation_source_lang != "auto")
-    ]
-    total_segs = len(segments) * len(translate_langs) if translate_langs else 0
-    completed_segs = 0
-
-    def _per_lang_cb(done: int, total: int) -> None:
-        """每条翻译完成时更新整体进度。"""
-        nonlocal completed_segs
-        if progress_cb and total_segs > 0:
-            # done 是当前语言的完成数；用 completed_segs 累计之前语言的总数
-            fraction = min(0.99, (completed_segs + done) / total_segs)
-            progress_cb(fraction)
-
-    results: Dict[str, List[SubtitleSegment]] = {}
-    for target_lang in target_langs:
-        if source_lang == target_lang and translation_source_lang != "auto":
-            logger.info(
-                f"目标语言 {target_lang} 与源语言相同，跳过翻译直接使用 ASR 原文"
-            )
-            results[target_lang] = _build_source_segments(segments)
-            continue
-
-        logger.info(f"开始翻译到 {target_lang}")
-        results[target_lang] = await _translate_segments(
-            segments,
-            translation_service,
-            source_lang=translation_source_lang,
-            target_lang=target_lang,
-            concurrency=concurrency,
-            context_size=context_size,
-            progress_cb=_per_lang_cb,
-        )
-        completed_segs += len(segments)
-    return results
+_resolve_vad_model_path = resolve_vad_model_path
+_detect_language = detect_language
+_resolve_model_by_language = resolve_model_by_language
+_get_asr_engine = get_asr_engine
+_get_translation_service = get_translation_service
+_apply_path_mapping = apply_path_mapping
+_translate_segments = translate_segments
+_build_source_segments = build_source_segments
+_resolve_target_languages = resolve_target_languages
+_translate_to_multi_targets = translate_to_multi_targets
 
 
 @celery_app.task(
@@ -730,7 +448,7 @@ def generate_subtitle_task(
         # 语言参数：任务指定 > 全局配置
         source_lang = source_language if source_language else config.source_language
         # 多目标语言：任务级 override > config.target_languages > [config.target_language]
-        resolved_target_langs = _resolve_target_languages(config, target_languages)
+        resolved_target_langs = resolve_target_languages(config, target_languages)
         primary_target_lang = resolved_target_langs[0] if resolved_target_langs else config.target_language
         # 源语言字幕开关：任务级 > 全局
         keep_source = keep_source_subtitle if keep_source_subtitle is not None else bool(
@@ -856,10 +574,10 @@ def generate_subtitle_task(
             reporter.report("lid", 0.0)
             logger.info(f"[{task_id}] 步骤 1.8: 音频语言检测 (LID)")
             try:
-                detected_lang = _detect_language(config, audio_path)
+                detected_lang = detect_language(config, audio_path)
                 if detected_lang:
                     logger.info(f"[{task_id}] 检测到音频语言: {detected_lang}")
-                    resolved_model_id, resolved_source_lang = _resolve_model_by_language(
+                    resolved_model_id, resolved_source_lang = resolve_model_by_language(
                         detected_lang,
                         config.asr_language_model_map,
                         config.asr_model_id,
@@ -901,7 +619,7 @@ def generate_subtitle_task(
         logger.info(f"[{task_id}] 步骤 2/5: 语音识别")
         logger.info(f"[{task_id}] 创建 ASR 引擎...")
         try:
-            asr_engine_instance = _get_asr_engine(config, source_language=source_lang)
+            asr_engine_instance = get_asr_engine(config, source_language=source_lang)
             logger.info(f"[{task_id}] ASR 引擎创建成功: {type(asr_engine_instance).__name__}")
         except Exception as e:
             logger.error(f"[{task_id}] ASR 引擎创建失败: {e}", exc_info=True)
@@ -989,7 +707,7 @@ def generate_subtitle_task(
             logger.info(
                 f"[{task_id}] 所有目标语言均等于源语言 ({source_lang})，跳过翻译"
             )
-            source_subs = _build_source_segments(segments)
+            source_subs = build_source_segments(segments)
             for tl in resolved_target_langs:
                 per_lang_segments[tl] = source_subs
             translation_skipped = True
@@ -999,7 +717,7 @@ def generate_subtitle_task(
                 logger.info(
                     f"[{task_id}] 使用自动语言检测模式翻译到 {resolved_target_langs}"
                 )
-            translation_service_instance = _get_translation_service(config)
+            translation_service_instance = get_translation_service(config)
             translation_concurrency = getattr(config, "translation_concurrency", None)
             translation_context_size = getattr(config, "translation_context_size", 0) or 0
             logger.info(
@@ -1010,7 +728,7 @@ def generate_subtitle_task(
                 logger.info(f"[{task_id}] 翻译上下文窗口: 前后各 {translation_context_size} 条")
 
             per_lang_segments = _run_async(
-                _translate_to_multi_targets(
+                translate_to_multi_targets(
                     segments,
                     translation_service_instance,
                     source_lang=source_lang,
@@ -1026,7 +744,7 @@ def generate_subtitle_task(
         # 如果开启保留源语言字幕，且源语言不在目标列表中，额外追加一份
         emit_langs: List[str] = list(resolved_target_langs)
         if keep_source and source_lang not in per_lang_segments:
-            per_lang_segments[source_lang] = _build_source_segments(segments)
+            per_lang_segments[source_lang] = build_source_segments(segments)
             emit_langs.append(source_lang)
             logger.info(f"[{task_id}] 追加源语言字幕: {source_lang}")
 
@@ -1133,7 +851,7 @@ def generate_subtitle_task(
                 emby_copy_skipped = True
 
             if emby_video_path and config.path_mappings:
-                local_video_path = _apply_path_mapping(
+                local_video_path = apply_path_mapping(
                     emby_video_path,
                     config.path_mappings,
                     path_mapping_index=path_mapping_index,
