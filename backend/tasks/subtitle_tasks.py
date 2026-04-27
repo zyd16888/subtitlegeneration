@@ -29,15 +29,9 @@ from services.subtitle_pipeline import (
     prepare_task_runtime,
     process_language_detection,
     transcribe_audio,
-)
-from services.subtitle_translation import (
-    build_source_segments,
-    resolve_target_languages,
-    translate_segments,
-    translate_to_multi_targets,
+    translate_subtitles,
 )
 from services.subtitle_generator import SubtitleGenerator
-from services.translation_factory import get_translation_service
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
 from services.task_log_capture import TaskLogCapture
@@ -75,12 +69,7 @@ _resolve_vad_model_path = resolve_vad_model_path
 _detect_language = detect_language
 _resolve_model_by_language = resolve_model_by_language
 _get_asr_engine = get_asr_engine
-_get_translation_service = get_translation_service
 _apply_path_mapping = apply_path_mapping
-_translate_segments = translate_segments
-_build_source_segments = build_source_segments
-_resolve_target_languages = resolve_target_languages
-_translate_to_multi_targets = translate_to_multi_targets
 
 
 @celery_app.task(
@@ -284,85 +273,24 @@ def generate_subtitle_task(
 
         # 3. 翻译文本（支持多目标语言）
         _mark_step_start("translation")
-        reporter.report("translation", 0.0)
-        logger.info(f"[{task_id}] 步骤 3/5: 翻译文本")
-
-        # 判断是否有语言需要真正调用翻译服务
-        # （auto 模式强制走翻译服务；非 auto 模式下，所有目标语言都等于源语言才能完全跳过）
-        all_targets_equal_source = (
-            translation_source_lang != "auto"
-            and all(tl == source_lang for tl in resolved_target_langs)
+        translation_result = translate_subtitles(
+            task_id=task_id,
+            config=config,
+            segments=segments,
+            source_lang=source_lang,
+            translation_source_lang=translation_source_lang,
+            resolved_target_langs=resolved_target_langs,
+            keep_source=keep_source,
+            reporter=reporter,
+            step_logs=step_logs,
+            skipped_steps=skipped_steps,
+            run_async=_run_async,
+            format_step_log=_format_step_log,
         )
-
-        per_lang_segments: Dict[str, List[SubtitleSegment]] = {}
-
-        if all_targets_equal_source:
-            logger.info(
-                f"[{task_id}] 所有目标语言均等于源语言 ({source_lang})，跳过翻译"
-            )
-            source_subs = build_source_segments(segments)
-            for tl in resolved_target_langs:
-                per_lang_segments[tl] = source_subs
-            translation_skipped = True
-            translation_service_instance = None
-        else:
-            if translation_source_lang == "auto":
-                logger.info(
-                    f"[{task_id}] 使用自动语言检测模式翻译到 {resolved_target_langs}"
-                )
-            translation_service_instance = get_translation_service(config)
-            translation_concurrency = getattr(config, "translation_concurrency", None)
-            translation_context_size = getattr(config, "translation_context_size", 0) or 0
-            logger.info(
-                f"[{task_id}] 翻译并发数: "
-                f"{translation_concurrency if translation_concurrency else f'默认 ({translation_service_instance.default_concurrency})'}"
-            )
-            if translation_context_size > 0:
-                logger.info(f"[{task_id}] 翻译上下文窗口: 前后各 {translation_context_size} 条")
-
-            per_lang_segments = _run_async(
-                translate_to_multi_targets(
-                    segments,
-                    translation_service_instance,
-                    source_lang=source_lang,
-                    translation_source_lang=translation_source_lang,
-                    target_langs=resolved_target_langs,
-                    concurrency=translation_concurrency,
-                    context_size=translation_context_size,
-                    progress_cb=reporter.for_stage("translation"),
-                )
-            )
-            translation_skipped = False
-
-        # 如果开启保留源语言字幕，且源语言不在目标列表中，额外追加一份
-        emit_langs: List[str] = list(resolved_target_langs)
-        if keep_source and source_lang not in per_lang_segments:
-            per_lang_segments[source_lang] = build_source_segments(segments)
-            emit_langs.append(source_lang)
-            logger.info(f"[{task_id}] 追加源语言字幕: {source_lang}")
-
-        reporter.report("translation", 1.0)
-
-        if translation_skipped:
-            step_logs["translation"] = _format_step_log(
-                "translation",
-                f"所有目标语言均等于源语言 ({source_lang})，已跳过翻译",
-            )
-            skipped_steps.append("translation")
-        else:
-            detection_mode = (
-                "自动检测" if translation_source_lang == "auto" else f"固定 ({translation_source_lang})"
-            )
-            lines = [
-                f"翻译服务: {config.translation_service}",
-                f"源语言模式: {detection_mode}",
-                f"目标语言: {', '.join(resolved_target_langs)}",
-            ]
-            for tl in resolved_target_langs:
-                segs = per_lang_segments.get(tl, [])
-                translated_count = sum(1 for s in segs if s.is_translated)
-                lines.append(f"  - {tl}: 成功翻译 {translated_count}/{len(segs)} 段")
-            step_logs["translation"] = _format_step_log("translation", "\n".join(lines))
+        per_lang_segments = translation_result.per_lang_segments
+        emit_langs = translation_result.emit_langs
+        step_logs = translation_result.step_logs
+        skipped_steps = translation_result.skipped_steps
         _run_async(task_manager.update_task_result(
             task_id,
             extra_info=_persist_logs_extra({
