@@ -25,6 +25,7 @@ from services.asr_factory import (
     resolve_model_by_language,
 )
 from services.path_mapping import apply_path_mapping
+from services.subtitle_pipeline import prepare_task_runtime
 from services.subtitle_translation import (
     build_source_segments,
     resolve_target_languages,
@@ -36,7 +37,6 @@ from services.translation_factory import get_translation_service
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
 from services.task_log_capture import TaskLogCapture
-from services.progress_reporter import TaskProgressReporter
 from models.base import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -161,76 +161,25 @@ def generate_subtitle_task(
 
     try:
         config = _run_async(config_manager.get_config())
-
-        # 应用自定义配置覆盖
-        if asr_engine:
-            config.asr_engine = asr_engine
-        if asr_model_id:
-            config.asr_model_id = asr_model_id
-        if translation_service:
-            config.translation_service = translation_service
-        if openai_model:
-            config.openai_model = openai_model
-
-        # 语言参数：任务指定 > 全局配置
-        source_lang = source_language if source_language else config.source_language
-        # 多目标语言：任务级 override > config.target_languages > [config.target_language]
-        resolved_target_langs = resolve_target_languages(config, target_languages)
-        primary_target_lang = resolved_target_langs[0] if resolved_target_langs else config.target_language
-        # 源语言字幕开关：任务级 > 全局
-        keep_source = keep_source_subtitle if keep_source_subtitle is not None else bool(
-            getattr(config, "keep_source_subtitle", False)
+        runtime = prepare_task_runtime(
+            config,
+            task_id=task_id,
+            session_factory=SessionLocal,
+            asr_engine=asr_engine,
+            asr_model_id=asr_model_id,
+            translation_service=translation_service,
+            openai_model=openai_model,
+            source_language=source_language,
+            target_languages=target_languages,
+            keep_source_subtitle=keep_source_subtitle,
         )
-
-        # 根据配置决定是否使用自动检测模式
-        # 如果配置为 auto 模式，翻译时传入 "auto" 让翻译服务自动检测
-        translation_source_lang = source_lang
-        if hasattr(config, 'source_language_detection') and config.source_language_detection == "auto":
-            translation_source_lang = "auto"
-            logger.info(f"[{task_id}] 源语言检测模式: auto（翻译服务将自动检测语言）")
-        else:
-            logger.info(f"[{task_id}] 源语言检测模式: fixed（使用配置的语言: {source_lang}）")
-
-        logger.info(f"[{task_id}] 使用语音识别语言: {source_lang} (任务指定: {source_language}, 全局: {config.source_language})")
-        logger.info(
-            f"[{task_id}] 翻译源语言: {translation_source_lang}, 目标语言: {resolved_target_langs}"
-        )
-        if keep_source:
-            logger.info(f"[{task_id}] 启用源语言字幕保留: {source_lang}")
-
-        # 进度上报器：把各阶段内部进度映射到全局百分比，带节流、线程安全
-        has_denoise = getattr(config, 'enable_denoise', False)
-        has_lid = config.enable_language_detection and config.lid_model_id
-        if has_denoise and has_lid:
-            reporter = TaskProgressReporter(task_id, SessionLocal, stage_weights={
-                "audio": (0, 13),
-                "denoise": (13, 22),
-                "lid": (22, 25),
-                "asr": (25, 60),
-                "translation": (60, 90),
-                "subtitle": (90, 95),
-                "emby": (95, 100),
-            })
-        elif has_denoise:
-            reporter = TaskProgressReporter(task_id, SessionLocal, stage_weights={
-                "audio": (0, 15),
-                "denoise": (15, 25),
-                "asr": (25, 60),
-                "translation": (60, 90),
-                "subtitle": (90, 95),
-                "emby": (95, 100),
-            })
-        elif has_lid:
-            reporter = TaskProgressReporter(task_id, SessionLocal, stage_weights={
-                "audio": (0, 18),
-                "lid": (18, 22),
-                "asr": (22, 60),
-                "translation": (60, 90),
-                "subtitle": (90, 95),
-                "emby": (95, 100),
-            })
-        else:
-            reporter = TaskProgressReporter(task_id, SessionLocal)
+        config = runtime.config
+        source_lang = runtime.source_lang
+        resolved_target_langs = runtime.resolved_target_langs
+        primary_target_lang = runtime.primary_target_lang
+        keep_source = runtime.keep_source
+        translation_source_lang = runtime.translation_source_lang
+        reporter = runtime.reporter
 
         # 持久化阶段配置到 extra_info，供前端动态渲染处理流程
         _run_async(task_manager.update_task_result(
