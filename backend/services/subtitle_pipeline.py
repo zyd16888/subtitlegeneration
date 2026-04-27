@@ -3,10 +3,11 @@
 """
 import logging
 import os
+import json
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
-from services.asr_factory import detect_language, resolve_model_by_language
+from services.asr_factory import detect_language, get_asr_engine, resolve_model_by_language
 from services.audio_denoiser import denoise_audio
 from services.audio_extractor import AudioExtractor
 from services.progress_reporter import TaskProgressReporter
@@ -42,6 +43,14 @@ class LanguageDetectionResult:
 
     source_lang: str
     translation_source_lang: str
+    step_logs: dict
+
+
+@dataclass
+class AsrTranscriptionResult:
+    """ASR 转录阶段输出。"""
+
+    segments: list
     step_logs: dict
 
 
@@ -304,3 +313,64 @@ def process_language_detection(
         translation_source_lang=translation_source_lang,
         step_logs=step_logs,
     )
+
+
+def transcribe_audio(
+    task_id: str,
+    config,
+    audio_path: str,
+    task_work_dir: str,
+    source_lang: str,
+    reporter: TaskProgressReporter,
+    step_logs: dict,
+    run_async: Callable,
+    persist_asr_result: Callable[[int, dict], None],
+    format_step_log: Callable[[str, str], str],
+) -> AsrTranscriptionResult:
+    """创建 ASR 引擎并转录音频。"""
+    reporter.report("asr", 0.0)
+    logger.info(f"[{task_id}] 步骤 2/5: 语音识别")
+    logger.info(f"[{task_id}] 创建 ASR 引擎...")
+    try:
+        asr_engine_instance = get_asr_engine(config, source_language=source_lang)
+        logger.info(
+            f"[{task_id}] ASR 引擎创建成功: {type(asr_engine_instance).__name__}"
+        )
+    except Exception as exc:
+        logger.error(f"[{task_id}] ASR 引擎创建失败: {exc}", exc_info=True)
+        raise
+
+    logger.info(f"[{task_id}] 开始转录音频: {audio_path}")
+    segments = run_async(
+        asr_engine_instance.transcribe(
+            audio_path,
+            language=source_lang,
+            progress_cb=reporter.for_stage("asr"),
+        )
+    )
+    reporter.report("asr", 1.0)
+    logger.info(f"[{task_id}] 语音识别完成，识别到 {len(segments)} 个片段")
+    step_logs["asr"] = format_step_log(
+        "asr",
+        (
+            f"引擎: {type(asr_engine_instance).__name__}\n"
+            f"识别片段数: {len(segments)}\n"
+            f"语言: {source_lang}"
+        ),
+    )
+    persist_asr_result(len(segments), step_logs)
+
+    asr_result_path = os.path.join(task_work_dir, "asr_result.json")
+    with open(asr_result_path, "w", encoding="utf-8") as file:
+        json.dump(
+            [{"start": s.start, "end": s.end, "text": s.text} for s in segments],
+            file,
+            ensure_ascii=False,
+            indent=2,
+        )
+    logger.info(f"[{task_id}] ASR 结果已保存: {asr_result_path}")
+
+    if not segments:
+        raise RuntimeError("语音识别未能识别出任何内容，请检查音频是否包含语音或更换 ASR 模型")
+
+    return AsrTranscriptionResult(segments=segments, step_logs=step_logs)

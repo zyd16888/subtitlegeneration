@@ -27,6 +27,7 @@ from services.subtitle_pipeline import (
     prepare_audio,
     prepare_task_runtime,
     process_language_detection,
+    transcribe_audio,
 )
 from services.subtitle_translation import (
     build_source_segments,
@@ -167,6 +168,13 @@ def generate_subtitle_task(
             extra_info=_persist_logs_extra({"step_logs": step_logs}),
         ))
 
+    def _persist_asr_result(segment_count: int, step_logs: dict) -> None:
+        _run_async(task_manager.update_task_result(
+            task_id,
+            segment_count=segment_count,
+            extra_info=_persist_logs_extra({"step_logs": step_logs}),
+        ))
+
     try:
         config = _run_async(config_manager.get_config())
         runtime = prepare_task_runtime(
@@ -245,48 +253,21 @@ def generate_subtitle_task(
         translation_source_lang = language_result.translation_source_lang
         step_logs = language_result.step_logs
 
-        # 2. 语音识别
         _mark_step_start("asr")
-        reporter.report("asr", 0.0)
-        logger.info(f"[{task_id}] 步骤 2/5: 语音识别")
-        logger.info(f"[{task_id}] 创建 ASR 引擎...")
-        try:
-            asr_engine_instance = get_asr_engine(config, source_language=source_lang)
-            logger.info(f"[{task_id}] ASR 引擎创建成功: {type(asr_engine_instance).__name__}")
-        except Exception as e:
-            logger.error(f"[{task_id}] ASR 引擎创建失败: {e}", exc_info=True)
-            raise
-
-        logger.info(f"[{task_id}] 开始转录音频: {audio_path}")
-        # Whisper 模型支持 transcribe 时指定语言，其他模型忽略
-        segments = _run_async(
-            asr_engine_instance.transcribe(
-                audio_path,
-                language=source_lang,
-                progress_cb=reporter.for_stage("asr"),
-            )
+        asr_result = transcribe_audio(
+            task_id=task_id,
+            config=config,
+            audio_path=audio_path,
+            task_work_dir=task_work_dir,
+            source_lang=source_lang,
+            reporter=reporter,
+            step_logs=step_logs,
+            run_async=_run_async,
+            persist_asr_result=_persist_asr_result,
+            format_step_log=_format_step_log,
         )
-        reporter.report("asr", 1.0)
-        logger.info(f"[{task_id}] 语音识别完成，识别到 {len(segments)} 个片段")
-        step_logs["asr"] = _format_step_log(
-            "asr",
-            (
-                f"引擎: {type(asr_engine_instance).__name__}\n"
-                f"识别片段数: {len(segments)}\n"
-                f"语言: {source_lang}"
-            ),
-        )
-        _run_async(task_manager.update_task_result(task_id, segment_count=len(segments), extra_info=_persist_logs_extra({"step_logs": step_logs})))
-
-        # 保存 ASR 原始识别结果
-        import json
-        asr_result_path = os.path.join(task_work_dir, "asr_result.json")
-        with open(asr_result_path, "w", encoding="utf-8") as f:
-            json.dump([{"start": s.start, "end": s.end, "text": s.text} for s in segments], f, ensure_ascii=False, indent=2)
-        logger.info(f"[{task_id}] ASR 结果已保存: {asr_result_path}")
-
-        if not segments:
-            raise RuntimeError("语音识别未能识别出任何内容，请检查音频是否包含语音或更换 ASR 模型")
+        segments = asr_result.segments
+        step_logs = asr_result.step_logs
 
         # 2.5. 语气词过滤
         from services.segment_filter import filter_filler_segments
