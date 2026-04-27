@@ -32,6 +32,10 @@ from services.subtitle_pipeline import (
     write_subtitles_to_emby,
 )
 from services.task_result_persister import TaskResultPersister, format_step_log
+from services.task_status_guard import (
+    ensure_task_leaves_processing,
+    skip_if_terminal_task,
+)
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
 from services.task_log_capture import TaskLogCapture
@@ -117,18 +121,10 @@ def generate_subtitle_task(
     # ── 防止已取消/已完成的任务被重新执行 ────────────────────────────
     # task_acks_late=True 场景下，worker 重启时 broker 会重新投递未确认的消息，
     # 必须在入口处检查数据库状态，避免覆盖 CANCELLED / COMPLETED / FAILED。
-    try:
-        existing = _run_async(task_manager.get_task(task_id))
-        if existing and existing.status in (
-            TaskStatus.CANCELLED, TaskStatus.COMPLETED, TaskStatus.FAILED,
-        ):
-            logger.info(
-                f"[{task_id}] 任务状态为 {existing.status.value}，跳过执行"
-            )
-            db.close()
-            return {"task_id": task_id, "status": existing.status.value, "skipped": True}
-    except Exception as e:
-        logger.warning(f"[{task_id}] 入口状态检查失败，继续执行: {e}")
+    skipped_result = skip_if_terminal_task(task_id, task_manager, _run_async)
+    if skipped_result:
+        db.close()
+        return skipped_result
 
     # 挂载任务日志捕获器，将处理过程中的所有 logging 输出收集起来供前端展示
     log_capture = TaskLogCapture()
@@ -360,40 +356,7 @@ def generate_subtitle_task(
         # 已生成强制改成 COMPLETED 或 FAILED。这一层兜底独立于上面所有
         # 逻辑，无论 asyncio loop / SQLite 锁 / 第三方库出什么状况，
         # 任务都不会再卡在 95%。
-        try:
-            from models.task import Task as _TaskModel
-            safety_db = SessionLocal()
-            try:
-                row = safety_db.query(_TaskModel).filter(_TaskModel.id == task_id).first()
-                if row is not None and row.status in (TaskStatus.PROCESSING, TaskStatus.PENDING):
-                    from config.time_utils import utc_now
-                    if subtitle_path and os.path.exists(subtitle_path):
-                        row.status = TaskStatus.COMPLETED
-                        row.progress = 100
-                        row.completed_at = utc_now()
-                        if row.started_at:
-                            from config.time_utils import ensure_utc
-                            started = ensure_utc(row.started_at)
-                            completed = ensure_utc(row.completed_at)
-                            row.processing_time = (completed - started).total_seconds()
-                        logger.warning(
-                            f"[{task_id}] 安全网：任务退出时状态仍为 {row.status.value}，"
-                            f"检测到字幕文件已生成，强制标记为 COMPLETED"
-                        )
-                    else:
-                        row.status = TaskStatus.FAILED
-                        row.completed_at = utc_now()
-                        if not row.error_message:
-                            row.error_message = "任务异常退出，未生成字幕文件"
-                        logger.warning(
-                            f"[{task_id}] 安全网：任务退出时状态仍为 {row.status.value}，"
-                            f"未检测到字幕文件，强制标记为 FAILED"
-                        )
-                    safety_db.commit()
-            finally:
-                safety_db.close()
-        except Exception as e:
-            logger.error(f"[{task_id}] 安全网状态修正失败: {e}", exc_info=True)
+        ensure_task_leaves_processing(task_id, subtitle_path, SessionLocal)
 
         # 卸载日志捕获器
         try:
