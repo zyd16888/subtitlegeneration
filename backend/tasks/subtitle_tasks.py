@@ -23,7 +23,11 @@ from services.asr_factory import (
     resolve_model_by_language,
 )
 from services.path_mapping import apply_path_mapping
-from services.subtitle_pipeline import prepare_audio, prepare_task_runtime
+from services.subtitle_pipeline import (
+    prepare_audio,
+    prepare_task_runtime,
+    process_language_detection,
+)
 from services.subtitle_translation import (
     build_source_segments,
     resolve_target_languages,
@@ -226,49 +230,20 @@ def generate_subtitle_task(
         audio_path = audio_result.audio_path
         step_logs = audio_result.step_logs
 
-        # 1.8. 语言检测（可选）
-        if config.enable_language_detection and config.lid_model_id:
-            reporter.report("lid", 0.0)
-            logger.info(f"[{task_id}] 步骤 1.8: 音频语言检测 (LID)")
-            try:
-                detected_lang = detect_language(config, audio_path)
-                if detected_lang:
-                    logger.info(f"[{task_id}] 检测到音频语言: {detected_lang}")
-                    resolved_model_id, resolved_source_lang = resolve_model_by_language(
-                        detected_lang,
-                        config.asr_language_model_map,
-                        config.asr_model_id,
-                    )
-                    if resolved_model_id and resolved_model_id != config.asr_model_id:
-                        logger.info(
-                            f"[{task_id}] 按语言映射切换 ASR 模型: "
-                            f"{config.asr_model_id} → {resolved_model_id}"
-                        )
-                        config.asr_model_id = resolved_model_id
-                    if resolved_source_lang:
-                        source_lang = resolved_source_lang
-                        # 同步更新翻译源语言（除非处于 auto 模式由翻译服务自行检测）
-                        if translation_source_lang != "auto":
-                            translation_source_lang = resolved_source_lang
-                        logger.info(f"[{task_id}] 源语言更新为: {source_lang}")
-                    step_logs["lid"] = _format_step_log(
-                        "lid",
-                        f"检测语言: {detected_lang}\n"
-                        f"ASR 模型: {config.asr_model_id}\n"
-                        f"源语言: {source_lang}",
-                    )
-                else:
-                    logger.info(f"[{task_id}] 语言检测未返回结果，使用默认配置")
-                    step_logs["lid"] = _format_step_log(
-                        "lid", "未检测到语言，使用默认配置"
-                    )
-            except Exception as e:
-                logger.warning(f"[{task_id}] 语言检测失败，使用默认配置: {e}", exc_info=True)
-                step_logs["lid"] = _format_step_log("lid", f"检测失败: {e}，使用默认配置")
-            reporter.report("lid", 1.0)
-            _run_async(task_manager.update_task_result(
-                task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})
-            ))
+        language_result = process_language_detection(
+            task_id=task_id,
+            config=config,
+            audio_path=audio_path,
+            source_lang=source_lang,
+            translation_source_lang=translation_source_lang,
+            reporter=reporter,
+            step_logs=step_logs,
+            persist_step_logs=_persist_step_logs,
+            format_step_log=_format_step_log,
+        )
+        source_lang = language_result.source_lang
+        translation_source_lang = language_result.translation_source_lang
+        step_logs = language_result.step_logs
 
         # 2. 语音识别
         _mark_step_start("asr")
