@@ -12,15 +12,17 @@ from typing import List, Optional
 from celery import Task
 
 from .celery_app import celery_app
-from services.subtitle_pipeline import (
+from services.subtitle_asr_pipeline import (
     filter_asr_segments,
-    generate_subtitle_files,
-    prepare_audio,
     process_language_detection,
     transcribe_audio,
-    translate_subtitles,
+)
+from services.subtitle_audio_pipeline import prepare_audio
+from services.subtitle_output_pipeline import (
+    generate_subtitle_files,
     write_subtitles_to_emby,
 )
+from services.subtitle_text_pipeline import translate_subtitles
 from services.subtitle_task_startup import start_subtitle_task
 from services.task_result_persister import format_step_log
 from services.task_status_guard import (

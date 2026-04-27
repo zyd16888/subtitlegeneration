@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional
 
 from models.task import TaskStatus
-from services.subtitle_pipeline import create_task_work_dir, prepare_task_runtime
+from services.subtitle_runtime import create_task_work_dir, prepare_task_runtime
 
 logger = logging.getLogger(__name__)
 
