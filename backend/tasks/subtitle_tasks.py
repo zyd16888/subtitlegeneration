@@ -24,6 +24,7 @@ from services.asr_factory import (
 )
 from services.path_mapping import apply_path_mapping
 from services.subtitle_pipeline import (
+    filter_asr_segments,
     prepare_audio,
     prepare_task_runtime,
     process_language_detection,
@@ -269,38 +270,17 @@ def generate_subtitle_task(
         segments = asr_result.segments
         step_logs = asr_result.step_logs
 
-        # 2.5. 语气词过滤
-        from services.segment_filter import filter_filler_segments
-
-        filter_enabled = getattr(config, 'filter_filler_words', True)
-        custom_fillers = getattr(config, 'custom_filler_words', []) or []
-        original_count = len(segments)
-        segments, filtered_count = filter_filler_segments(
-            segments, source_lang=source_lang,
-            custom_fillers=custom_fillers, enabled=filter_enabled,
+        filter_result = filter_asr_segments(
+            task_id=task_id,
+            config=config,
+            segments=segments,
+            source_lang=source_lang,
+            step_logs=step_logs,
+            persist_asr_result=_persist_asr_result,
+            format_step_log=_format_step_log,
         )
-        if filtered_count > 0:
-            logger.info(
-                f"[{task_id}] 已过滤 {filtered_count} 个语气词段落 "
-                f"({original_count} → {len(segments)})"
-            )
-            step_logs["asr"] += f"\n语气词过滤: {filtered_count} 段被移除 ({original_count} → {len(segments)})"
-            step_logs["filler_filter"] = _format_step_log(
-                "filler_filter",
-                f"过滤 {filtered_count} 个语气词段落 ({original_count} → {len(segments)})",
-            )
-            _run_async(task_manager.update_task_result(
-                task_id, segment_count=len(segments),
-                extra_info=_persist_logs_extra({"step_logs": step_logs}),
-            ))
-        elif filter_enabled:
-            logger.info(f"[{task_id}] 语气词过滤已启用，未发现需过滤段落")
-            step_logs["filler_filter"] = _format_step_log(
-                "filler_filter", "未发现需过滤段落"
-            )
-
-        if not segments:
-            raise RuntimeError("语音识别内容全部为语气词，过滤后无有效字幕段落")
+        segments = filter_result.segments
+        step_logs = filter_result.step_logs
 
         # 3. 翻译文本（支持多目标语言）
         _mark_step_start("translation")

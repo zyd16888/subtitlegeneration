@@ -11,6 +11,7 @@ from services.asr_factory import detect_language, get_asr_engine, resolve_model_
 from services.audio_denoiser import denoise_audio
 from services.audio_extractor import AudioExtractor
 from services.progress_reporter import TaskProgressReporter
+from services.segment_filter import filter_filler_segments
 from services.subtitle_translation import resolve_target_languages
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,14 @@ class LanguageDetectionResult:
 @dataclass
 class AsrTranscriptionResult:
     """ASR 转录阶段输出。"""
+
+    segments: list
+    step_logs: dict
+
+
+@dataclass
+class SegmentFilterResult:
+    """ASR 段落过滤阶段输出。"""
 
     segments: list
     step_logs: dict
@@ -374,3 +383,46 @@ def transcribe_audio(
         raise RuntimeError("语音识别未能识别出任何内容，请检查音频是否包含语音或更换 ASR 模型")
 
     return AsrTranscriptionResult(segments=segments, step_logs=step_logs)
+
+
+def filter_asr_segments(
+    task_id: str,
+    config,
+    segments: list,
+    source_lang: str,
+    step_logs: dict,
+    persist_asr_result: Callable[[int, dict], None],
+    format_step_log: Callable[[str, str], str],
+) -> SegmentFilterResult:
+    """按配置过滤 ASR 语气词段落。"""
+    filter_enabled = getattr(config, "filter_filler_words", True)
+    custom_fillers = getattr(config, "custom_filler_words", []) or []
+    original_count = len(segments)
+    segments, filtered_count = filter_filler_segments(
+        segments,
+        source_lang=source_lang,
+        custom_fillers=custom_fillers,
+        enabled=filter_enabled,
+    )
+    if filtered_count > 0:
+        logger.info(
+            f"[{task_id}] 已过滤 {filtered_count} 个语气词段落 "
+            f"({original_count} → {len(segments)})"
+        )
+        step_logs["asr"] += (
+            f"\n语气词过滤: {filtered_count} 段被移除 "
+            f"({original_count} → {len(segments)})"
+        )
+        step_logs["filler_filter"] = format_step_log(
+            "filler_filter",
+            f"过滤 {filtered_count} 个语气词段落 ({original_count} → {len(segments)})",
+        )
+        persist_asr_result(len(segments), step_logs)
+    elif filter_enabled:
+        logger.info(f"[{task_id}] 语气词过滤已启用，未发现需过滤段落")
+        step_logs["filler_filter"] = format_step_log("filler_filter", "未发现需过滤段落")
+
+    if not segments:
+        raise RuntimeError("语音识别内容全部为语气词，过滤后无有效字幕段落")
+
+    return SegmentFilterResult(segments=segments, step_logs=step_logs)
