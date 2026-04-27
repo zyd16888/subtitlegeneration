@@ -12,7 +12,6 @@ from typing import List, Optional
 from celery import Task
 
 from .celery_app import celery_app
-from models.task import TaskStatus
 from services.asr_factory import (
     detect_language,
     get_asr_engine,
@@ -20,16 +19,15 @@ from services.asr_factory import (
     resolve_model_by_language,
 )
 from services.subtitle_pipeline import (
-    create_task_work_dir,
     filter_asr_segments,
     generate_subtitle_files,
     prepare_audio,
-    prepare_task_runtime,
     process_language_detection,
     transcribe_audio,
     translate_subtitles,
     write_subtitles_to_emby,
 )
+from services.subtitle_task_startup import start_subtitle_task
 from services.task_result_persister import format_step_log
 from services.task_status_guard import (
     ensure_task_leaves_processing,
@@ -130,11 +128,14 @@ def generate_subtitle_task(
         return skipped_result
 
     try:
-        config = _run_async(config_manager.get_config())
-        runtime = prepare_task_runtime(
-            config,
+        startup = start_subtitle_task(
             task_id=task_id,
+            video_path=video_path,
+            config_manager=config_manager,
+            task_manager=task_manager,
+            result_persister=result_persister,
             session_factory=SessionLocal,
+            run_async=_run_async,
             asr_engine=asr_engine,
             asr_model_id=asr_model_id,
             translation_service=translation_service,
@@ -143,26 +144,14 @@ def generate_subtitle_task(
             target_languages=target_languages,
             keep_source_subtitle=keep_source_subtitle,
         )
-        config = runtime.config
-        source_lang = runtime.source_lang
-        resolved_target_langs = runtime.resolved_target_langs
-        primary_target_lang = runtime.primary_target_lang
-        keep_source = runtime.keep_source
-        translation_source_lang = runtime.translation_source_lang
-        reporter = runtime.reporter
-
-        # 持久化阶段配置到 extra_info，供前端动态渲染处理流程
-        result_persister.persist_stage_weights(reporter)
-
-        _run_async(task_manager.update_task_status(task_id, TaskStatus.PROCESSING, 0))
-        logger.info(f"开始处理任务 {task_id}: {video_path}")
-        logger.info(
-            f"[{task_id}] 配置: ASR={config.asr_engine}, model_id={config.asr_model_id}, "
-            f"翻译={config.translation_service}, 语言={source_lang}->{resolved_target_langs}"
-        )
-
-        # 为每个任务创建独立的工作目录，保留所有中间产物
-        task_work_dir = create_task_work_dir(task_id, config.temp_dir)
+        config = startup.config
+        source_lang = startup.source_lang
+        resolved_target_langs = startup.resolved_target_langs
+        primary_target_lang = startup.primary_target_lang
+        keep_source = startup.keep_source
+        translation_source_lang = startup.translation_source_lang
+        reporter = startup.reporter
+        task_work_dir = startup.task_work_dir
 
         # 用于收集每个步骤的详细日志
         step_logs = {}
