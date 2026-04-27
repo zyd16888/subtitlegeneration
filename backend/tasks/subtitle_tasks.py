@@ -31,6 +31,7 @@ from services.subtitle_pipeline import (
     translate_subtitles,
     write_subtitles_to_emby,
 )
+from services.task_result_persister import TaskResultPersister, format_step_log
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
 from services.task_log_capture import TaskLogCapture
@@ -136,32 +137,16 @@ def generate_subtitle_task(
     if root_logger.level > logging.INFO or root_logger.level == logging.NOTSET:
         # 确保 INFO 级别能流到 handler；不修改原有 level 行为以外的设置
         log_capture.setLevel(logging.INFO)
-
-    def _persist_logs_extra(extra: dict) -> dict:
-        """合并日志快照到 extra_info 更新载荷"""
-        merged = dict(extra) if extra else {}
-        merged["logs"] = log_capture.snapshot()
-        return merged
+    result_persister = TaskResultPersister(
+        task_id=task_id,
+        task_manager=task_manager,
+        log_capture=log_capture,
+        run_async=_run_async,
+    )
 
     def _mark_step_start(stage: str) -> None:
         # 保留占位以兼容下面调用，无副作用
         pass
-
-    def _format_step_log(stage: str, summary: str) -> str:
-        return summary
-
-    def _persist_step_logs(step_logs: dict) -> None:
-        _run_async(task_manager.update_task_result(
-            task_id,
-            extra_info=_persist_logs_extra({"step_logs": step_logs}),
-        ))
-
-    def _persist_asr_result(segment_count: int, step_logs: dict) -> None:
-        _run_async(task_manager.update_task_result(
-            task_id,
-            segment_count=segment_count,
-            extra_info=_persist_logs_extra({"step_logs": step_logs}),
-        ))
 
     try:
         config = _run_async(config_manager.get_config())
@@ -220,8 +205,8 @@ def generate_subtitle_task(
             reporter=reporter,
             step_logs=step_logs,
             run_async=_run_async,
-            persist_step_logs=_persist_step_logs,
-            format_step_log=_format_step_log,
+            persist_step_logs=result_persister.persist_step_logs,
+            format_step_log=format_step_log,
         )
         audio_path = audio_result.audio_path
         step_logs = audio_result.step_logs
@@ -234,8 +219,8 @@ def generate_subtitle_task(
             translation_source_lang=translation_source_lang,
             reporter=reporter,
             step_logs=step_logs,
-            persist_step_logs=_persist_step_logs,
-            format_step_log=_format_step_log,
+            persist_step_logs=result_persister.persist_step_logs,
+            format_step_log=format_step_log,
         )
         source_lang = language_result.source_lang
         translation_source_lang = language_result.translation_source_lang
@@ -251,8 +236,8 @@ def generate_subtitle_task(
             reporter=reporter,
             step_logs=step_logs,
             run_async=_run_async,
-            persist_asr_result=_persist_asr_result,
-            format_step_log=_format_step_log,
+            persist_asr_result=result_persister.persist_asr_result,
+            format_step_log=format_step_log,
         )
         segments = asr_result.segments
         step_logs = asr_result.step_logs
@@ -263,8 +248,8 @@ def generate_subtitle_task(
             segments=segments,
             source_lang=source_lang,
             step_logs=step_logs,
-            persist_asr_result=_persist_asr_result,
-            format_step_log=_format_step_log,
+            persist_asr_result=result_persister.persist_asr_result,
+            format_step_log=format_step_log,
         )
         segments = filter_result.segments
         step_logs = filter_result.step_logs
@@ -283,7 +268,7 @@ def generate_subtitle_task(
             step_logs=step_logs,
             skipped_steps=skipped_steps,
             run_async=_run_async,
-            format_step_log=_format_step_log,
+            format_step_log=format_step_log,
         )
         per_lang_segments = translation_result.per_lang_segments
         emit_langs = translation_result.emit_langs
@@ -291,7 +276,7 @@ def generate_subtitle_task(
         skipped_steps = translation_result.skipped_steps
         _run_async(task_manager.update_task_result(
             task_id,
-            extra_info=_persist_logs_extra({
+            extra_info=result_persister.with_logs({
                 "step_logs": step_logs,
                 "skipped_steps": skipped_steps,
                 "target_languages": list(resolved_target_langs),
@@ -310,7 +295,7 @@ def generate_subtitle_task(
             primary_target_lang=primary_target_lang,
             reporter=reporter,
             step_logs=step_logs,
-            format_step_log=_format_step_log,
+            format_step_log=format_step_log,
         )
         subtitle_path = subtitle_result.subtitle_path
         subtitle_paths = subtitle_result.subtitle_paths
@@ -318,7 +303,7 @@ def generate_subtitle_task(
         _run_async(task_manager.update_task_result(
             task_id,
             subtitle_path=subtitle_path,
-            extra_info=_persist_logs_extra({
+            extra_info=result_persister.with_logs({
                 "step_logs": step_logs,
                 "subtitles": [
                     {"lang": lc, "path": p}
@@ -340,20 +325,20 @@ def generate_subtitle_task(
             step_logs=step_logs,
             skipped_steps=skipped_steps,
             run_async=_run_async,
-            format_step_log=_format_step_log,
+            format_step_log=format_step_log,
         )
         step_logs = emby_result.step_logs
         skipped_steps = emby_result.skipped_steps
         _run_async(task_manager.update_task_result(
             task_id,
-            extra_info=_persist_logs_extra({
+            extra_info=result_persister.with_logs({
                 "step_logs": step_logs,
                 "skipped_steps": skipped_steps,
             }),
         ))
         _run_async(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
         # 任务完成后再写一次，捕获完成日志
-        _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
+        result_persister.update_result(extra_info=result_persister.with_logs({}))
         logger.info(f"[{task_id}] 任务完成")
 
         # 按配置决定是否清理临时文件
@@ -374,7 +359,7 @@ def generate_subtitle_task(
         )
         # 失败时也持久化捕获到的日志，便于排查
         try:
-            _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
+            result_persister.update_result(extra_info=result_persister.with_logs({}))
         except Exception:
             pass
         raise
