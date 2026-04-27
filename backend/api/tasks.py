@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from typing import List, Optional, AsyncGenerator
 from pydantic import BaseModel, Field
 from datetime import datetime
-from enum import Enum
 
 from config.time_utils import ensure_utc
 from models.base import get_db
@@ -14,7 +13,13 @@ from models.task import Task, TaskStatus
 from services.task_manager import TaskManager
 from services.emby_connector import EmbyConnector
 from services.config_manager import ConfigManager
-from tasks.subtitle_tasks import generate_subtitle_task
+from services.task_submission_service import (
+    CreateTasksInput,
+    MediaItemFetchError,
+    MediaItemNotFoundError,
+    TaskConfigInput,
+    TaskSubmissionService,
+)
 from services.auth import require_auth
 
 router = APIRouter(prefix="/api", tags=["tasks"], dependencies=[Depends(require_auth)])
@@ -164,6 +169,27 @@ def task_to_response(task: Task) -> TaskResponse:
     )
 
 
+def to_create_tasks_input(request: CreateTaskRequest) -> CreateTasksInput:
+    """将 API 请求模型转换为任务提交服务输入。"""
+    return CreateTasksInput(
+        media_item_ids=request.media_item_ids,
+        tasks=[
+            TaskConfigInput(
+                media_item_id=task.media_item_id,
+                asr_engine=task.asr_engine,
+                translation_service=task.translation_service,
+                openai_model=task.openai_model,
+                path_mapping_index=task.path_mapping_index,
+                source_language=task.source_language,
+                target_languages=task.target_languages,
+                keep_source_subtitle=task.keep_source_subtitle,
+            )
+            for task in request.tasks or []
+        ],
+        library_id=request.library_id,
+    )
+
+
 # ── API 端点 ────────────────────────────────────────────────────────────────
 
 @router.post("/tasks", response_model=List[TaskResponse])
@@ -185,168 +211,16 @@ async def create_tasks(
     Returns:
         创建的任务列表
     """
-    if not request.media_item_ids and not request.tasks:
-        raise HTTPException(
-            status_code=400,
-            detail="必须提供 media_item_ids 或 tasks"
-        )
-    
-    task_manager = TaskManager(db)
-    config_manager = ConfigManager(db)
-    config = await config_manager.get_config()
-    created_tasks = []
-    
     try:
-        # 处理批量创建（使用全局配置）
-        if request.media_item_ids:
-            for media_item_id in request.media_item_ids:
-                # 获取媒体项信息
-                try:
-                    media_item = await emby.get_media_item(media_item_id)
-                    # 使用音频流 URL 而不是物理路径（支持远程 Emby）
-                    audio_url = await emby.get_audio_stream_url(media_item_id)
-                except ValueError as e:
-                    # 媒体项不存在或没有路径
-                    raise HTTPException(
-                        status_code=404,
-                        detail=str(e)
-                    )
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"获取媒体项 {media_item_id} 失败: {str(e)}"
-                    )
-                
-                # 创建任务（记录配置信息）
-                task = await task_manager.create_task(
-                    media_item_id=media_item_id,
-                    media_item_title=media_item.name,
-                    video_path=audio_url,
-                    asr_engine=config.asr_engine,
-                    asr_model_id=config.asr_model_id,
-                    translation_service=config.translation_service,
-                    source_language=config.source_language,
-                    target_language=config.target_language,
-                )
-
-                # 把多语言信息写入 extra_info 便于重试恢复
-                try:
-                    await task_manager.update_task_result(
-                        task.id,
-                        extra_info={
-                            "target_languages": list(config.target_languages or [config.target_language]),
-                            "keep_source_subtitle": bool(config.keep_source_subtitle),
-                        },
-                    )
-                except Exception:
-                    pass
-
-                # 提交 Celery 任务（使用全局配置）
-                # task_id 与 Celery task ID 对齐，便于 revoke 取消
-                generate_subtitle_task.apply_async(
-                    kwargs=dict(
-                        task_id=task.id,
-                        media_item_id=media_item_id,
-                        video_path=audio_url,
-                        asr_model_id=config.asr_model_id,
-                        library_id=request.library_id,
-                        source_language=None,
-                        target_languages=None,
-                        keep_source_subtitle=None,
-                    ),
-                    task_id=task.id,
-                )
-
-                created_tasks.append(task_to_response(task))
-
-        # 处理单独配置的任务
-        if request.tasks:
-            for task_config in request.tasks:
-                # 获取媒体项信息
-                try:
-                    media_item = await emby.get_media_item(task_config.media_item_id)
-                    # 使用音频流 URL 而不是物理路径（支持远程 Emby）
-                    audio_url = await emby.get_audio_stream_url(task_config.media_item_id)
-                except ValueError as e:
-                    # 媒体项不存在或没有路径
-                    raise HTTPException(
-                        status_code=404,
-                        detail=str(e)
-                    )
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"获取媒体项 {task_config.media_item_id} 失败: {str(e)}"
-                    )
-
-                # 确定使用的配置
-                task_asr_engine = task_config.asr_engine or config.asr_engine
-                task_translation_service = task_config.translation_service or config.translation_service
-                task_source_language = task_config.source_language or config.source_language
-
-                # 解析任务级别的目标语言和源字幕开关
-                effective_target_languages = (
-                    task_config.target_languages
-                    if task_config.target_languages
-                    else (list(config.target_languages) if config.target_languages else [config.target_language])
-                )
-                effective_keep_source = (
-                    task_config.keep_source_subtitle
-                    if task_config.keep_source_subtitle is not None
-                    else bool(config.keep_source_subtitle)
-                )
-                # task.target_language 列记录主目标（列表第 0 个）
-                task_primary_target = effective_target_languages[0] if effective_target_languages else config.target_language
-
-                # 创建任务
-                task = await task_manager.create_task(
-                    media_item_id=task_config.media_item_id,
-                    media_item_title=media_item.name,
-                    video_path=audio_url,
-                    asr_engine=task_asr_engine,
-                    asr_model_id=config.asr_model_id,
-                    translation_service=task_translation_service,
-                    source_language=task_source_language,
-                    target_language=task_primary_target,
-                )
-
-                # 把多语言信息写入 extra_info 便于重试恢复
-                try:
-                    await task_manager.update_task_result(
-                        task.id,
-                        extra_info={
-                            "target_languages": list(effective_target_languages),
-                            "keep_source_subtitle": effective_keep_source,
-                        },
-                    )
-                except Exception:
-                    pass
-
-                # 提交 Celery 任务（使用自定义配置）
-                generate_subtitle_task.apply_async(
-                    kwargs=dict(
-                        task_id=task.id,
-                        media_item_id=task_config.media_item_id,
-                        video_path=audio_url,
-                        asr_engine=task_config.asr_engine,
-                        asr_model_id=config.asr_model_id,
-                        translation_service=task_config.translation_service,
-                        openai_model=task_config.openai_model,
-                        library_id=request.library_id,
-                        path_mapping_index=task_config.path_mapping_index,
-                        source_language=task_config.source_language,
-                        target_languages=task_config.target_languages,
-                        keep_source_subtitle=task_config.keep_source_subtitle,
-                    ),
-                    task_id=task.id,
-                )
-
-                created_tasks.append(task_to_response(task))
-        
-        return created_tasks
-        
-    except HTTPException:
-        raise
+        service = TaskSubmissionService(db, emby)
+        created_tasks = await service.create_tasks(to_create_tasks_input(request))
+        return [task_to_response(task) for task in created_tasks]
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except MediaItemNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except MediaItemFetchError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -537,73 +411,15 @@ async def retry_task(
     Returns:
         新创建的任务
     """
-    task_manager = TaskManager(db)
-    
     try:
-        new_task = await task_manager.retry_task(task_id)
+        service = TaskSubmissionService(db)
+        new_task = await service.retry_task(task_id)
         
         if new_task is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"任务 {task_id} 不存在"
             )
-        
-        # 重试使用当前全局处理配置，便于调整模型/翻译参数后重新跑同一媒体。
-        config_manager = ConfigManager(db)
-        config = await config_manager.get_config()
-        retry_target_languages = (
-            list(config.target_languages)
-            if config.target_languages
-            else [config.target_language]
-        )
-        retry_keep_source = bool(config.keep_source_subtitle)
-        retry_primary_target = (
-            retry_target_languages[0] if retry_target_languages else config.target_language
-        )
-
-        new_task.asr_engine = config.asr_engine
-        new_task.asr_model_id = getattr(config, "asr_model_id", None)
-        new_task.translation_service = config.translation_service
-        new_task.source_language = config.source_language
-        new_task.target_language = retry_primary_target
-        db.commit()
-        db.refresh(new_task)
-
-        # 保留任务来源信息，避免 Telegram 来源任务重试后无法通知用户。
-        original_task = await task_manager.get_task(task_id)
-        original_extra = (original_task.extra_info or {}) if original_task else {}
-        retry_extra = {
-            "target_languages": retry_target_languages,
-            "keep_source_subtitle": retry_keep_source,
-        }
-        telegram_user_id = (
-            original_extra.get("telegram_user_id")
-            or (original_task.telegram_user_id if original_task else None)
-        )
-        if telegram_user_id:
-            retry_extra["telegram_user_id"] = telegram_user_id
-
-        # 把本次实际使用的多语言/来源信息写入新任务的 extra_info
-        try:
-            await task_manager.update_task_result(new_task.id, extra_info=retry_extra)
-        except Exception:
-            pass
-
-        # 提交 Celery 任务
-        generate_subtitle_task.apply_async(
-            kwargs=dict(
-                task_id=new_task.id,
-                media_item_id=new_task.media_item_id,
-                video_path=new_task.video_path,
-                asr_engine=new_task.asr_engine,
-                asr_model_id=new_task.asr_model_id,
-                translation_service=new_task.translation_service,
-                source_language=new_task.source_language,
-                target_languages=retry_target_languages,
-                keep_source_subtitle=retry_keep_source,
-            ),
-            task_id=new_task.id,
-        )
 
         return task_to_response(new_task)
         
