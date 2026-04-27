@@ -202,6 +202,14 @@ def create_progress_reporter(
     return TaskProgressReporter(task_id, session_factory)
 
 
+def create_task_work_dir(task_id: str, temp_dir: str) -> str:
+    """为单个任务创建独立工作目录。"""
+    task_work_dir = os.path.join(temp_dir, "tasks", task_id)
+    os.makedirs(task_work_dir, exist_ok=True)
+    logger.info(f"[{task_id}] 任务工作目录: {task_work_dir}")
+    return task_work_dir
+
+
 def prepare_audio(
     task_id: str,
     video_path: str,

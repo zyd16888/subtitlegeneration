@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import threading
 from typing import List, Optional
 from celery import Task
@@ -21,6 +20,7 @@ from services.asr_factory import (
     resolve_model_by_language,
 )
 from services.subtitle_pipeline import (
+    create_task_work_dir,
     filter_asr_segments,
     generate_subtitle_files,
     prepare_audio,
@@ -177,9 +177,7 @@ def generate_subtitle_task(
         )
 
         # 为每个任务创建独立的工作目录，保留所有中间产物
-        task_work_dir = os.path.join(config.temp_dir, "tasks", task_id)
-        os.makedirs(task_work_dir, exist_ok=True)
-        logger.info(f"[{task_id}] 任务工作目录: {task_work_dir}")
+        task_work_dir = create_task_work_dir(task_id, config.temp_dir)
 
         # 用于收集每个步骤的详细日志
         step_logs = {}
