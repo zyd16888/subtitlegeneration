@@ -15,14 +15,12 @@ from celery import Task
 
 from .celery_app import celery_app
 from models.task import TaskStatus
-from services.emby_connector import EmbyConnector
 from services.asr_factory import (
     detect_language,
     get_asr_engine,
     resolve_vad_model_path,
     resolve_model_by_language,
 )
-from services.path_mapping import apply_path_mapping
 from services.subtitle_pipeline import (
     filter_asr_segments,
     generate_subtitle_files,
@@ -31,6 +29,7 @@ from services.subtitle_pipeline import (
     process_language_detection,
     transcribe_audio,
     translate_subtitles,
+    write_subtitles_to_emby,
 )
 from services.task_manager import TaskManager
 from services.config_manager import ConfigManager
@@ -69,7 +68,6 @@ _resolve_vad_model_path = resolve_vad_model_path
 _detect_language = detect_language
 _resolve_model_by_language = resolve_model_by_language
 _get_asr_engine = get_asr_engine
-_apply_path_mapping = apply_path_mapping
 
 
 @celery_app.task(
@@ -331,106 +329,28 @@ def generate_subtitle_task(
 
         # 5. 复制字幕到视频目录 + 刷新 Emby
         _mark_step_start("emby")
-        reporter.report("emby", 0.0)
-        logger.info(f"[{task_id}] 步骤 5/6: 复制字幕到视频目录")
-        emby_log_lines = []
-        emby_copy_skipped = False
-        if config.emby_url and config.emby_api_key:
-
-            async def get_video_real_path():
-                async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
-                    return await emby.get_media_file_path(media_item_id)
-
-            # 获取视频在 Emby 服务器上的真实路径
-            try:
-                emby_video_path = _run_async(get_video_real_path())
-                logger.info(f"[{task_id}] Emby 视频真实路径: {emby_video_path}")
-                emby_log_lines.append(f"Emby 视频路径: {emby_video_path}")
-            except Exception as e:
-                logger.warning(f"[{task_id}] 获取视频真实路径失败: {e}，跳过字幕文件复制")
-                emby_video_path = None
-                emby_log_lines.append(f"获取视频路径失败: {e}")
-                emby_copy_skipped = True
-
-            if emby_video_path and config.path_mappings:
-                local_video_path = apply_path_mapping(
-                    emby_video_path,
-                    config.path_mappings,
-                    path_mapping_index=path_mapping_index,
-                    library_id=library_id,
-                )
-                if local_video_path:
-                    emby_log_lines.append(f"本地映射路径: {local_video_path}")
-                    if not os.path.exists(local_video_path):
-                        logger.error(
-                            f"[{task_id}] 本地视频文件不存在: {local_video_path}，"
-                            f"请检查路径映射配置是否正确 (Emby 路径: {emby_video_path})"
-                        )
-                        emby_log_lines.append(f"本地视频文件不存在，路径映射可能配置错误")
-                        raise RuntimeError(
-                            f"本地视频文件不存在: {local_video_path}，"
-                            f"请检查路径映射配置 (Emby 路径: {emby_video_path})"
-                        )
-                    # 每种语言复制一份字幕到视频目录
-                    video_basename = os.path.splitext(os.path.basename(local_video_path))[0]
-                    video_dir = os.path.dirname(local_video_path)
-
-                    for lang_code, src_path in subtitle_paths.items():
-                        target_srt = os.path.join(video_dir, f"{video_basename}.{lang_code}.srt")
-                        try:
-                            shutil.copy2(src_path, target_srt)
-                            logger.info(
-                                f"[{task_id}] 字幕文件已复制 [{lang_code}]: "
-                                f"{src_path} → {target_srt}"
-                            )
-                            emby_log_lines.append(f"字幕已复制 [{lang_code}]: {target_srt}")
-                        except Exception as e:
-                            logger.error(
-                                f"[{task_id}] 复制字幕文件失败 [{lang_code}]: {e}",
-                                exc_info=True,
-                            )
-                            raise RuntimeError(
-                                f"复制字幕文件到视频目录失败 [{lang_code}]: {e}"
-                            )
-                else:
-                    logger.warning(
-                        f"[{task_id}] 路径映射未匹配，Emby 路径: {emby_video_path}，"
-                        f"已配置 {len(config.path_mappings)} 条映射规则，跳过复制"
-                    )
-                    emby_log_lines.append(
-                        f"路径映射未匹配 (已配置 {len(config.path_mappings)} 条规则)，跳过复制"
-                    )
-                    emby_copy_skipped = True
-            elif emby_video_path and not config.path_mappings:
-                logger.warning(f"[{task_id}] 未配置路径映射规则，跳过字幕文件复制到视频目录")
-                emby_log_lines.append("未配置路径映射规则，跳过复制")
-                emby_copy_skipped = True
-
-            # 6. 刷新 Emby 元数据
-            logger.info(f"[{task_id}] 步骤 6/6: 刷新 Emby 元数据")
-
-            async def refresh_emby():
-                async with EmbyConnector(config.emby_url, config.emby_api_key) as emby:
-                    return await emby.refresh_metadata(media_item_id)
-
-            success = _run_async(refresh_emby())
-            if success:
-                logger.info(f"[{task_id}] Emby 元数据刷新成功")
-                emby_log_lines.append("Emby 元数据刷新: 成功")
-            else:
-                logger.warning(f"[{task_id}] Emby 元数据刷新失败，但字幕文件已生成")
-                emby_log_lines.append("Emby 元数据刷新: 失败")
-        else:
-            logger.warning(f"[{task_id}] 未配置 Emby 连接，跳过字幕回写")
-            emby_log_lines.append("未配置 Emby 连接，跳过回写")
-
-        step_logs["emby"] = _format_step_log("emby", "\n".join(emby_log_lines))
-        # 判断 Emby 回写是否实质性跳过（未配置 Emby / 获取路径失败 / 路径映射未匹配或未配置）
-        if not (config.emby_url and config.emby_api_key) or emby_copy_skipped:
-            skipped_steps.append("emby")
-        _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs, "skipped_steps": skipped_steps})))
-
-        reporter.report("emby", 1.0)
+        emby_result = write_subtitles_to_emby(
+            task_id=task_id,
+            config=config,
+            media_item_id=media_item_id,
+            subtitle_paths=subtitle_paths,
+            path_mapping_index=path_mapping_index,
+            library_id=library_id,
+            reporter=reporter,
+            step_logs=step_logs,
+            skipped_steps=skipped_steps,
+            run_async=_run_async,
+            format_step_log=_format_step_log,
+        )
+        step_logs = emby_result.step_logs
+        skipped_steps = emby_result.skipped_steps
+        _run_async(task_manager.update_task_result(
+            task_id,
+            extra_info=_persist_logs_extra({
+                "step_logs": step_logs,
+                "skipped_steps": skipped_steps,
+            }),
+        ))
         _run_async(task_manager.update_task_status(task_id, TaskStatus.COMPLETED, 100))
         # 任务完成后再写一次，捕获完成日志
         _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({})))
