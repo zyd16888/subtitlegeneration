@@ -16,8 +16,6 @@ from celery import Task
 from .celery_app import celery_app
 from models.task import TaskStatus
 from services.emby_connector import EmbyConnector
-from services.audio_extractor import AudioExtractor
-from services.audio_denoiser import denoise_audio
 from services.asr_factory import (
     detect_language,
     get_asr_engine,
@@ -25,7 +23,7 @@ from services.asr_factory import (
     resolve_model_by_language,
 )
 from services.path_mapping import apply_path_mapping
-from services.subtitle_pipeline import prepare_task_runtime
+from services.subtitle_pipeline import prepare_audio, prepare_task_runtime
 from services.subtitle_translation import (
     build_source_segments,
     resolve_target_languages,
@@ -159,6 +157,12 @@ def generate_subtitle_task(
     def _format_step_log(stage: str, summary: str) -> str:
         return summary
 
+    def _persist_step_logs(step_logs: dict) -> None:
+        _run_async(task_manager.update_task_result(
+            task_id,
+            extra_info=_persist_logs_extra({"step_logs": step_logs}),
+        ))
+
     try:
         config = _run_async(config_manager.get_config())
         runtime = prepare_task_runtime(
@@ -205,45 +209,22 @@ def generate_subtitle_task(
         step_logs = {}
         skipped_steps = []
 
-        # 1. 提取音频
         _mark_step_start("audio")
-        reporter.report("audio", 0.0)
-        logger.info(f"[{task_id}] 步骤 1/5: 提取音频")
-        logger.info(f"[{task_id}] 视频路径: {video_path}")
-        audio_extractor = AudioExtractor(task_work_dir)
-        try:
-            audio_path = _run_async(audio_extractor.extract_audio(video_path))
-            logger.info(f"[{task_id}] 音频提取成功: {audio_path}")
-        except Exception as e:
-            logger.error(f"[{task_id}] 音频提取失败: {e}", exc_info=True)
-            raise
-        audio_size = os.path.getsize(audio_path) if os.path.exists(audio_path) else 0
-        step_logs["audio"] = _format_step_log(
-            "audio",
-            f"输入: {video_path}\n输出: {audio_path}\n音频大小: {audio_size / 1024 / 1024:.1f} MB",
-        )
-        _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})))
-        reporter.report("audio", 1.0)
-
-        # 1.5. 音频降噪（可选）
-        if getattr(config, 'enable_denoise', False):
+        if getattr(config, "enable_denoise", False):
             _mark_step_start("denoise")
-            reporter.report("denoise", 0.0)
-            logger.info(f"[{task_id}] 步骤 1.5: 音频降噪")
-            try:
-                denoised_path = _run_async(denoise_audio(audio_path))
-                denoised_size = os.path.getsize(denoised_path) if os.path.exists(denoised_path) else 0
-                logger.info(f"[{task_id}] 降噪完成: {denoised_path}")
-                step_logs["denoise"] = _format_step_log(
-                    "denoise",
-                    f"输入: {audio_path}\n输出: {denoised_path}\n降噪后大小: {denoised_size / 1024 / 1024:.1f} MB",
-                )
-                audio_path = denoised_path  # 后续 ASR/VAD 使用降噪后的音频
-            except Exception as e:
-                logger.warning(f"[{task_id}] 降噪失败，使用原始音频继续: {e}", exc_info=True)
-                step_logs["denoise"] = _format_step_log("denoise", f"降噪失败: {e}，使用原始音频")
-            reporter.report("denoise", 1.0)
-            _run_async(task_manager.update_task_result(task_id, extra_info=_persist_logs_extra({"step_logs": step_logs})))
+        audio_result = prepare_audio(
+            task_id=task_id,
+            video_path=video_path,
+            task_work_dir=task_work_dir,
+            config=config,
+            reporter=reporter,
+            step_logs=step_logs,
+            run_async=_run_async,
+            persist_step_logs=_persist_step_logs,
+            format_step_log=_format_step_log,
+        )
+        audio_path = audio_result.audio_path
+        step_logs = audio_result.step_logs
 
         # 1.8. 语言检测（可选）
         if config.enable_language_detection and config.lid_model_id:
