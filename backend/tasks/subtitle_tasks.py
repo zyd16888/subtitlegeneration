@@ -12,28 +12,12 @@ from typing import List, Optional
 from celery import Task
 
 from .celery_app import celery_app
-from services.subtitle_asr_pipeline import (
-    filter_asr_segments,
-    process_language_detection,
-    transcribe_audio,
-)
-from services.subtitle_audio_pipeline import prepare_audio
-from services.subtitle_output_pipeline import (
-    generate_subtitle_files,
-    write_subtitles_to_emby,
-)
-from services.subtitle_text_pipeline import translate_subtitles
-from services.subtitle_task_startup import start_subtitle_task
-from services.task_result_persister import format_step_log
+from services.subtitle_task_runner import SubtitleTaskRunner
 from services.task_status_guard import (
     ensure_task_leaves_processing,
     skip_if_terminal_task,
 )
-from services.task_lifecycle import (
-    cleanup_task_work_dir,
-    mark_task_completed,
-    mark_task_failed,
-)
+from services.task_lifecycle import mark_task_failed
 from services.task_execution_context import create_task_execution_context
 from models.base import SessionLocal
 
@@ -102,11 +86,9 @@ def generate_subtitle_task(
         target_languages: 任务级多目标语言覆盖；None 时使用 config.target_languages
         keep_source_subtitle: 任务级源语言字幕开关；None 时使用 config.keep_source_subtitle
     """
-    audio_path = None
     subtitle_path = None  # finally 安全网用，跟踪是否生成了字幕文件
     context = create_task_execution_context(task_id, SessionLocal, _run_async)
     task_manager = context.task_manager
-    config_manager = context.config_manager
     result_persister = context.result_persister
 
     # ── 防止已取消/已完成的任务被重新执行 ────────────────────────────
@@ -118,14 +100,14 @@ def generate_subtitle_task(
         return skipped_result
 
     try:
-        startup = start_subtitle_task(
+        runner = SubtitleTaskRunner(
             task_id=task_id,
+            media_item_id=media_item_id,
             video_path=video_path,
-            config_manager=config_manager,
-            task_manager=task_manager,
-            result_persister=result_persister,
-            session_factory=SessionLocal,
+            context=context,
             run_async=_run_async,
+            library_id=library_id,
+            path_mapping_index=path_mapping_index,
             asr_engine=asr_engine,
             asr_model_id=asr_model_id,
             translation_service=translation_service,
@@ -134,155 +116,8 @@ def generate_subtitle_task(
             target_languages=target_languages,
             keep_source_subtitle=keep_source_subtitle,
         )
-        config = startup.config
-        source_lang = startup.source_lang
-        resolved_target_langs = startup.resolved_target_langs
-        primary_target_lang = startup.primary_target_lang
-        keep_source = startup.keep_source
-        translation_source_lang = startup.translation_source_lang
-        reporter = startup.reporter
-        task_work_dir = startup.task_work_dir
-
-        # 用于收集每个步骤的详细日志
-        step_logs = {}
-        skipped_steps = []
-
-        audio_result = prepare_audio(
-            task_id=task_id,
-            video_path=video_path,
-            task_work_dir=task_work_dir,
-            config=config,
-            reporter=reporter,
-            step_logs=step_logs,
-            run_async=_run_async,
-            persist_step_logs=result_persister.persist_step_logs,
-            format_step_log=format_step_log,
-        )
-        audio_path = audio_result.audio_path
-        step_logs = audio_result.step_logs
-
-        language_result = process_language_detection(
-            task_id=task_id,
-            config=config,
-            audio_path=audio_path,
-            source_lang=source_lang,
-            translation_source_lang=translation_source_lang,
-            reporter=reporter,
-            step_logs=step_logs,
-            persist_step_logs=result_persister.persist_step_logs,
-            format_step_log=format_step_log,
-        )
-        source_lang = language_result.source_lang
-        translation_source_lang = language_result.translation_source_lang
-        step_logs = language_result.step_logs
-
-        asr_result = transcribe_audio(
-            task_id=task_id,
-            config=config,
-            audio_path=audio_path,
-            task_work_dir=task_work_dir,
-            source_lang=source_lang,
-            reporter=reporter,
-            step_logs=step_logs,
-            run_async=_run_async,
-            persist_asr_result=result_persister.persist_asr_result,
-            format_step_log=format_step_log,
-        )
-        segments = asr_result.segments
-        step_logs = asr_result.step_logs
-
-        filter_result = filter_asr_segments(
-            task_id=task_id,
-            config=config,
-            segments=segments,
-            source_lang=source_lang,
-            step_logs=step_logs,
-            persist_asr_result=result_persister.persist_asr_result,
-            format_step_log=format_step_log,
-        )
-        segments = filter_result.segments
-        step_logs = filter_result.step_logs
-
-        # 3. 翻译文本（支持多目标语言）
-        translation_result = translate_subtitles(
-            task_id=task_id,
-            config=config,
-            segments=segments,
-            source_lang=source_lang,
-            translation_source_lang=translation_source_lang,
-            resolved_target_langs=resolved_target_langs,
-            keep_source=keep_source,
-            reporter=reporter,
-            step_logs=step_logs,
-            skipped_steps=skipped_steps,
-            run_async=_run_async,
-            format_step_log=format_step_log,
-        )
-        per_lang_segments = translation_result.per_lang_segments
-        emit_langs = translation_result.emit_langs
-        step_logs = translation_result.step_logs
-        skipped_steps = translation_result.skipped_steps
-        result_persister.persist_translation_result(
-            step_logs=step_logs,
-            skipped_steps=skipped_steps,
-            target_languages=resolved_target_langs,
-            keep_source_subtitle=keep_source,
-        )
-
-        # 4. 生成字幕文件（每种语言一份）
-        subtitle_result = generate_subtitle_files(
-            task_id=task_id,
-            video_path=video_path,
-            task_work_dir=task_work_dir,
-            per_lang_segments=per_lang_segments,
-            emit_langs=emit_langs,
-            primary_target_lang=primary_target_lang,
-            reporter=reporter,
-            step_logs=step_logs,
-            format_step_log=format_step_log,
-        )
-        subtitle_path = subtitle_result.subtitle_path
-        subtitle_paths = subtitle_result.subtitle_paths
-        step_logs = subtitle_result.step_logs
-        result_persister.persist_subtitle_result(
-            subtitle_path=subtitle_path,
-            subtitle_paths=subtitle_paths,
-            step_logs=step_logs,
-        )
-
-        # 5. 复制字幕到视频目录 + 刷新 Emby
-        emby_result = write_subtitles_to_emby(
-            task_id=task_id,
-            config=config,
-            media_item_id=media_item_id,
-            subtitle_paths=subtitle_paths,
-            path_mapping_index=path_mapping_index,
-            library_id=library_id,
-            reporter=reporter,
-            step_logs=step_logs,
-            skipped_steps=skipped_steps,
-            run_async=_run_async,
-            format_step_log=format_step_log,
-        )
-        step_logs = emby_result.step_logs
-        skipped_steps = emby_result.skipped_steps
-        result_persister.persist_emby_result(
-            step_logs=step_logs,
-            skipped_steps=skipped_steps,
-        )
-        mark_task_completed(
-            task_id=task_id,
-            task_manager=task_manager,
-            result_persister=result_persister,
-            run_async=_run_async,
-        )
-
-        # 按配置决定是否清理临时文件
-        cleanup_task_work_dir(
-            task_id=task_id,
-            task_work_dir=task_work_dir,
-            cleanup_enabled=config.cleanup_temp_files_on_success,
-        )
+        run_result = runner.run()
+        subtitle_path = run_result.subtitle_path
 
         return {"task_id": task_id, "status": "completed", "subtitle_path": subtitle_path}
 
