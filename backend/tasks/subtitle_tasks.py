@@ -30,7 +30,7 @@ from services.subtitle_pipeline import (
     translate_subtitles,
     write_subtitles_to_emby,
 )
-from services.task_result_persister import TaskResultPersister, format_step_log
+from services.task_result_persister import format_step_log
 from services.task_status_guard import (
     ensure_task_leaves_processing,
     skip_if_terminal_task,
@@ -40,9 +40,7 @@ from services.task_lifecycle import (
     mark_task_completed,
     mark_task_failed,
 )
-from services.task_manager import TaskManager
-from services.config_manager import ConfigManager
-from services.task_log_capture import TaskLogCapture
+from services.task_execution_context import create_task_execution_context
 from models.base import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -116,33 +114,20 @@ def generate_subtitle_task(
         target_languages: 任务级多目标语言覆盖；None 时使用 config.target_languages
         keep_source_subtitle: 任务级源语言字幕开关；None 时使用 config.keep_source_subtitle
     """
-    db = SessionLocal()
-    task_manager = TaskManager(db)
-    config_manager = ConfigManager(db)
     audio_path = None
     subtitle_path = None  # finally 安全网用，跟踪是否生成了字幕文件
+    context = create_task_execution_context(task_id, SessionLocal, _run_async)
+    task_manager = context.task_manager
+    config_manager = context.config_manager
+    result_persister = context.result_persister
 
     # ── 防止已取消/已完成的任务被重新执行 ────────────────────────────
     # task_acks_late=True 场景下，worker 重启时 broker 会重新投递未确认的消息，
     # 必须在入口处检查数据库状态，避免覆盖 CANCELLED / COMPLETED / FAILED。
     skipped_result = skip_if_terminal_task(task_id, task_manager, _run_async)
     if skipped_result:
-        db.close()
+        context.close()
         return skipped_result
-
-    # 挂载任务日志捕获器，将处理过程中的所有 logging 输出收集起来供前端展示
-    log_capture = TaskLogCapture()
-    root_logger = logging.getLogger()
-    root_logger.addHandler(log_capture)
-    if root_logger.level > logging.INFO or root_logger.level == logging.NOTSET:
-        # 确保 INFO 级别能流到 handler；不修改原有 level 行为以外的设置
-        log_capture.setLevel(logging.INFO)
-    result_persister = TaskResultPersister(
-        task_id=task_id,
-        task_manager=task_manager,
-        log_capture=log_capture,
-        run_async=_run_async,
-    )
 
     try:
         config = _run_async(config_manager.get_config())
@@ -341,13 +326,4 @@ def generate_subtitle_task(
         # 任务都不会再卡在 95%。
         ensure_task_leaves_processing(task_id, subtitle_path, SessionLocal)
 
-        # 卸载日志捕获器
-        try:
-            root_logger.removeHandler(log_capture)
-        except Exception:
-            pass
-        # 中间产物保留在 task_work_dir 中，不清理，方便调试
-        try:
-            db.close()
-        except Exception:
-            pass
+        context.close()
