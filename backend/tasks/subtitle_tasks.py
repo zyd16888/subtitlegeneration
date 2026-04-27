@@ -12,7 +12,7 @@ from typing import List, Optional
 from celery import Task
 
 from .celery_app import celery_app
-from services.subtitle_task_runner import SubtitleTaskRunner
+from services.subtitle_task_runner import SubtitleTaskRequest, SubtitleTaskRunner
 from services.task_status_guard import (
     ensure_task_leaves_processing,
     skip_if_terminal_task,
@@ -100,12 +100,10 @@ def generate_subtitle_task(
         return skipped_result
 
     try:
-        runner = SubtitleTaskRunner(
+        request = SubtitleTaskRequest(
             task_id=task_id,
             media_item_id=media_item_id,
             video_path=video_path,
-            context=context,
-            run_async=_run_async,
             library_id=library_id,
             path_mapping_index=path_mapping_index,
             asr_engine=asr_engine,
@@ -116,6 +114,7 @@ def generate_subtitle_task(
             target_languages=target_languages,
             keep_source_subtitle=keep_source_subtitle,
         )
+        runner = SubtitleTaskRunner(request, context, _run_async)
         run_result = runner.run()
         subtitle_path = run_result.subtitle_path
 

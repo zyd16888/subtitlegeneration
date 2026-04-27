@@ -22,6 +22,24 @@ from services.task_result_persister import format_step_log
 
 
 @dataclass
+class SubtitleTaskRequest:
+    """字幕任务请求参数。"""
+
+    task_id: str
+    media_item_id: str
+    video_path: str
+    library_id: Optional[str] = None
+    path_mapping_index: Optional[int] = None
+    asr_engine: Optional[str] = None
+    asr_model_id: Optional[str] = None
+    translation_service: Optional[str] = None
+    openai_model: Optional[str] = None
+    source_language: Optional[str] = None
+    target_languages: Optional[List[str]] = None
+    keep_source_subtitle: Optional[bool] = None
+
+
+@dataclass
 class SubtitleTaskRunResult:
     """字幕任务运行结果。"""
 
@@ -33,57 +51,36 @@ class SubtitleTaskRunner:
 
     def __init__(
         self,
-        task_id: str,
-        media_item_id: str,
-        video_path: str,
+        request: SubtitleTaskRequest,
         context,
         run_async: Callable,
-        library_id: Optional[str] = None,
-        path_mapping_index: Optional[int] = None,
-        asr_engine: Optional[str] = None,
-        asr_model_id: Optional[str] = None,
-        translation_service: Optional[str] = None,
-        openai_model: Optional[str] = None,
-        source_language: Optional[str] = None,
-        target_languages: Optional[List[str]] = None,
-        keep_source_subtitle: Optional[bool] = None,
     ):
-        self.task_id = task_id
-        self.media_item_id = media_item_id
-        self.video_path = video_path
+        self.request = request
         self.context = context
         self.run_async = run_async
-        self.library_id = library_id
-        self.path_mapping_index = path_mapping_index
-        self.asr_engine = asr_engine
-        self.asr_model_id = asr_model_id
-        self.translation_service = translation_service
-        self.openai_model = openai_model
-        self.source_language = source_language
-        self.target_languages = target_languages
-        self.keep_source_subtitle = keep_source_subtitle
 
     def run(self) -> SubtitleTaskRunResult:
         """执行完整字幕生成流水线。"""
+        request = self.request
         result_persister = self.context.result_persister
         task_manager = self.context.task_manager
         config_manager = self.context.config_manager
 
         startup = start_subtitle_task(
-            task_id=self.task_id,
-            video_path=self.video_path,
+            task_id=request.task_id,
+            video_path=request.video_path,
             config_manager=config_manager,
             task_manager=task_manager,
             result_persister=result_persister,
             session_factory=SessionLocal,
             run_async=self.run_async,
-            asr_engine=self.asr_engine,
-            asr_model_id=self.asr_model_id,
-            translation_service=self.translation_service,
-            openai_model=self.openai_model,
-            source_language=self.source_language,
-            target_languages=self.target_languages,
-            keep_source_subtitle=self.keep_source_subtitle,
+            asr_engine=request.asr_engine,
+            asr_model_id=request.asr_model_id,
+            translation_service=request.translation_service,
+            openai_model=request.openai_model,
+            source_language=request.source_language,
+            target_languages=request.target_languages,
+            keep_source_subtitle=request.keep_source_subtitle,
         )
         config = startup.config
         source_lang = startup.source_lang
@@ -98,8 +95,8 @@ class SubtitleTaskRunner:
         skipped_steps = []
 
         audio_result = prepare_audio(
-            task_id=self.task_id,
-            video_path=self.video_path,
+            task_id=request.task_id,
+            video_path=request.video_path,
             task_work_dir=task_work_dir,
             config=config,
             reporter=reporter,
@@ -112,7 +109,7 @@ class SubtitleTaskRunner:
         step_logs = audio_result.step_logs
 
         language_result = process_language_detection(
-            task_id=self.task_id,
+            task_id=request.task_id,
             config=config,
             audio_path=audio_path,
             source_lang=source_lang,
@@ -127,7 +124,7 @@ class SubtitleTaskRunner:
         step_logs = language_result.step_logs
 
         asr_result = transcribe_audio(
-            task_id=self.task_id,
+            task_id=request.task_id,
             config=config,
             audio_path=audio_path,
             task_work_dir=task_work_dir,
@@ -142,7 +139,7 @@ class SubtitleTaskRunner:
         step_logs = asr_result.step_logs
 
         filter_result = filter_asr_segments(
-            task_id=self.task_id,
+            task_id=request.task_id,
             config=config,
             segments=segments,
             source_lang=source_lang,
@@ -154,7 +151,7 @@ class SubtitleTaskRunner:
         step_logs = filter_result.step_logs
 
         translation_result = translate_subtitles(
-            task_id=self.task_id,
+            task_id=request.task_id,
             config=config,
             segments=segments,
             source_lang=source_lang,
@@ -179,8 +176,8 @@ class SubtitleTaskRunner:
         )
 
         subtitle_result = generate_subtitle_files(
-            task_id=self.task_id,
-            video_path=self.video_path,
+            task_id=request.task_id,
+            video_path=request.video_path,
             task_work_dir=task_work_dir,
             per_lang_segments=per_lang_segments,
             emit_langs=emit_langs,
@@ -199,12 +196,12 @@ class SubtitleTaskRunner:
         )
 
         emby_result = write_subtitles_to_emby(
-            task_id=self.task_id,
+            task_id=request.task_id,
             config=config,
-            media_item_id=self.media_item_id,
+            media_item_id=request.media_item_id,
             subtitle_paths=subtitle_paths,
-            path_mapping_index=self.path_mapping_index,
-            library_id=self.library_id,
+            path_mapping_index=request.path_mapping_index,
+            library_id=request.library_id,
             reporter=reporter,
             step_logs=step_logs,
             skipped_steps=skipped_steps,
@@ -217,13 +214,13 @@ class SubtitleTaskRunner:
         )
 
         mark_task_completed(
-            task_id=self.task_id,
+            task_id=request.task_id,
             task_manager=task_manager,
             result_persister=result_persister,
             run_async=self.run_async,
         )
         cleanup_task_work_dir(
-            task_id=self.task_id,
+            task_id=request.task_id,
             task_work_dir=task_work_dir,
             cleanup_enabled=config.cleanup_temp_files_on_success,
         )
