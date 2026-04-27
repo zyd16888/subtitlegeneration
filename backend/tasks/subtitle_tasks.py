@@ -144,10 +144,6 @@ def generate_subtitle_task(
         run_async=_run_async,
     )
 
-    def _mark_step_start(stage: str) -> None:
-        # 保留占位以兼容下面调用，无副作用
-        pass
-
     try:
         config = _run_async(config_manager.get_config())
         runtime = prepare_task_runtime(
@@ -194,9 +190,6 @@ def generate_subtitle_task(
         step_logs = {}
         skipped_steps = []
 
-        _mark_step_start("audio")
-        if getattr(config, "enable_denoise", False):
-            _mark_step_start("denoise")
         audio_result = prepare_audio(
             task_id=task_id,
             video_path=video_path,
@@ -226,7 +219,6 @@ def generate_subtitle_task(
         translation_source_lang = language_result.translation_source_lang
         step_logs = language_result.step_logs
 
-        _mark_step_start("asr")
         asr_result = transcribe_audio(
             task_id=task_id,
             config=config,
@@ -255,7 +247,6 @@ def generate_subtitle_task(
         step_logs = filter_result.step_logs
 
         # 3. 翻译文本（支持多目标语言）
-        _mark_step_start("translation")
         translation_result = translate_subtitles(
             task_id=task_id,
             config=config,
@@ -285,7 +276,6 @@ def generate_subtitle_task(
         ))
 
         # 4. 生成字幕文件（每种语言一份）
-        _mark_step_start("subtitle")
         subtitle_result = generate_subtitle_files(
             task_id=task_id,
             video_path=video_path,
@@ -313,7 +303,6 @@ def generate_subtitle_task(
         ))
 
         # 5. 复制字幕到视频目录 + 刷新 Emby
-        _mark_step_start("emby")
         emby_result = write_subtitles_to_emby(
             task_id=task_id,
             config=config,
