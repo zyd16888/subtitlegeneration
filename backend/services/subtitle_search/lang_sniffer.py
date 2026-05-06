@@ -431,3 +431,53 @@ def resolve_language(
 
     text = extract_text_from_ass(content) if is_ass else extract_text_from_srt(content)
     return detect_from_content(text)
+
+
+# ── 直接对 URL 嗅探内容 ─────────────────────────────────────────────────────
+
+
+_SNIFF_MAX_BYTES = 256 * 1024  # 嗅探只看前 256KB，足够判别语言
+
+
+async def sniff_url_language(
+    url: str,
+    ext: str,
+    timeout: float = 5.0,
+) -> Optional[LanguageResolution]:
+    """下载 URL 的开头一段，做内容语言检测。
+
+    成功返回 LanguageResolution（含 confidence/可能 unknown）；
+    任何 HTTP / 解码 / 检测异常返回 None。
+    """
+    try:
+        import httpx
+    except ImportError:
+        return None
+
+    if not url:
+        return None
+
+    headers = {"Range": f"bytes=0-{_SNIFF_MAX_BYTES - 1}"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            try:
+                resp = await client.get(url, headers=headers)
+            except Exception:
+                # 不接受 Range 时去掉 header 重试一次
+                resp = await client.get(url)
+            resp.raise_for_status()
+            raw = resp.content[:_SNIFF_MAX_BYTES]
+    except Exception as exc:
+        logger.debug(f"嗅探失败 url={url}: {exc}")
+        return None
+
+    if not raw:
+        return None
+
+    text = decode_subtitle_bytes(raw)
+    if not text.strip():
+        return None
+
+    is_ass = (ext or "").lower() == "ass"
+    sample = extract_text_from_ass(text) if is_ass else extract_text_from_srt(text)
+    return detect_from_content(sample)

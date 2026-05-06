@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -39,7 +40,8 @@ from services.subtitle_search.downloader import (
     SubtitleDownloadError,
     download_and_resolve,
 )
-from services.subtitle_search.ranker import rank_hits
+from services.subtitle_search.lang_sniffer import sniff_url_language
+from services.subtitle_search.ranker import rank_hits, score_hit
 
 logger = logging.getLogger(__name__)
 
@@ -143,10 +145,65 @@ async def _get_search_config(db: Session):
 # ── 端点 ────────────────────────────────────────────────────────────────────
 
 
+async def _sniff_unknown_languages(
+    ranked: list,
+    target_languages: List[str],
+    media_duration_ms: Optional[int],
+    max_sniff: int,
+    timeout: float,
+) -> list:
+    """对前 max_sniff 条语言未识别的候选并发下载嗅探，更新语言并重新评分。"""
+    from services.subtitle_search.types import RankedHit
+
+    indices_to_sniff = [
+        i for i, r in enumerate(ranked) if r.language.code is None
+    ][:max_sniff]
+    if not indices_to_sniff:
+        return ranked
+
+    sem = asyncio.Semaphore(5)
+
+    async def _one(idx: int):
+        async with sem:
+            r = ranked[idx]
+            resolution = await sniff_url_language(r.hit.url, r.hit.ext, timeout=timeout)
+            return idx, resolution
+
+    results = await asyncio.gather(*[_one(i) for i in indices_to_sniff])
+
+    new_ranked = list(ranked)
+    changed = False
+    for idx, resolution in results:
+        if resolution is None or resolution.code is None:
+            continue
+        old = new_ranked[idx]
+        new_ranked[idx] = RankedHit(
+            hit=old.hit,
+            language=resolution,
+            score=old.score,
+            duration_match=old.duration_match,
+            score_breakdown=old.score_breakdown,
+        )
+        changed = True
+
+    if not changed:
+        return ranked
+
+    # 语言变了 → 重新评分 + 排序
+    rescored = [
+        score_hit(r.hit, r.language, target_languages, media_duration_ms)
+        for r in new_ranked
+    ]
+    rescored.sort(key=lambda r: r.score, reverse=True)
+    return rescored
+
+
 @router.get("/subtitle-search", response_model=SubtitleSearchResponse)
 async def search_subtitles(
     query: str = Query(..., min_length=1, description="搜索关键词，如电影名、剧集 SxxExx 或番号"),
     media_item_id: Optional[str] = Query(None, description="可选：用于获取媒体时长以加权"),
+    sniff_unknown: bool = Query(True, description="对未识别语言的候选并发下载内容嗅探（慢但准）"),
+    max_sniff: int = Query(10, ge=0, le=20, description="最多嗅探的未识别条目数"),
     db: Session = Depends(get_db),
 ):
     """搜索字幕候选（不下载）。
@@ -154,8 +211,12 @@ async def search_subtitles(
     - 当配置启用时才可用。
     - 提供 media_item_id 时会读取 Emby 媒体时长，用于评分加权。
     - 返回结果按综合分数倒序排列；语言识别失败的条目仍会返回（手动模式由用户挑）。
+    - sniff_unknown=true 时对元信息层级判定不出语言的 top-N 条做内容嗅探，
+      嗅探后命中目标语言的会涨分；未嗅探或嗅探仍无法识别的保持 unknown。
     """
     config = await _get_search_config(db)
+
+    target_languages = list(config.target_languages or [config.target_language])
 
     media_duration_ms: Optional[int] = None
     if media_item_id and config.emby_url and config.emby_api_key:
@@ -173,15 +234,25 @@ async def search_subtitles(
 
     ranked = rank_hits(
         hits,
-        target_languages=list(config.target_languages or [config.target_language]),
+        target_languages=target_languages,
         media_duration_ms=media_duration_ms,
         require_target_match=False,
     )
 
+    # 对未识别的 top-N 条做内容嗅探（只针对手动模式，自动 pipeline 自己也会跑一次）
+    if sniff_unknown and max_sniff > 0:
+        ranked = await _sniff_unknown_languages(
+            ranked,
+            target_languages=target_languages,
+            media_duration_ms=media_duration_ms,
+            max_sniff=max_sniff,
+            timeout=float(config.subtitle_search_timeout),
+        )
+
     return SubtitleSearchResponse(
         query=query,
         media_duration_ms=media_duration_ms,
-        target_languages=list(config.target_languages or [config.target_language]),
+        target_languages=target_languages,
         items=[_ranked_to_dto(r) for r in ranked],
     )
 

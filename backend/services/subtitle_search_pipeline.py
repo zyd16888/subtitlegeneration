@@ -30,7 +30,9 @@ from services.subtitle_search.downloader import (
     SubtitleDownloadError,
     download_and_resolve,
 )
-from services.subtitle_search.ranker import pick_best_per_language, rank_hits
+from services.subtitle_search.lang_sniffer import sniff_url_language
+from services.subtitle_search.query_builder import build_search_queries
+from services.subtitle_search.ranker import pick_best_per_language, rank_hits, score_hit
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +47,57 @@ class ExternalSubtitleResult:
     ranked_summary: List[dict] = field(default_factory=list)  # 持久化用的轻量摘要
 
 
-def _build_query(media_title: Optional[str]) -> Optional[str]:
-    """从媒体标题构造搜索关键词。
+async def _sniff_unknown_in_pipeline(
+    ranked: list,
+    target_languages: List[str],
+    media_duration_ms: Optional[int],
+    timeout: float,
+    max_sniff: int = 8,
+) -> list:
+    """对 ranked 中前 max_sniff 条 language.code is None 的候选并发嗅探。
 
-    - Movie / Series 名直接用
-    - Episode 类的标题在 emby_connector 中已被组成 "SeriesName SxxExx"
-    - 番号 / 短名直接用
+    与手动模式 _sniff_unknown_languages 的逻辑一致；这里再写一份是为了避免
+    pipeline 模块依赖 api 模块。
     """
-    if not media_title:
-        return None
-    return media_title.strip() or None
+    from services.subtitle_search.types import RankedHit
+
+    indices = [i for i, r in enumerate(ranked) if r.language.code is None][:max_sniff]
+    if not indices:
+        return ranked
+
+    sem = asyncio.Semaphore(5)
+
+    async def _one(idx: int):
+        async with sem:
+            r = ranked[idx]
+            return idx, await sniff_url_language(r.hit.url, r.hit.ext, timeout=timeout)
+
+    results = await asyncio.gather(*[_one(i) for i in indices])
+
+    new_ranked = list(ranked)
+    changed = False
+    for idx, resolution in results:
+        if resolution is None or resolution.code is None:
+            continue
+        old = new_ranked[idx]
+        new_ranked[idx] = RankedHit(
+            hit=old.hit,
+            language=resolution,
+            score=old.score,
+            duration_match=old.duration_match,
+            score_breakdown=old.score_breakdown,
+        )
+        changed = True
+
+    if not changed:
+        return ranked
+
+    rescored = [
+        score_hit(r.hit, r.language, target_languages, media_duration_ms)
+        for r in new_ranked
+    ]
+    rescored.sort(key=lambda r: r.score, reverse=True)
+    return rescored
 
 
 async def _download_all(
@@ -130,8 +173,8 @@ def try_external_subtitle(
         reporter.report("search", 1.0)
         return None
 
-    query = _build_query(media_item_title)
-    if not query:
+    queries = build_search_queries(media_item_title or "")
+    if not queries:
         log_lines.append("无媒体标题，跳过外部字幕检索")
         step_logs["search"] = format_step_log("search", "\n".join(log_lines))
         skipped_steps.append("search")
@@ -141,7 +184,7 @@ def try_external_subtitle(
 
     timeout = float(getattr(config, "subtitle_search_timeout", 5) or 5)
     min_score = float(getattr(config, "subtitle_search_min_score", 0.7) or 0.7)
-    log_lines.append(f"查询: {query}")
+    log_lines.append(f"候选查询: {queries}")
     log_lines.append(f"目标语言: {', '.join(resolved_target_langs)}")
     log_lines.append(f"命中阈值: {min_score:.2f}")
 
@@ -159,52 +202,63 @@ def try_external_subtitle(
         except Exception as exc:
             logger.warning(f"[{task_id}] 获取媒体时长失败，跳过时长加权: {exc}")
 
-    # 2. 调 API
+    # 2-3. 按候选查询顺序尝试：API → rank → 嗅探未识别 → 严格匹配
     client = XunleiSubtitleClient(timeout=timeout)
-    try:
-        hits = run_async(client.search(query))
-    except SubtitleSearchError as exc:
-        log_lines.append(f"API 调用失败: {exc}")
-        step_logs["search"] = format_step_log("search", "\n".join(log_lines))
-        skipped_steps.append("search")
-        persist_step_logs(step_logs)
-        reporter.report("search", 1.0)
-        return None
+    selected_query: Optional[str] = None
+    qualified: Dict[str, RankedHit] = {}
 
-    log_lines.append(f"API 返回候选: {len(hits)} 条")
-    if not hits:
-        step_logs["search"] = format_step_log("search", "\n".join(log_lines))
-        skipped_steps.append("search")
-        persist_step_logs(step_logs)
-        reporter.report("search", 1.0)
-        return None
+    for query in queries:
+        log_lines.append(f"--- 尝试 query: {query!r} ---")
+        try:
+            hits = run_async(client.search(query))
+        except SubtitleSearchError as exc:
+            log_lines.append(f"  API 调用失败: {exc}")
+            continue
+        log_lines.append(f"  API 返回候选: {len(hits)} 条")
+        if not hits:
+            continue
 
-    # 3. 评分（自动模式严格匹配语言）
-    ranked = rank_hits(
-        hits,
-        target_languages=resolved_target_langs,
-        media_duration_ms=media_duration_ms,
-        require_target_match=True,
-    )
-    log_lines.append(f"语言匹配后: {len(ranked)} 条")
-
-    picks = pick_best_per_language(ranked, resolved_target_langs)
-    qualified: Dict[str, RankedHit] = {
-        lang: r for lang, r in picks.items() if r.score >= min_score
-    }
-    missing = [lang for lang in resolved_target_langs if lang not in qualified]
-
-    for lang, r in picks.items():
-        log_lines.append(
-            f"  最佳[{lang}]: score={r.score:.2f} ext={r.hit.ext} name={r.hit.name}"
+        # 不强制语言匹配，让未识别项进入 ranker
+        ranked = rank_hits(
+            hits,
+            target_languages=resolved_target_langs,
+            media_duration_ms=media_duration_ms,
+            require_target_match=False,
         )
-    if missing:
-        log_lines.append(f"未达阈值/未命中的目标语言: {', '.join(missing)} → 走 ASR")
+        # 对 top-N 未识别项做内容嗅探，可能涨到目标语言
+        ranked = run_async(
+            _sniff_unknown_in_pipeline(
+                ranked, resolved_target_langs, media_duration_ms, timeout
+            )
+        )
+
+        picks = pick_best_per_language(ranked, resolved_target_langs)
+        for lang, r in picks.items():
+            log_lines.append(
+                f"  最佳[{lang}]: score={r.score:.2f} ext={r.hit.ext} "
+                f"src={r.language.source.value} name={r.hit.name}"
+            )
+
+        attempt_qualified = {
+            lang: r for lang, r in picks.items() if r.score >= min_score
+        }
+        missing = [lang for lang in resolved_target_langs if lang not in attempt_qualified]
+        if not missing:
+            selected_query = query
+            qualified = attempt_qualified
+            log_lines.append(f"  ✓ 所有目标语言均达阈值，选用此 query")
+            break
+        log_lines.append(f"  ✗ 未达阈值: {', '.join(missing)}")
+
+    if selected_query is None:
+        log_lines.append("所有候选查询均未命中 → 走 ASR")
         step_logs["search"] = format_step_log("search", "\n".join(log_lines))
         skipped_steps.append("search")
         persist_step_logs(step_logs)
         reporter.report("search", 1.0)
         return None
+
+    query = selected_query  # 后续日志/报告用
 
     # 4. 全部目标语言都命中：下载到 task_work_dir/search/
     save_dir = os.path.join(task_work_dir, "search")

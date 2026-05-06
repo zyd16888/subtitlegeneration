@@ -81,6 +81,33 @@ function languageLabel(language: SubtitleSearchLanguageInfo): string {
   return name;
 }
 
+/**
+ * 从标题中提取 AV 番号（与后端 query_builder.extract_av_codes 行为对齐）。
+ * 例如 "ADN-351 周末限定..." → ["ADN-351"]，"周末ADN-351..." → ["ADN-351"]。
+ * 使用 lookaround 而非 \b，确保中文紧贴英文时也能匹配。
+ */
+function extractAvCodes(title: string): string[] {
+  if (!title) return [];
+  const re = /(?<![A-Za-z0-9])([A-Za-z]{2,7})[-_]?(\d{2,6})(?![A-Za-z0-9])/g;
+  const seen = new Set<string>();
+  const result: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(title)) !== null) {
+    const normalized = `${m[1].toUpperCase()}-${m[2]}`;
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      result.push(normalized);
+    }
+  }
+  return result;
+}
+
+function buildDefaultQuery(title: string | undefined): string {
+  if (!title) return '';
+  const codes = extractAvCodes(title);
+  return codes.length > 0 ? codes[0] : title;
+}
+
 const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   visible,
   mediaItem,
@@ -101,11 +128,10 @@ const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
   const [overrideLang, setOverrideLang] = useState<Record<string, string | undefined>>({});
   const [applyingKey, setApplyingKey] = useState<string | null>(null);
 
-  // 重置状态 + 默认查询
+  // 重置状态 + 默认查询（自动从标题提番号）
   useEffect(() => {
     if (!visible) return;
-    const defaultQuery = mediaItem?.name || '';
-    setQuery(defaultQuery);
+    setQuery(buildDefaultQuery(mediaItem?.name));
     setResults([]);
     setSearched(false);
     setOverrideLang({});
@@ -257,11 +283,17 @@ const SubtitleSearchModal: React.FC<SubtitleSearchModalProps> = ({
         width: 80,
         sorter: (a, b) => a.score - b.score,
         defaultSortOrder: 'descend',
-        render: (score: number) => (
-          <Tag color={score >= 0.7 ? 'green' : score >= 0.4 ? 'gold' : 'default'}>
-            {score.toFixed(2)}
-          </Tag>
-        ),
+        render: (score: number) => {
+          const color =
+            score >= 0.7 ? '#52c41a'
+            : score >= 0.4 ? '#faad14'
+            : '#8c8c8c';
+          return (
+            <Text strong style={{ color, fontSize: 13 }}>
+              {score.toFixed(2)}
+            </Text>
+          );
+        },
       },
       {
         title: '操作',

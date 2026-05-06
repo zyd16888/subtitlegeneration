@@ -75,7 +75,15 @@ def score_hit(
         # 没指定目标语言：只要识别出语言就给 0.5，未知给 0.2
         lang_subscore = 0.5 if language.code else 0.2
     else:
-        lang_subscore = 1.0 if lang_match else 0.0
+        if lang_match:
+            lang_subscore = 1.0
+        elif language.code is None:
+            # 未识别语言：给中性子分，避免在元信息层级失败时被腰斩；
+            # 真正的判定由内容嗅探（API 端点 sniff_unknown）或下载阶段做
+            lang_subscore = 0.4
+        else:
+            # 识别出来但和目标不匹配
+            lang_subscore = 0.0
 
     duration_subscore = _duration_score(hit.duration_ms, media_duration_ms)
     ext_subscore = _ext_score(hit.ext)
