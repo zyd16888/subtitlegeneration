@@ -75,6 +75,11 @@ def render_task_list(
         if len(title) > 25:
             title = title[:24] + "…"
 
+        # 已完成任务在标题前加 🔍 标记来自外部搜索
+        title_prefix = "🔍 " if (
+            task.status == TaskStatus.COMPLETED and _is_external_subtitle(task)
+        ) else ""
+
         extra = ""
         if task.status == TaskStatus.PROCESSING:
             extra = f" {format_progress(task.progress)}"
@@ -84,7 +89,7 @@ def render_task_list(
             stage = task.error_stage or ""
             extra = f" ({stage})" if stage else ""
 
-        lines.append(f"{i}. {status_str} {title}{extra}\n   🆔 {short_id(task.id)}")
+        lines.append(f"{i}. {status_str} {title_prefix}{title}{extra}\n   🆔 {short_id(task.id)}")
 
     lines.append(f"\n今日配额: {daily_count}/{daily_limit}")
     text = "\n".join(lines)
@@ -168,6 +173,13 @@ def render_task_detail(
         if task.started_at:
             lines.append(f"开始于 {format_time_ago(task.started_at)}")
     elif task.status == TaskStatus.COMPLETED:
+        if _is_external_subtitle(task):
+            lines.append("🔍 字幕来源：外部搜索（迅雷字幕）")
+            matched = (task.extra_info or {}).get("matched_languages") or []
+            if matched:
+                lines.append(f"   命中语言: {', '.join(matched)}")
+        else:
+            lines.append("🤖 字幕来源：本机 ASR + 翻译")
         if task.processing_time:
             lines.append(f"⏱ 耗时 {format_duration(task.processing_time)}")
         if task.segment_count:
@@ -284,6 +296,13 @@ def _list_subtitles(task: Task) -> list[dict]:
     if isinstance(items, list):
         return [it for it in items if isinstance(it, dict) and it.get("path")]
     return []
+
+
+def _is_external_subtitle(task: Task) -> bool:
+    """判断任务的字幕是否来自外部搜索（迅雷字幕 API）。"""
+    if not task.extra_info:
+        return False
+    return task.extra_info.get("subtitle_source") == "xunlei_search"
 
 
 def _task_status_value(task: Task) -> str:

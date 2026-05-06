@@ -145,11 +145,28 @@ def _format_notification(task: Task) -> str:
     from tgbot.services.error_hints import classify
 
     title = task.media_item_title or "未知媒体"
+    extra = task.extra_info or {}
+    is_external = extra.get("subtitle_source") == "xunlei_search"
 
     if task.status == TaskStatus.COMPLETED:
+        if is_external:
+            parts = [
+                "✅ 字幕已应用\n",
+                f"📺 {title}",
+                "🔍 来源：外部搜索（迅雷字幕，未走 ASR/翻译）",
+            ]
+            matched = extra.get("matched_languages") or []
+            if matched:
+                parts.append(f"🌐 命中语言: {', '.join(matched)}")
+            if task.processing_time:
+                parts.append(f"⏱ 耗时 {format_duration(task.processing_time)}")
+            parts.append("\n字幕已自动上传至 Emby。")
+            return "\n".join(parts)
+
         parts = [
-            f"✅ 字幕生成完成\n",
+            "✅ 字幕生成完成\n",
             f"📺 {title}",
+            "🤖 来源：本机 ASR + 翻译",
         ]
         if task.processing_time:
             parts.append(f"⏱ 耗时 {format_duration(task.processing_time)}")
@@ -157,7 +174,7 @@ def _format_notification(task: Task) -> str:
             parts.append(f"📝 识别 {task.segment_count} 条字幕")
         if task.translation_service:
             parts.append(f"🌐 翻译: {task.translation_service}")
-        parts.append(f"\n字幕已自动上传至 Emby。")
+        parts.append("\n字幕已自动上传至 Emby。")
         return "\n".join(parts)
 
     elif task.status == TaskStatus.FAILED:
