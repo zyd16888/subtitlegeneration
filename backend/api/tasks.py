@@ -87,7 +87,10 @@ class TaskResponse(BaseModel):
     subtitle_path: Optional[str] = None
     segment_count: Optional[int] = Field(None, description="识别的字幕段落数")
     audio_duration: Optional[float] = Field(None, description="音频时长（秒）")
-    
+
+    # 字幕来源（如 "xunlei_search" 表示来自外部字幕搜索）
+    subtitle_source: Optional[str] = Field(None, description="字幕来源标记")
+
     class Config:
         from_attributes = True
 
@@ -166,6 +169,7 @@ def task_to_response(task: Task) -> TaskResponse:
         subtitle_path=task.subtitle_path,
         segment_count=task.segment_count,
         audio_duration=task.audio_duration,
+        subtitle_source=extra.get("subtitle_source"),
     )
 
 
@@ -335,6 +339,7 @@ async def get_task(
             subtitle_path=task.subtitle_path,
             segment_count=task.segment_count,
             audio_duration=task.audio_duration,
+            subtitle_source=detail_extra.get("subtitle_source"),
             extra_info=task.extra_info,
             wait_time=wait_time,
         )

@@ -41,6 +41,8 @@ import {
   ProfileOutlined,
   ThunderboltOutlined,
   GlobalOutlined,
+  CloudDownloadOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { api, isRequestCancelled } from '../services/api';
@@ -180,6 +182,7 @@ const Tasks: React.FC = () => {
   };
 
   const STAGE_META: Record<string, { name: string; icon: React.ReactNode }> = {
+    search:      { name: '外部字幕搜索', icon: <SearchOutlined /> },
     audio:       { name: '音频提取',   icon: <SoundOutlined /> },
     denoise:     { name: '音频降噪',   icon: <ThunderboltOutlined /> },
     lid:         { name: '语言检测',   icon: <GlobalOutlined /> },
@@ -294,7 +297,18 @@ const Tasks: React.FC = () => {
       dataIndex: 'media_item_title',
       key: 'media_item_title',
       ellipsis: true,
-      render: (title: string) => <Text strong style={{ color: 'var(--text-primary)' }}>{title || '未知媒体'}</Text>,
+      render: (title: string, record: Task) => (
+        <Space size={6} wrap>
+          <Text strong style={{ color: 'var(--text-primary)' }}>{title || '未知媒体'}</Text>
+          {record.subtitle_source === 'xunlei_search' && (
+            <Tooltip title="字幕来自外部搜索 API（迅雷字幕），未走 ASR/翻译">
+              <Tag color="purple" icon={<CloudDownloadOutlined />} style={{ borderRadius: 6, fontSize: 11 }}>
+                来自搜索
+              </Tag>
+            </Tooltip>
+          )}
+        </Space>
+      ),
     },
     {
       title: '提交用户',
@@ -408,9 +422,16 @@ const Tasks: React.FC = () => {
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-          <Text strong style={{ color: 'var(--text-primary)', fontSize: 14, flex: 1, minWidth: 0, lineHeight: 1.4 }} ellipsis={{ tooltip: task.media_item_title }}>
-            {task.media_item_title || '未知媒体'}
-          </Text>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <Text strong style={{ color: 'var(--text-primary)', fontSize: 14, lineHeight: 1.4 }} ellipsis={{ tooltip: task.media_item_title }}>
+              {task.media_item_title || '未知媒体'}
+            </Text>
+            {task.subtitle_source === 'xunlei_search' && (
+              <Tag color="purple" icon={<CloudDownloadOutlined />} style={{ borderRadius: 6, fontSize: 11, alignSelf: 'flex-start' }}>
+                来自搜索
+              </Tag>
+            )}
+          </div>
           {getStatusTag(task.status)}
         </div>
 
@@ -615,6 +636,72 @@ const Tasks: React.FC = () => {
                 </Descriptions.Item>
               </Descriptions>
             </Card>
+
+            {/* 字幕来源（仅外部字幕搜索命中时显示） */}
+            {selectedTask.subtitle_source === 'xunlei_search' && (() => {
+              const query = selectedTask.extra_info?.search_query as string | undefined;
+              const matchedLangs = (selectedTask.extra_info?.matched_languages as string[] | undefined) || [];
+              const rankedSummary = (selectedTask.extra_info?.ranked_summary as Array<{
+                lang: string;
+                score: number;
+                ext: string;
+                name: string;
+                url: string;
+              }> | undefined) || [];
+              return (
+                <Card
+                  size="small"
+                  title={
+                    <Space>
+                      <CloudDownloadOutlined style={{ color: '#722ed1' }} />
+                      字幕来源：外部搜索
+                    </Space>
+                  }
+                  style={{ borderRadius: 12 }}
+                >
+                  <Descriptions column={1} size="small">
+                    <Descriptions.Item label="API 提供方">迅雷字幕搜索</Descriptions.Item>
+                    {query && (
+                      <Descriptions.Item label="搜索关键词">
+                        <Text copyable style={{ fontSize: 12 }}>{query}</Text>
+                      </Descriptions.Item>
+                    )}
+                    {matchedLangs.length > 0 && (
+                      <Descriptions.Item label="命中语言">
+                        <Space size={4} wrap>
+                          {matchedLangs.map(lang => (
+                            <Tag key={lang} color="purple">{LANGUAGE_NAMES[lang] || lang}</Tag>
+                          ))}
+                        </Space>
+                      </Descriptions.Item>
+                    )}
+                  </Descriptions>
+                  {rankedSummary.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                        命中字幕详情
+                      </Text>
+                      <Table
+                        size="small"
+                        pagination={false}
+                        rowKey={(r) => `${r.lang}-${r.url}`}
+                        dataSource={rankedSummary}
+                        columns={[
+                          { title: '语言', dataIndex: 'lang', key: 'lang', width: 80,
+                            render: (lang: string) => <Tag color="purple">{LANGUAGE_NAMES[lang] || lang}</Tag> },
+                          { title: '分数', dataIndex: 'score', key: 'score', width: 70,
+                            render: (s: number) => s.toFixed(2) },
+                          { title: '格式', dataIndex: 'ext', key: 'ext', width: 60,
+                            render: (e: string) => <Tag>{(e || '').toUpperCase()}</Tag> },
+                          { title: '原始名称', dataIndex: 'name', key: 'name', ellipsis: true,
+                            render: (name: string) => <Text style={{ fontSize: 12 }}>{name}</Text> },
+                        ]}
+                      />
+                    </div>
+                  )}
+                </Card>
+              );
+            })()}
 
             {/* 统计信息 */}
             {(selectedTask.audio_duration || selectedTask.segment_count || selectedTask.processing_time) && (
