@@ -20,11 +20,13 @@ import {
   PlayCircleOutlined,
   FilterOutlined,
   AppstoreOutlined,
+  CloudDownloadOutlined,
 } from '@ant-design/icons';
 import { api, getImageUrl, isRequestCancelled } from '../services/api';
-import type { Library, MediaItem, TaskConfig } from '../types/api';
+import type { Library, MediaItem, TaskConfig, SystemConfig } from '../types/api';
 import SeriesEpisodesModal from '../components/SeriesEpisodesModal';
 import MediaConfigModal from '../components/MediaConfigModal';
+import LibraryScanModal from '../components/LibraryScanModal';
 
 const { Search } = Input;
 const { Option } = Select;
@@ -147,6 +149,8 @@ const LibraryPage: React.FC = () => {
   const [selectedSeries, setSelectedSeries] = useState<{ id: string; name: string } | null>(null);
   const [mediaConfigModalVisible, setMediaConfigModalVisible] = useState(false);
   const [selectedMediaItem, setSelectedMediaItem] = useState<MediaItem | null>(null);
+  const [scanModalVisible, setScanModalVisible] = useState(false);
+  const [globalConfig, setGlobalConfig] = useState<SystemConfig | null>(null);
 
   const fetchLibraries = async () => {
     try {
@@ -203,6 +207,7 @@ const LibraryPage: React.FC = () => {
   useEffect(() => {
     fetchLibraries();
     validateConfig();
+    api.config.getConfig().then(setGlobalConfig).catch(() => setGlobalConfig(null));
   }, []);
 
   useEffect(() => {
@@ -304,6 +309,17 @@ const LibraryPage: React.FC = () => {
               onSearch={(val) => { setSearchText(val); setCurrentPage(1); }}
             />
           </Col>
+          {globalConfig?.subtitle_search_enabled && selectedLibrary && (
+            <Col xs={24} md={24}>
+              <Button
+                icon={<CloudDownloadOutlined />}
+                onClick={() => setScanModalVisible(true)}
+                style={{ borderRadius: 8 }}
+              >
+                批量扫描该库的字幕
+              </Button>
+            </Col>
+          )}
         </Row>
       </div>
 
@@ -378,6 +394,18 @@ const LibraryPage: React.FC = () => {
           onGenerateSubtitle={handleMediaItemGenerateSubtitle}
         />
       )}
+
+      {scanModalVisible && selectedLibrary && (() => {
+        const lib = libraries.find(l => l.id === selectedLibrary);
+        if (!lib) return null;
+        return (
+          <LibraryScanModal
+            visible={scanModalVisible}
+            library={lib}
+            onClose={() => setScanModalVisible(false)}
+          />
+        );
+      })()}
 
       <style dangerouslySetInnerHTML={{ __html: `
         .media-card {

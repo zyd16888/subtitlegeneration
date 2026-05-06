@@ -84,6 +84,9 @@ export interface Task {
 
   // 字幕来源标记（"xunlei_search" 表示来自外部字幕搜索）
   subtitle_source?: string;
+
+  // 任务类型："subtitle_generate"（默认）或 "library_subtitle_scan"
+  task_type?: string;
 }
 
 /**
@@ -335,6 +338,58 @@ export interface SubtitleApplyResponse {
   emby_refreshed: boolean;
   source_url: string;
   file_size: number;
+}
+
+/**
+ * 库扫描启动请求
+ */
+export interface LibraryScanStartRequest {
+  library_id: string;
+  target_languages?: string[];
+  skip_if_has_subtitle?: boolean;
+  max_items?: number;
+  concurrency?: number;
+  item_type?: string;
+}
+
+/**
+ * 库扫描启动响应
+ */
+export interface LibraryScanStartResponse {
+  task_id: string;
+  library_id: string;
+  library_name?: string;
+  status: string;
+}
+
+/**
+ * 库扫描单项结果
+ */
+export interface LibraryScanItemReport {
+  media_item_id: string;
+  name: string;
+  outcome: 'applied' | 'no_match' | 'skipped_already_has_subtitle' | 'error' | 'cancelled';
+  languages: string[];
+  score?: number | null;
+  error?: string | null;
+}
+
+/**
+ * 库扫描汇总报告（写入 task.extra_info.scan_report）
+ */
+export interface LibraryScanReport {
+  library_id: string;
+  library_name: string;
+  target_languages: string[];
+  skip_if_has_subtitle: boolean;
+  scanned_total: number;
+  applied: number;
+  no_match: number;
+  skipped_already_has_subtitle: number;
+  errors: number;
+  cancelled: boolean;
+  halted_reason?: string | null;
+  items: LibraryScanItemReport[];
 }
 
 /**

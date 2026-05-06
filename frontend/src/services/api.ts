@@ -31,6 +31,8 @@ import type {
   SubtitleSearchResponse,
   SubtitleApplyRequest,
   SubtitleApplyResponse,
+  LibraryScanStartRequest,
+  LibraryScanStartResponse,
 } from '../types/api';
 
 /**
@@ -512,6 +514,22 @@ class ApiClient {
     apply: async (request: SubtitleApplyRequest): Promise<SubtitleApplyResponse> => {
       const response = await this.client.post<SubtitleApplyResponse>(
         '/api/subtitle-search/apply',
+        request
+      );
+      return response.data;
+    },
+  };
+
+  /**
+   * 库批量字幕扫描 API
+   */
+  libraryScan = {
+    /**
+     * 启动库扫描任务
+     */
+    start: async (request: LibraryScanStartRequest): Promise<LibraryScanStartResponse> => {
+      const response = await this.client.post<LibraryScanStartResponse>(
+        '/api/library-scan/start',
         request
       );
       return response.data;

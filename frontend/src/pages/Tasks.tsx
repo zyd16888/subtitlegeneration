@@ -300,6 +300,13 @@ const Tasks: React.FC = () => {
       render: (title: string, record: Task) => (
         <Space size={6} wrap>
           <Text strong style={{ color: 'var(--text-primary)' }}>{title || '未知媒体'}</Text>
+          {record.task_type === 'library_subtitle_scan' && (
+            <Tooltip title="批量扫描整个媒体库，仅通过外部字幕 API">
+              <Tag color="geekblue" icon={<HistoryOutlined />} style={{ borderRadius: 6, fontSize: 11 }}>
+                库扫描
+              </Tag>
+            </Tooltip>
+          )}
           {record.subtitle_source === 'xunlei_search' && (
             <Tooltip title="字幕来自外部搜索 API（迅雷字幕），未走 ASR/翻译">
               <Tag color="purple" icon={<CloudDownloadOutlined />} style={{ borderRadius: 6, fontSize: 11 }}>
@@ -385,9 +392,11 @@ const Tasks: React.FC = () => {
               <Button type="text" danger icon={<StopOutlined />} onClick={() => handleCancelTask(record.id, record.media_item_title)} />
             </Tooltip>
           )}
-          <Tooltip title="重试任务">
-            <Button type="text" style={{ color: '#1677ff' }} icon={<ReloadOutlined />} onClick={() => handleRetryTask(record.id, record.media_item_title)} />
-          </Tooltip>
+          {record.task_type !== 'library_subtitle_scan' && (
+            <Tooltip title="重试任务">
+              <Button type="text" style={{ color: '#1677ff' }} icon={<ReloadOutlined />} onClick={() => handleRetryTask(record.id, record.media_item_title)} />
+            </Tooltip>
+          )}
         </Space>
       ),
     },
@@ -426,11 +435,18 @@ const Tasks: React.FC = () => {
             <Text strong style={{ color: 'var(--text-primary)', fontSize: 14, lineHeight: 1.4 }} ellipsis={{ tooltip: task.media_item_title }}>
               {task.media_item_title || '未知媒体'}
             </Text>
-            {task.subtitle_source === 'xunlei_search' && (
-              <Tag color="purple" icon={<CloudDownloadOutlined />} style={{ borderRadius: 6, fontSize: 11, alignSelf: 'flex-start' }}>
-                来自搜索
-              </Tag>
-            )}
+            <Space size={4}>
+              {task.task_type === 'library_subtitle_scan' && (
+                <Tag color="geekblue" icon={<HistoryOutlined />} style={{ borderRadius: 6, fontSize: 11, marginRight: 0 }}>
+                  库扫描
+                </Tag>
+              )}
+              {task.subtitle_source === 'xunlei_search' && (
+                <Tag color="purple" icon={<CloudDownloadOutlined />} style={{ borderRadius: 6, fontSize: 11, marginRight: 0 }}>
+                  来自搜索
+                </Tag>
+              )}
+            </Space>
           </div>
           {getStatusTag(task.status)}
         </div>
@@ -469,7 +485,9 @@ const Tasks: React.FC = () => {
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', borderTop: '1px solid var(--glass-border)', paddingTop: 10 }}>
           <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(task.id)}>详情</Button>
-          <Button size="small" icon={<ReloadOutlined />} onClick={() => handleRetryTask(task.id, task.media_item_title)}>重试</Button>
+          {task.task_type !== 'library_subtitle_scan' && (
+            <Button size="small" icon={<ReloadOutlined />} onClick={() => handleRetryTask(task.id, task.media_item_title)}>重试</Button>
+          )}
           {isActive && (
             <Button size="small" danger icon={<StopOutlined />} onClick={() => handleCancelTask(task.id, task.media_item_title)}>取消</Button>
           )}
@@ -571,7 +589,7 @@ const Tasks: React.FC = () => {
       <Drawer
         title={<Space><EyeOutlined /> 任务详细信息</Space>}
         extra={
-          selectedTask ? (
+          selectedTask && selectedTask.task_type !== 'library_subtitle_scan' ? (
             <Button
               type="primary"
               size={isMobile ? 'small' : 'middle'}
@@ -590,21 +608,26 @@ const Tasks: React.FC = () => {
         loading={detailLoading}
         styles={isMobile ? { body: { padding: 16 } } : undefined}
       >
-        {selectedTask && (
+        {selectedTask && (() => {
+          const isScanTask = selectedTask.task_type === 'library_subtitle_scan';
+          const scanReport = isScanTask
+            ? (selectedTask.extra_info?.scan_report as any | undefined)
+            : undefined;
+          return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
             {/* 错误提示 */}
             {selectedTask.error_message && (
-              <Alert 
-                message="任务处理异常" 
+              <Alert
+                message="任务处理异常"
                 description={
                   <div>
                     <div>{selectedTask.error_message}</div>
                     {selectedTask.error_stage && <div style={{ marginTop: 8, fontSize: 12 }}>错误阶段：{selectedTask.error_stage}</div>}
                   </div>
-                } 
-                type="error" 
-                showIcon 
-                style={{ borderRadius: 12 }} 
+                }
+                type="error"
+                showIcon
+                style={{ borderRadius: 12 }}
               />
             )}
 
@@ -704,7 +727,7 @@ const Tasks: React.FC = () => {
             })()}
 
             {/* 统计信息 */}
-            {(selectedTask.audio_duration || selectedTask.segment_count || selectedTask.processing_time) && (
+            {!isScanTask && (selectedTask.audio_duration || selectedTask.segment_count || selectedTask.processing_time) && (
               <Card size="small" title={<Space><FieldTimeOutlined /> 处理统计</Space>} style={{ borderRadius: 12 }}>
                 <Row gutter={[16, 16]}>
                   {selectedTask.audio_duration && (
@@ -768,6 +791,7 @@ const Tasks: React.FC = () => {
             </Card>
 
             {/* 配置信息 */}
+            {!isScanTask && (
             <Card size="small" title={<Space><SettingOutlined /> 任务配置</Space>} style={{ borderRadius: 12 }}>
               <Descriptions column={isMobile ? 1 : 2} size="small">
                 <Descriptions.Item label="ASR 引擎">
@@ -812,8 +836,10 @@ const Tasks: React.FC = () => {
                 )}
               </Descriptions>
             </Card>
+            )}
 
             {/* 处理流程 */}
+            {!isScanTask && (
             <Card size="small" title={<Space><PlayCircleOutlined /> 处理流程</Space>} style={{ borderRadius: 12 }}>
               <Steps
                 direction="vertical"
@@ -889,6 +915,7 @@ const Tasks: React.FC = () => {
                 })}
               />
             </Card>
+            )}
 
             {/* 处理日志 */}
             {Array.isArray(selectedTask.extra_info?.logs) && selectedTask.extra_info!.logs.length > 0 && (
@@ -949,7 +976,7 @@ const Tasks: React.FC = () => {
             )}
 
             {/* 结果信息 */}
-            {selectedTask.status === 'completed' && selectedTask.subtitle_path && (
+            {!isScanTask && selectedTask.status === 'completed' && selectedTask.subtitle_path && (
               <Card size="small" title={<Space><CheckCircleFilled style={{ color: '#52c41a' }} /> 生成结果</Space>} style={{ borderRadius: 12 }}>
                 <Descriptions column={1} size="small">
                   <Descriptions.Item label="字幕文件">
@@ -958,8 +985,125 @@ const Tasks: React.FC = () => {
                 </Descriptions>
               </Card>
             )}
+
+            {/* 库扫描报告 */}
+            {isScanTask && (
+              <Card
+                size="small"
+                title={<Space><HistoryOutlined style={{ color: '#1d39c4' }} /> 库扫描报告</Space>}
+                style={{ borderRadius: 12 }}
+              >
+                {scanReport ? (
+                  <>
+                    <Descriptions column={isMobile ? 1 : 2} size="small" style={{ marginBottom: 12 }}>
+                      <Descriptions.Item label="库名">{scanReport.library_name || scanReport.library_id}</Descriptions.Item>
+                      <Descriptions.Item label="目标语言">
+                        <Space size={4} wrap>
+                          {(scanReport.target_languages || []).map((lang: string) => (
+                            <Tag key={lang} color="purple">{LANGUAGE_NAMES[lang] || lang}</Tag>
+                          ))}
+                        </Space>
+                      </Descriptions.Item>
+                      {scanReport.halted_reason && (
+                        <Descriptions.Item label="提前终止" span={2}>
+                          <Text type="warning">{scanReport.halted_reason}</Text>
+                        </Descriptions.Item>
+                      )}
+                    </Descriptions>
+                    <Row gutter={[8, 8]} style={{ marginBottom: 12 }}>
+                      <Col xs={12} sm={4}>
+                        <Statistic title="共扫描" value={scanReport.scanned_total ?? 0} />
+                      </Col>
+                      <Col xs={12} sm={5}>
+                        <Statistic title="已应用" value={scanReport.applied ?? 0} valueStyle={{ color: '#52c41a' }} />
+                      </Col>
+                      <Col xs={12} sm={5}>
+                        <Statistic title="未匹配" value={scanReport.no_match ?? 0} valueStyle={{ color: '#bfbfbf' }} />
+                      </Col>
+                      <Col xs={12} sm={5}>
+                        <Statistic title="已跳过" value={scanReport.skipped_already_has_subtitle ?? 0} valueStyle={{ color: '#1677ff' }} />
+                      </Col>
+                      <Col xs={12} sm={5}>
+                        <Statistic title="错误" value={scanReport.errors ?? 0} valueStyle={{ color: '#ff4d4f' }} />
+                      </Col>
+                    </Row>
+                    {Array.isArray(scanReport.items) && scanReport.items.length > 0 && (
+                      <Table
+                        size="small"
+                        rowKey={(r: any) => r.media_item_id || r.name}
+                        dataSource={scanReport.items}
+                        pagination={{ pageSize: 20, showSizeChanger: false, size: 'small' }}
+                        scroll={{ x: 600, y: 360 }}
+                        columns={[
+                          {
+                            title: '媒体项',
+                            dataIndex: 'name',
+                            key: 'name',
+                            ellipsis: true,
+                            render: (name: string) => <Text style={{ fontSize: 12 }}>{name}</Text>,
+                          },
+                          {
+                            title: '结果',
+                            dataIndex: 'outcome',
+                            key: 'outcome',
+                            width: 130,
+                            filters: [
+                              { text: '已应用', value: 'applied' },
+                              { text: '未匹配', value: 'no_match' },
+                              { text: '已跳过', value: 'skipped_already_has_subtitle' },
+                              { text: '错误', value: 'error' },
+                              { text: '已取消', value: 'cancelled' },
+                            ],
+                            onFilter: (value, record: any) => record.outcome === value,
+                            render: (outcome: string) => {
+                              const map: Record<string, { color: string; text: string }> = {
+                                applied: { color: 'success', text: '已应用' },
+                                no_match: { color: 'default', text: '未匹配' },
+                                skipped_already_has_subtitle: { color: 'blue', text: '已有字幕跳过' },
+                                error: { color: 'error', text: '错误' },
+                                cancelled: { color: 'warning', text: '已取消' },
+                              };
+                              const cfg = map[outcome] || { color: 'default', text: outcome };
+                              return <Tag color={cfg.color}>{cfg.text}</Tag>;
+                            },
+                          },
+                          {
+                            title: '语言',
+                            dataIndex: 'languages',
+                            key: 'languages',
+                            width: 140,
+                            render: (langs: string[] = []) => (
+                              <Space size={4} wrap>
+                                {langs.map(l => <Tag key={l} color="purple">{LANGUAGE_NAMES[l] || l}</Tag>)}
+                              </Space>
+                            ),
+                          },
+                          {
+                            title: '分数',
+                            dataIndex: 'score',
+                            key: 'score',
+                            width: 70,
+                            render: (s: number | null | undefined) => (s != null ? s.toFixed(2) : '—'),
+                          },
+                          {
+                            title: '错误',
+                            dataIndex: 'error',
+                            key: 'error',
+                            ellipsis: true,
+                            render: (e: string | null) => e ? <Text type="danger" style={{ fontSize: 12 }}>{e}</Text> : '—',
+                          },
+                        ]}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <Text type="secondary">扫描尚未开始或报告还未生成。</Text>
+                )}
+              </Card>
+            )}
           </div>
-        )}
+          );
+        })()}
       </Drawer>
     </div>
   );
