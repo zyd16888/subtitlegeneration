@@ -42,7 +42,7 @@ celery_app = Celery(
     "subtitle_service",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["tasks.subtitle_tasks"]
+    include=["tasks.subtitle_tasks", "tasks.library_scan_tasks"]
 )
 
 # Celery 配置
@@ -81,6 +81,8 @@ celery_app.conf.update(
     task_routes={
         "backend.tasks.subtitle_tasks.*": {"queue": "subtitle_generation"},
         "tasks.subtitle_tasks.*": {"queue": "subtitle_generation"},
+        "backend.tasks.library_scan_tasks.*": {"queue": "subtitle_generation"},
+        "tasks.library_scan_tasks.*": {"queue": "subtitle_generation"},
     },
     
     # 任务优先级

@@ -91,6 +91,9 @@ class TaskResponse(BaseModel):
     # 字幕来源（如 "xunlei_search" 表示来自外部字幕搜索）
     subtitle_source: Optional[str] = Field(None, description="字幕来源标记")
 
+    # 任务类型："subtitle_generate"（默认）或 "library_subtitle_scan"
+    task_type: Optional[str] = Field(None, description="任务类型")
+
     class Config:
         from_attributes = True
 
@@ -170,6 +173,7 @@ def task_to_response(task: Task) -> TaskResponse:
         segment_count=task.segment_count,
         audio_duration=task.audio_duration,
         subtitle_source=extra.get("subtitle_source"),
+        task_type=extra.get("task_type") or "subtitle_generate",
     )
 
 
@@ -340,6 +344,7 @@ async def get_task(
             segment_count=task.segment_count,
             audio_duration=task.audio_duration,
             subtitle_source=detail_extra.get("subtitle_source"),
+            task_type=detail_extra.get("task_type") or "subtitle_generate",
             extra_info=task.extra_info,
             wait_time=wait_time,
         )
@@ -407,15 +412,24 @@ async def retry_task(
 ):
     """
     重试任务
-    
+
     创建一个新任务，复制原任务的媒体项信息
-    
+
     Args:
         task_id: 原任务 ID
-        
+
     Returns:
         新创建的任务
     """
+    # 库扫描任务不支持重试（需走 /api/library-scan/start 重新发起）
+    task_manager = TaskManager(db)
+    existing = await task_manager.get_task(task_id)
+    if existing and (existing.extra_info or {}).get("task_type") == "library_subtitle_scan":
+        raise HTTPException(
+            status_code=400,
+            detail="库扫描任务不支持重试，请通过媒体库页面重新发起扫描",
+        )
+
     try:
         service = TaskSubmissionService(db)
         new_task = await service.retry_task(task_id)
