@@ -109,7 +109,19 @@ async def _handle_subtitle_deeplink(
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 /help 命令"""
     await update_last_active(update)
-    await update.message.reply_text(
+
+    from models.base import SessionLocal
+    from tgbot.services.user_service import get_or_create_user
+
+    db = SessionLocal()
+    try:
+        user = get_or_create_user(db, update.effective_user)
+        admin_ids = context.bot_data.get("admin_ids", [])
+        is_admin = user.is_admin or update.effective_user.id in admin_ids
+    finally:
+        db.close()
+
+    text = (
         "📖 命令列表\n\n"
         "🔐 账号\n"
         "/login - 绑定 Emby 账号\n"
@@ -117,7 +129,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/me - 个人信息和任务统计\n\n"
         "🔍 搜索 / 浏览\n"
         f"@{context.bot.username} 关键词 - 内联搜索\n"
-        "/search 关键词 - 搜索（支持 --no-sub --movie --series 过滤）\n"
+        "/search 关键词 - 搜索（支持 --no-sub --has-sub --movie --series 过滤）\n"
         "/browse - 浏览媒体库\n"
         "/recent - 最近添加\n"
         "/no_subs - 无字幕媒体\n\n"
@@ -130,6 +142,28 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/config - 任务偏好（目标语言、保留源字幕）\n"
         "/settings - 通知偏好\n"
     )
+
+    if is_admin:
+        text += (
+            "\n👑 管理员\n"
+            "/stat - 系统统计\n"
+            "/queue - 队列详情\n"
+            "/task - 任务管理\n"
+            "/log ID [--all] - 任务日志\n"
+            "/user [关键词] - 用户管理\n"
+            "/ban ID - 封禁用户\n"
+            "/unban ID - 解封用户\n"
+            "/set_limit ID 数量 - 设置每日配额\n"
+            "/reset_limit ID - 重置配额\n"
+            "/promote ID - 提升为管理员\n"
+            "/demote ID - 撤销管理员\n"
+            "/cancel_all - 取消所有待处理任务\n"
+            "/broadcast 内容 - 广播（--active-7d|--bound|--admins|--all）\n"
+            "/reload_config - 重新加载配置\n"
+            "/audit - 审计日志（--user --action --limit）\n"
+        )
+
+    await update.message.reply_text(text)
 
 
 async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
