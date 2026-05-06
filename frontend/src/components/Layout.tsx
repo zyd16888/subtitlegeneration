@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Layout as AntLayout, Menu, Button, Tooltip, Modal } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Layout as AntLayout, Menu, Button, Tooltip, Modal, Drawer } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   DashboardOutlined,
@@ -8,11 +8,13 @@ import {
   SettingOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  MenuOutlined,
   SunOutlined,
   MoonOutlined,
   LogoutOutlined,
 } from '@ant-design/icons';
 import { useTheme } from '../contexts/ThemeContext';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { Header, Sider, Content } = AntLayout;
 
@@ -20,106 +22,109 @@ interface LayoutProps {
   onLogout?: () => void;
 }
 
+const menuItems = [
+  { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
+  { key: '/library', icon: <FolderOutlined />, label: '媒体库' },
+  { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务管理' },
+  { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
+];
+
 const Layout: React.FC<LayoutProps> = ({ onLogout }) => {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { isDark, toggleTheme } = useTheme();
+  const isMobile = useIsMobile();
 
-  const menuItems = [
-    { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
-    { key: '/library', icon: <FolderOutlined />, label: '媒体库' },
-    { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务管理' },
-    { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
-  ];
+  // 路由切换时自动关闭移动端抽屉
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
 
   const handleMenuClick = ({ key }: { key: string }) => {
     navigate(key);
   };
 
-  return (
-    <AntLayout style={{ minHeight: '100vh', background: 'transparent' }}>
-      <Sider
-        trigger={null}
-        collapsible
-        collapsed={collapsed}
-        width={260}
+  const handleLogoutClick = () => {
+    Modal.confirm({
+      title: '确认退出',
+      content: '确定要退出登录吗？',
+      okText: '退出',
+      cancelText: '取消',
+      onOk: () => {
+        localStorage.removeItem('token');
+        onLogout?.();
+      },
+    });
+  };
+
+  const currentLabel = menuItems.find(item => item.key === location.pathname)?.label || 'Dashboard';
+
+  // ============ 抽屉/侧栏内部内容 ============
+  const sidebarBody = (drawerMode: boolean) => (
+    <>
+      <div
         style={{
-          overflow: 'hidden',
-          height: 'calc(100vh - 32px)',
-          position: 'fixed',
-          left: 16,
-          top: 16,
-          bottom: 16,
-          borderRadius: 'var(--radius-card)',
-          background: 'var(--glass-bg)',
-          backdropFilter: 'blur(20px)',
-          border: '1px solid var(--glass-border)',
-          zIndex: 100,
-          boxShadow: 'var(--glass-shadow)',
-          transition: 'all var(--trans-base)',
+          height: drawerMode ? 64 : 72,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-start',
+          padding: '0 20px',
+          borderBottom: '1px solid var(--glass-border)',
         }}
       >
         <div
           style={{
-            height: 72,
+            width: 36,
+            height: 36,
+            background: 'linear-gradient(135deg, var(--accent-cyan) 0%, #007bb5 100%)',
+            borderRadius: '10px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '0 20px',
-            borderBottom: '1px solid var(--glass-border)',
+            color: 'white',
+            fontWeight: 'bold',
+            fontSize: 20,
+            marginRight: !drawerMode && collapsed ? 0 : 12,
+            flexShrink: 0,
+            boxShadow: '0 0 16px rgba(0, 212, 255, 0.4)',
           }}
         >
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              background: 'linear-gradient(135deg, var(--accent-cyan) 0%, #007bb5 100%)',
-              borderRadius: '10px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'white',
-              fontWeight: 'bold',
-              fontSize: 20,
-              marginRight: collapsed ? 0 : 12,
-              flexShrink: 0,
-              boxShadow: '0 0 16px rgba(0, 212, 255, 0.4)',
-            }}
-          >
-            E
-          </div>
-          {!collapsed && (
-            <div style={{
-              color: 'var(--text-primary)',
-              fontSize: 18,
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              letterSpacing: '0.5px'
-            }}>
-              Emby AI
-            </div>
-          )}
+          E
         </div>
-        
-        <Menu
-          theme={isDark ? 'dark' : 'light'}
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={menuItems.map(item => ({
-            ...item,
-            className: location.pathname === item.key ? 'nav-item-active' : ''
-          }))}
-          onClick={handleMenuClick}
-          style={{
-            background: 'transparent',
-            padding: '16px 8px',
-            border: 'none',
-          }}
-        />
-        
+        {(drawerMode || !collapsed) && (
+          <div style={{
+            color: 'var(--text-primary)',
+            fontSize: 18,
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            letterSpacing: '0.5px'
+          }}>
+            Emby AI
+          </div>
+        )}
+      </div>
+
+      <Menu
+        theme={isDark ? 'dark' : 'light'}
+        mode="inline"
+        selectedKeys={[location.pathname]}
+        items={menuItems.map(item => ({
+          ...item,
+          className: location.pathname === item.key ? 'nav-item-active' : ''
+        }))}
+        onClick={handleMenuClick}
+        style={{
+          background: 'transparent',
+          padding: '16px 8px',
+          border: 'none',
+        }}
+      />
+
+      {!drawerMode && (
         <div style={{ position: 'absolute', bottom: 16, width: '100%', padding: '0 16px' }}>
           <Button
             type="text"
@@ -134,43 +139,191 @@ const Layout: React.FC<LayoutProps> = ({ onLogout }) => {
             }}
           />
         </div>
-      </Sider>
-      
+      )}
+    </>
+  );
+
+  // ============ 桌面端布局 ============
+  if (!isMobile) {
+    return (
+      <AntLayout style={{ minHeight: '100vh', background: 'transparent' }}>
+        <Sider
+          trigger={null}
+          collapsible
+          collapsed={collapsed}
+          width={260}
+          style={{
+            overflow: 'hidden',
+            height: 'calc(100vh - 32px)',
+            position: 'fixed',
+            left: 16,
+            top: 16,
+            bottom: 16,
+            borderRadius: 'var(--radius-card)',
+            background: 'var(--glass-bg)',
+            backdropFilter: 'blur(20px)',
+            border: '1px solid var(--glass-border)',
+            zIndex: 100,
+            boxShadow: 'var(--glass-shadow)',
+            transition: 'all var(--trans-base)',
+          }}
+        >
+          {sidebarBody(false)}
+        </Sider>
+
+        <AntLayout style={{
+          marginLeft: collapsed ? 80 + 32 : 260 + 32,
+          transition: 'all var(--trans-base)',
+          background: 'transparent',
+          padding: '16px 16px 16px 0',
+        }}>
+          <Header
+            className="glass-card"
+            style={{
+              padding: '0 24px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 20,
+              height: 72,
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: 'var(--text-primary)' }}>
+              {currentLabel}
+            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="status-dot active"></div>
+              <span style={{ color: 'var(--accent-cyan)', fontSize: 13, fontWeight: 500, letterSpacing: '0.5px' }}>
+                System Online
+              </span>
+              <Tooltip title={isDark ? '切换亮色模式' : '切换暗色模式'}>
+                <Button
+                  type="text"
+                  icon={isDark ? <SunOutlined /> : <MoonOutlined />}
+                  onClick={toggleTheme}
+                  style={{
+                    color: 'var(--text-secondary)',
+                    fontSize: 18,
+                    width: 40,
+                    height: 40,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '50%',
+                    background: 'var(--bg-subtle)',
+                    border: '1px solid var(--glass-border)',
+                  }}
+                />
+              </Tooltip>
+              <Tooltip title="退出登录">
+                <Button
+                  type="text"
+                  icon={<LogoutOutlined />}
+                  onClick={handleLogoutClick}
+                  style={{
+                    color: 'var(--text-secondary)',
+                    fontSize: 18,
+                    width: 40,
+                    height: 40,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '50%',
+                    background: 'var(--bg-subtle)',
+                    border: '1px solid var(--glass-border)',
+                  }}
+                />
+              </Tooltip>
+            </div>
+          </Header>
+
+          <Content style={{ position: 'relative' }}>
+            <div key={location.pathname} className="animate-fade-in-up" style={{ height: '100%' }}>
+              <Outlet />
+            </div>
+          </Content>
+        </AntLayout>
+      </AntLayout>
+    );
+  }
+
+  // ============ 移动端布局 ============
+  return (
+    <AntLayout style={{ minHeight: '100vh', background: 'transparent' }}>
+      <Drawer
+        placement="left"
+        open={mobileNavOpen}
+        onClose={() => setMobileNavOpen(false)}
+        closable={false}
+        width={Math.min(280, typeof window !== 'undefined' ? window.innerWidth - 56 : 280)}
+        styles={{
+          body: { padding: 0, background: 'var(--bg-elevated)' },
+          header: { display: 'none' },
+        }}
+        rootClassName="mobile-nav-drawer"
+      >
+        {sidebarBody(true)}
+      </Drawer>
+
       <AntLayout style={{
-        marginLeft: collapsed ? 80 + 32 : 260 + 32,
-        transition: 'all var(--trans-base)',
+        marginLeft: 0,
         background: 'transparent',
-        padding: '16px 16px 16px 0',
+        padding: '12px 12px 16px',
       }}>
         <Header
           className="glass-card"
           style={{
-            padding: '0 24px',
+            padding: '0 12px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            marginBottom: 20,
-            height: 72,
+            marginBottom: 12,
+            height: 56,
+            gap: 8,
           }}
         >
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: 'var(--text-primary)' }}>
-            {menuItems.find(item => item.key === location.pathname)?.label || 'Dashboard'}
-          </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div className="status-dot active"></div>
-            <span style={{ color: 'var(--accent-cyan)', fontSize: 13, fontWeight: 500, letterSpacing: '0.5px' }}>
-              System Online
-            </span>
-            <Tooltip title={isDark ? '切换亮色模式' : '切换暗色模式'}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+            <Button
+              type="text"
+              icon={<MenuOutlined />}
+              onClick={() => setMobileNavOpen(true)}
+              style={{
+                color: 'var(--text-primary)',
+                fontSize: 18,
+                width: 40,
+                height: 40,
+                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 10,
+                background: 'var(--bg-subtle)',
+                border: '1px solid var(--glass-border)',
+              }}
+            />
+            <h2 style={{
+              margin: 0,
+              fontSize: 16,
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}>
+              {currentLabel}
+            </h2>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <Tooltip title={isDark ? '亮色模式' : '暗色模式'}>
               <Button
                 type="text"
                 icon={isDark ? <SunOutlined /> : <MoonOutlined />}
                 onClick={toggleTheme}
                 style={{
                   color: 'var(--text-secondary)',
-                  fontSize: 18,
-                  width: 40,
-                  height: 40,
+                  fontSize: 16,
+                  width: 36,
+                  height: 36,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -184,23 +337,12 @@ const Layout: React.FC<LayoutProps> = ({ onLogout }) => {
               <Button
                 type="text"
                 icon={<LogoutOutlined />}
-                onClick={() => {
-                  Modal.confirm({
-                    title: '确认退出',
-                    content: '确定要退出登录吗？',
-                    okText: '退出',
-                    cancelText: '取消',
-                    onOk: () => {
-                      localStorage.removeItem('token');
-                      onLogout?.();
-                    },
-                  });
-                }}
+                onClick={handleLogoutClick}
                 style={{
                   color: 'var(--text-secondary)',
-                  fontSize: 18,
-                  width: 40,
-                  height: 40,
+                  fontSize: 16,
+                  width: 36,
+                  height: 36,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -212,9 +354,8 @@ const Layout: React.FC<LayoutProps> = ({ onLogout }) => {
             </Tooltip>
           </div>
         </Header>
-        
+
         <Content style={{ position: 'relative' }}>
-          {/* Use key to remount and trigger animation on route change */}
           <div key={location.pathname} className="animate-fade-in-up" style={{ height: '100%' }}>
             <Outlet />
           </div>

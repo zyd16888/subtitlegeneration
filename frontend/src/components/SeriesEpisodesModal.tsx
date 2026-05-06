@@ -22,6 +22,7 @@ import {
 } from '@ant-design/icons';
 import { api, getImageUrl, isRequestCancelled } from '../services/api';
 import type { MediaItem, TaskConfig, SystemConfig } from '../types/api';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { Text } = Typography;
 
@@ -60,6 +61,7 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
   onClose,
   onGenerateSubtitles,
 }) => {
+  const isMobile = useIsMobile();
   const [episodes, setEpisodes] = useState<EpisodeConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
@@ -143,7 +145,24 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
     onClose();
   };
 
-  const columns = [
+  const columns = (isMobile ? [
+    {
+      title: '集名称',
+      dataIndex: 'name',
+      key: 'name',
+      ellipsis: true,
+      render: (name: string, record: MediaItem) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Text style={{ fontSize: 13, flex: 1, minWidth: 0 }} ellipsis={{ tooltip: name }}>{name}</Text>
+          {record.has_subtitles ? (
+            <Tag color="success" style={{ margin: 0, fontSize: 10, padding: '0 6px' }}>有</Tag>
+          ) : (
+            <Tag color="error" style={{ margin: 0, fontSize: 10, padding: '0 6px' }}>无</Tag>
+          )}
+        </div>
+      ),
+    },
+  ] : [
     {
       title: '缩略图',
       dataIndex: 'image_url',
@@ -248,7 +267,7 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
         </Select>
       ),
     },
-  ];
+  ]);
 
   const rowSelection = {
     selectedRowKeys,
@@ -262,7 +281,9 @@ const SeriesEpisodesModal: React.FC<SeriesEpisodesModalProps> = ({
       title={`${seriesName} - 选择集数`}
       open={visible}
       onCancel={onClose}
-      width={1200}
+      width={isMobile ? '100%' : 1200}
+      style={isMobile ? { top: 0, paddingBottom: 0, maxWidth: '100vw', margin: 0 } : undefined}
+      styles={isMobile ? { body: { maxHeight: 'calc(100vh - 200px)', overflowY: 'auto', padding: 12 } } : undefined}
       footer={[
         <Button key="cancel" onClick={onClose}>
           取消

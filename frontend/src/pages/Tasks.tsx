@@ -46,11 +46,13 @@ import type { ColumnsType } from 'antd/es/table';
 import { api, isRequestCancelled } from '../services/api';
 import type { Task, TaskDetail, TaskStatus } from '../types/api';
 import { LANGUAGE_NAMES, TRANSLATION_SERVICE_NAMES, ASR_ENGINE_NAMES } from '../types/api';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { Option } = Select;
 const { Text, Title, Paragraph } = Typography;
 
 const Tasks: React.FC = () => {
+  const isMobile = useIsMobile();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -377,10 +379,88 @@ const Tasks: React.FC = () => {
     },
   ];
 
+  const formatRelativeTime = (time?: string) => {
+    if (!time) return '-';
+    const t = new Date(time).getTime();
+    if (!Number.isFinite(t)) return '-';
+    const diff = Math.max(0, Date.now() - t) / 1000;
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+    return `${Math.floor(diff / 86400)} 天前`;
+  };
+
+  const renderTaskCard = (task: Task) => {
+    const runtime = getTaskRuntime(task);
+    const isActive = task.status === 'pending' || task.status === 'processing';
+    return (
+      <div
+        key={task.id}
+        className="task-card"
+        style={{
+          background: 'var(--bg-subtle)',
+          border: '1px solid var(--glass-border)',
+          borderRadius: 12,
+          padding: 14,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+          <Text strong style={{ color: 'var(--text-primary)', fontSize: 14, flex: 1, minWidth: 0, lineHeight: 1.4 }} ellipsis={{ tooltip: task.media_item_title }}>
+            {task.media_item_title || '未知媒体'}
+          </Text>
+          {getStatusTag(task.status)}
+        </div>
+
+        {(task.telegram_user_id || task.emby_username) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
+            <span>提交：{task.telegram_display_name || task.telegram_username || (task.telegram_user_id ? `User ${task.telegram_user_id}` : '网页端')}</span>
+            {task.emby_username && <span style={{ opacity: 0.7 }}>· Emby: {task.emby_username}</span>}
+          </div>
+        )}
+
+        <Progress
+          percent={task.progress}
+          size="small"
+          status={task.status === 'failed' ? 'exception' : (task.status === 'completed' ? 'success' : 'active')}
+          strokeColor={task.status === 'completed' ? 'var(--accent-emerald)' : { '0%': 'var(--accent-cyan)', '100%': '#007bb5' }}
+        />
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <FieldTimeOutlined />
+            {runtime !== undefined ? formatDuration(runtime) : '-'}
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <ClockCircleOutlined />
+            {formatRelativeTime(task.created_at)}
+          </span>
+        </div>
+
+        {task.error_message && (
+          <div style={{ padding: '8px 10px', background: 'var(--error-bg)', borderLeft: '3px solid var(--accent-rose)', borderRadius: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+            <Text type="danger" strong style={{ fontSize: 12 }}>错误：</Text>
+            <span style={{ marginLeft: 4 }}>{task.error_message}</span>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', borderTop: '1px solid var(--glass-border)', paddingTop: 10 }}>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(task.id)}>详情</Button>
+          <Button size="small" icon={<ReloadOutlined />} onClick={() => handleRetryTask(task.id, task.media_item_title)}>重试</Button>
+          {isActive && (
+            <Button size="small" danger icon={<StopOutlined />} onClick={() => handleCancelTask(task.id, task.media_item_title)}>取消</Button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ maxWidth: 1400, margin: '0 auto' }}>
-      <div className="glass-card animate-fade-in-up delay-1" style={{ marginBottom: 24, borderRadius: 16, padding: '16px 24px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+      <div className="glass-card animate-fade-in-up delay-1" style={{ marginBottom: isMobile ? 12 : 24, borderRadius: 16, padding: isMobile ? '12px 14px' : '16px 24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: isMobile ? 10 : 16 }}>
           <Space size={12}>
             <div style={{ background: 'var(--accent-cyan)', padding: 8, borderRadius: 8, color: 'white', display: 'flex' }}>
               <HistoryOutlined />
@@ -388,11 +468,11 @@ const Tasks: React.FC = () => {
             <Title level={5} style={{ margin: 0 }}>任务队列管理</Title>
           </Space>
 
-          <Space size="middle">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <FilterOutlined style={{ color: 'var(--text-secondary)' }} />
+          <Space size={isMobile ? 8 : 'middle'} style={{ width: isMobile ? '100%' : 'auto' }} wrap>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: isMobile ? 1 : 'none', minWidth: 0 }}>
+              <FilterOutlined style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
               <Select
-                style={{ width: 140 }}
+                style={{ width: isMobile ? '100%' : 140, minWidth: 120 }}
                 placeholder="筛选状态"
                 value={selectedStatus}
                 onChange={handleStatusChange}
@@ -405,42 +485,67 @@ const Tasks: React.FC = () => {
                 <Option value="cancelled">已取消</Option>
               </Select>
             </div>
-            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchTasks({ isManualRefresh: true })}>刷新列表</Button>
+            <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchTasks({ isManualRefresh: true })}>{isMobile ? '刷新' : '刷新列表'}</Button>
           </Space>
         </div>
       </div>
 
-      <div className="glass-card animate-fade-in-up delay-2" style={{ padding: 0, borderRadius: 16, overflow: 'hidden' }}>
-        <Table
-          columns={columns}
-          dataSource={tasks}
-          rowKey="id"
-          loading={initialLoading}
-          pagination={false}
-          className="custom-table"
-          expandable={{
-            expandedRowRender: (record) => record.error_message && (
-              <div style={{ padding: '16px 24px', background: 'var(--error-bg)', borderLeft: '4px solid var(--accent-rose)' }}>
-                <Text type="danger" strong>错误详情：</Text>
-                <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{record.error_message}</div>
-                {record.error_stage && <div style={{ marginTop: 4, color: 'var(--text-secondary)', fontSize: 12 }}>错误阶段：{record.error_stage}</div>}
-              </div>
-            ),
-            rowExpandable: (record) => !!record.error_message,
-          }}
-        />
-
-        <div style={{ padding: '24px', textAlign: 'center' }}>
-          <Pagination
-            current={currentPage}
-            pageSize={pageSize}
-            total={total}
-            onChange={(p, s) => { setCurrentPage(p); setPageSize(s); }}
-            showSizeChanger
-            showTotal={(total) => <Text type="secondary">共 {total} 个生成任务</Text>}
-          />
+      {isMobile ? (
+        <div className="animate-fade-in-up delay-2" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {initialLoading ? (
+            <div style={{ padding: 60, textAlign: 'center' }}><LoadingOutlined style={{ fontSize: 28, color: 'var(--accent-cyan)' }} /></div>
+          ) : tasks.length === 0 ? (
+            <div className="glass-card" style={{ padding: 40, textAlign: 'center', color: 'var(--text-secondary)' }}>
+              暂无任务
+            </div>
+          ) : (
+            tasks.map(renderTaskCard)
+          )}
+          <div style={{ padding: '12px 0 24px', textAlign: 'center' }}>
+            <Pagination
+              size="small"
+              current={currentPage}
+              pageSize={pageSize}
+              total={total}
+              onChange={(p, s) => { setCurrentPage(p); setPageSize(s); }}
+              simple
+              showTotal={(total) => <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>共 {total} 个</Text>}
+            />
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="glass-card animate-fade-in-up delay-2" style={{ padding: 0, borderRadius: 16, overflow: 'hidden' }}>
+          <Table
+            columns={columns}
+            dataSource={tasks}
+            rowKey="id"
+            loading={initialLoading}
+            pagination={false}
+            className="custom-table"
+            expandable={{
+              expandedRowRender: (record) => record.error_message && (
+                <div style={{ padding: '16px 24px', background: 'var(--error-bg)', borderLeft: '4px solid var(--accent-rose)' }}>
+                  <Text type="danger" strong>错误详情：</Text>
+                  <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{record.error_message}</div>
+                  {record.error_stage && <div style={{ marginTop: 4, color: 'var(--text-secondary)', fontSize: 12 }}>错误阶段：{record.error_stage}</div>}
+                </div>
+              ),
+              rowExpandable: (record) => !!record.error_message,
+            }}
+          />
+
+          <div style={{ padding: '24px', textAlign: 'center' }}>
+            <Pagination
+              current={currentPage}
+              pageSize={pageSize}
+              total={total}
+              onChange={(p, s) => { setCurrentPage(p); setPageSize(s); }}
+              showSizeChanger
+              showTotal={(total) => <Text type="secondary">共 {total} 个生成任务</Text>}
+            />
+          </div>
+        </div>
+      )}
 
       <Drawer
         title={<Space><EyeOutlined /> 任务详细信息</Space>}
@@ -448,18 +553,21 @@ const Tasks: React.FC = () => {
           selectedTask ? (
             <Button
               type="primary"
+              size={isMobile ? 'small' : 'middle'}
               icon={<ReloadOutlined />}
               onClick={() => handleRetryTask(selectedTask.id, selectedTask.media_item_title, { openNewTaskDetail: true })}
             >
-              重试任务
+              {isMobile ? '重试' : '重试任务'}
             </Button>
           ) : null
         }
-        placement="right"
-        width={720}
+        placement={isMobile ? 'bottom' : 'right'}
+        width={isMobile ? '100%' : 720}
+        height={isMobile ? '92vh' : undefined}
         onClose={() => setDetailsVisible(false)}
         open={detailsVisible}
         loading={detailLoading}
+        styles={isMobile ? { body: { padding: 16 } } : undefined}
       >
         {selectedTask && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -481,7 +589,7 @@ const Tasks: React.FC = () => {
 
             {/* 基本信息卡片 */}
             <Card size="small" title={<Space><FileTextOutlined /> 基本信息</Space>} style={{ borderRadius: 12 }}>
-              <Descriptions column={2} size="small">
+              <Descriptions column={isMobile ? 1 : 2} size="small">
                 <Descriptions.Item label="媒体标题" span={2}>{selectedTask.media_item_title || '未知媒体'}</Descriptions.Item>
                 <Descriptions.Item label="当前状态">{getStatusTag(selectedTask.status)}</Descriptions.Item>
                 <Descriptions.Item label="总进度">
@@ -511,30 +619,30 @@ const Tasks: React.FC = () => {
             {/* 统计信息 */}
             {(selectedTask.audio_duration || selectedTask.segment_count || selectedTask.processing_time) && (
               <Card size="small" title={<Space><FieldTimeOutlined /> 处理统计</Space>} style={{ borderRadius: 12 }}>
-                <Row gutter={16}>
+                <Row gutter={[16, 16]}>
                   {selectedTask.audio_duration && (
-                    <Col span={8}>
-                      <Statistic 
-                        title="音频时长" 
-                        value={formatDuration(selectedTask.audio_duration)} 
+                    <Col xs={24} sm={8}>
+                      <Statistic
+                        title="音频时长"
+                        value={formatDuration(selectedTask.audio_duration)}
                         prefix={<SoundOutlined />}
                       />
                     </Col>
                   )}
                   {selectedTask.segment_count && (
-                    <Col span={8}>
-                      <Statistic 
-                        title="字幕段落数" 
-                        value={selectedTask.segment_count} 
+                    <Col xs={24} sm={8}>
+                      <Statistic
+                        title="字幕段落数"
+                        value={selectedTask.segment_count}
                         prefix={<FileTextOutlined />}
                       />
                     </Col>
                   )}
                   {selectedTask.processing_time && (
-                    <Col span={8}>
-                      <Statistic 
-                        title="处理耗时" 
-                        value={formatDuration(selectedTask.processing_time)} 
+                    <Col xs={24} sm={8}>
+                      <Statistic
+                        title="处理耗时"
+                        value={formatDuration(selectedTask.processing_time)}
                         prefix={<FieldTimeOutlined />}
                       />
                     </Col>
@@ -545,7 +653,7 @@ const Tasks: React.FC = () => {
 
             {/* 时间信息 */}
             <Card size="small" title={<Space><ClockCircleOutlined /> 时间信息</Space>} style={{ borderRadius: 12 }}>
-              <Descriptions column={2} size="small">
+              <Descriptions column={isMobile ? 1 : 2} size="small">
                 <Descriptions.Item label="创建时间">
                   {formatDateTime(selectedTask.created_at)}
                 </Descriptions.Item>
@@ -574,7 +682,7 @@ const Tasks: React.FC = () => {
 
             {/* 配置信息 */}
             <Card size="small" title={<Space><SettingOutlined /> 任务配置</Space>} style={{ borderRadius: 12 }}>
-              <Descriptions column={2} size="small">
+              <Descriptions column={isMobile ? 1 : 2} size="small">
                 <Descriptions.Item label="ASR 引擎">
                   {ASR_ENGINE_NAMES[selectedTask.asr_engine || ''] || selectedTask.asr_engine || '-'}
                 </Descriptions.Item>

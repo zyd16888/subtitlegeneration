@@ -14,6 +14,7 @@ import {
 } from '@ant-design/icons';
 import { api } from '../services/api';
 import type { ASRModel, ModelDownloadProgress, LanguageInfo, Library } from '../types/api';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { Option } = Select;
 const { Text } = Typography;
@@ -52,6 +53,7 @@ const DEFAULT_VAD_FORM_VALUES = {
 
 const Settings: React.FC = () => {
   const [form] = Form.useForm();
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [savingAll, setSavingAll] = useState(false);
   const [savingEmby, setSavingEmby] = useState(false);
@@ -1794,6 +1796,66 @@ const Settings: React.FC = () => {
 
   if (loading) return <div style={{ padding: 100, textAlign: 'center' }}><Spin size="large" /></div>;
 
+  // ============ 移动端布局 ============
+  if (isMobile) {
+    return (
+      <div className="settings-mobile" style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 80 }}>
+        <div className="glass-card" style={{ padding: 12, position: 'sticky', top: 0, zIndex: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
+            <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+              系统设置
+              {isDirty && <Tag color="warning" style={{ margin: 0, borderRadius: 12, background: 'var(--accent-amber-bg)', color: 'var(--accent-amber)', border: '1px solid var(--accent-amber-border)', fontSize: 11 }}><SyncOutlined spin /> 未保存</Tag>}
+            </h1>
+          </div>
+          <Select
+            value={activeCategory}
+            onChange={(v) => setActiveCategory(v)}
+            style={{ width: '100%' }}
+            optionLabelProp="label"
+          >
+            {CATEGORIES.map(cat => (
+              <Option key={cat.key} value={cat.key} label={cat.label}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ width: 26, height: 26, borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(' + cat.colorBgVar + ')', color: 'var(' + cat.colorVar + ')' }}>{cat.icon}</span>
+                  <span>
+                    <span style={{ fontWeight: 500 }}>{cat.label}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 8 }}>{cat.description}</span>
+                  </span>
+                </div>
+              </Option>
+            ))}
+          </Select>
+        </div>
+
+        <div className="glass-card" style={{ padding: 16 }}>
+          <Form form={form} layout="vertical" onValuesChange={handleValuesChange} requiredMark={false}>
+            {renderContent()}
+          </Form>
+        </div>
+
+        <div style={{
+          position: 'fixed',
+          left: 12,
+          right: 12,
+          bottom: 12,
+          zIndex: 50,
+          padding: 8,
+          borderRadius: 14,
+          background: 'var(--glass-bg)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          border: '1px solid var(--glass-border)',
+          boxShadow: 'var(--glass-shadow)',
+        }}>
+          <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveAll} loading={savingAll} block size="large" style={{ borderRadius: 10, background: isDirty ? 'linear-gradient(135deg, var(--accent-cyan) 0%, #007bb5 100%)' : 'var(--btn-hover-bg)', borderColor: isDirty ? 'transparent' : 'var(--glass-border)', boxShadow: isDirty ? 'var(--accent-cyan-glow-wide)' : 'none', color: isDirty ? '#fff' : 'var(--text-secondary)' }}>
+            保存全局配置
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ============ 桌面端布局 ============
   return (
     <div style={{ height: 'calc(100vh - 126px)', display: 'flex', gap: 24 }}>
       {/* 左侧分类导航 */}

@@ -43,16 +43,18 @@ const Login = () => {
   return (
     <div
       style={{
-        height: '100vh',
+        minHeight: '100vh',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        padding: 16,
         background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
       }}
     >
       <Card
         style={{
-          width: 400,
+          width: '100%',
+          maxWidth: 400,
           boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
           borderRadius: 12,
           background: 'rgba(255, 255, 255, 0.95)',

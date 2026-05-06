@@ -22,6 +22,7 @@ import {
 } from '@ant-design/icons';
 import { api, getImageUrl } from '../services/api';
 import type { MediaItem, TaskConfig, SystemConfig } from '../types/api';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { Text } = Typography;
 
@@ -54,6 +55,7 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
   onGenerateSubtitle,
 }) => {
   const [form] = Form.useForm();
+  const isMobile = useIsMobile();
   const [globalConfig, setGlobalConfig] = useState<SystemConfig | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -109,7 +111,9 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
       title="配置字幕生成"
       open={visible}
       onCancel={onClose}
-      width={600}
+      width={isMobile ? '100%' : 600}
+      style={isMobile ? { top: 0, paddingBottom: 0, maxWidth: '100vw', margin: 0 } : undefined}
+      styles={isMobile ? { body: { maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' } } : undefined}
       footer={[
         <Button key="cancel" onClick={onClose}>
           取消

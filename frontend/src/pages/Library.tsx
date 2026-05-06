@@ -260,9 +260,9 @@ const LibraryPage: React.FC = () => {
         />
       )}
 
-      <div className="glass-card animate-fade-in-up delay-1" style={{ marginBottom: 24, borderRadius: 16, padding: '16px 24px' }}>
-        <Row gutter={[24, 16]} align="middle">
-          <Col xs={24} md={6}>
+      <div className="glass-card animate-fade-in-up delay-1 library-toolbar" style={{ marginBottom: 16, borderRadius: 16, padding: '14px 16px' }}>
+        <Row gutter={[12, 12]} align="middle">
+          <Col xs={0} md={6}>
             <Space size={12}>
               <div style={{ background: 'var(--accent-cyan)', padding: 8, borderRadius: 8, color: 'white', display: 'flex' }}>
                 <AppstoreOutlined />
@@ -270,7 +270,7 @@ const LibraryPage: React.FC = () => {
               <Title level={5} style={{ margin: 0 }}>媒体库浏览</Title>
             </Space>
           </Col>
-          <Col xs={24} sm={8} md={5}>
+          <Col xs={14} sm={8} md={5}>
             <Select
               style={{ width: '100%' }}
               placeholder="选择媒体库"
@@ -283,7 +283,7 @@ const LibraryPage: React.FC = () => {
               ))}
             </Select>
           </Col>
-          <Col xs={24} sm={8} md={4}>
+          <Col xs={10} sm={8} md={4}>
             <Select
               style={{ width: '100%' }}
               placeholder="类型"
@@ -298,7 +298,7 @@ const LibraryPage: React.FC = () => {
           </Col>
           <Col xs={24} sm={8} md={9}>
             <Search
-              placeholder="在当前库中搜索..."
+              placeholder="搜索..."
               allowClear
               enterButton={<SearchOutlined />}
               onSearch={(val) => { setSearchText(val); setCurrentPage(1); }}
