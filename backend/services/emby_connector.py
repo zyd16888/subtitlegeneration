@@ -39,6 +39,8 @@ class MediaItem:
     path: Optional[str] = None
     has_subtitles: bool = False
     image_url: Optional[str] = None
+    season_number: Optional[int] = None  # Episode 的所属季编号 (ParentIndexNumber)
+    episode_number: Optional[int] = None  # Episode 的集编号 (IndexNumber)
 
     @classmethod
     def from_emby_response(cls, data: Dict[str, Any], base_url: str = "", api_key: str = "") -> "MediaItem":
@@ -47,18 +49,18 @@ class MediaItem:
         has_subtitles = False
         if "MediaStreams" in data:
             has_subtitles = any(
-                stream.get("Type") == "Subtitle" 
+                stream.get("Type") == "Subtitle"
                 for stream in data.get("MediaStreams", [])
             )
-        
+
         # 获取显示名称
         # 对于Episode类型，使用SeriesName + 季集信息
         item_type = data.get("Type", "")
         name = data.get("Name", "")
+        season_num = data.get("ParentIndexNumber") if item_type == "Episode" else None
+        episode_num = data.get("IndexNumber") if item_type == "Episode" else None
         if item_type == "Episode":
             series_name = data.get("SeriesName", "")
-            season_num = data.get("ParentIndexNumber")
-            episode_num = data.get("IndexNumber")
             if series_name:
                 if season_num and episode_num:
                     name = f"{series_name} S{season_num:02d}E{episode_num:02d}"
@@ -66,7 +68,7 @@ class MediaItem:
                     name = f"{series_name} E{episode_num}"
                 else:
                     name = series_name
-        
+
         # 构建图片URL（使用后端代理路径，避免暴露 Emby 地址和 API Key）
         image_url = None
         item_id = data.get("Id", "")
@@ -81,7 +83,7 @@ class MediaItem:
             # 最后尝试Backdrop
             elif data.get("BackdropImageTags") and len(data.get("BackdropImageTags", [])) > 0:
                 image_url = f"/api/images/{item_id}/Backdrop/0"
-        
+
         return cls(
             id=item_id,
             name=name,
@@ -89,6 +91,8 @@ class MediaItem:
             path=data.get("Path"),
             has_subtitles=has_subtitles,
             image_url=image_url,
+            season_number=season_num,
+            episode_number=episode_num,
         )
 
 
@@ -210,17 +214,23 @@ class EmbyConnector:
         limit: int = 50,
         offset: int = 0,
         accessible_library_ids: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        has_subtitles: Optional[bool] = None,
     ) -> tuple[List[MediaItem], int]:
         """
         获取媒体项列表，支持筛选和分页
-        
+
         Args:
             library_id: 媒体库 ID（可选）
             item_type: 媒体类型（可选，例如: Movie, Episode, Series）
             search: 搜索关键词（可选）
             limit: 每页数量
             offset: 偏移量
-        
+            sort_by: 排序字段，传给 Emby SortBy 参数（如 "DateCreated", "SortName"）
+            sort_order: 排序方向 "Ascending" / "Descending"
+            has_subtitles: True 仅返回有字幕的，False 仅返回无字幕的，None 不过滤
+
         Returns:
             tuple[List[MediaItem], int]: (媒体项列表, 总数)
         """
@@ -250,6 +260,13 @@ class EmbyConnector:
 
             if search:
                 params["SearchTerm"] = search
+
+            if sort_by:
+                params["SortBy"] = sort_by
+            if sort_order:
+                params["SortOrder"] = sort_order
+            if has_subtitles is not None:
+                params["HasSubtitles"] = "true" if has_subtitles else "false"
 
             # Emby 的 /Items 在带 SearchTerm 时，ParentId 只接受单个 Guid，
             # 传入逗号分隔的多个 ID 会触发 "Guid should contain 32 digits..." 的 500 错误。

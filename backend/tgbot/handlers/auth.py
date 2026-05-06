@@ -112,6 +112,12 @@ async def receive_password(
             user = get_or_create_user(db, update.effective_user)
             user.emby_user_id = emby_user_id
             user.emby_username = emby_username
+            from tgbot.services import audit as audit_service
+            audit_service.record(
+                db, update.effective_user.id, "login",
+                target_id=emby_user_id,
+                payload={"emby_username": emby_username},
+            )
             db.commit()
 
             await update.effective_chat.send_message(
@@ -169,8 +175,15 @@ async def logout_command(
     try:
         user = get_or_create_user(db, update.effective_user)
         old_name = user.emby_username
+        old_emby_id = user.emby_user_id
         user.emby_user_id = None
         user.emby_username = None
+        from tgbot.services import audit as audit_service
+        audit_service.record(
+            db, update.effective_user.id, "logout",
+            target_id=old_emby_id,
+            payload={"emby_username": old_name},
+        )
         db.commit()
 
         await update.message.reply_text(

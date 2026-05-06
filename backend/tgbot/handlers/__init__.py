@@ -12,6 +12,8 @@ def register_handlers(app: Application, admin_ids: list[int]) -> None:
     from .inline import register as register_inline
     from .task import register as register_task
     from .admin import register as register_admin
+    from .config import register as register_config
+    from .errors import register as register_errors
 
     register_start(app)
     register_auth(app)
@@ -19,3 +21,5 @@ def register_handlers(app: Application, admin_ids: list[int]) -> None:
     register_inline(app)
     register_task(app)
     register_admin(app, admin_ids)
+    register_config(app)
+    register_errors(app)

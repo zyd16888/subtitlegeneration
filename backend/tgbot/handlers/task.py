@@ -2,6 +2,7 @@
 任务管理处理（创建、查看、取消、重试）
 """
 import logging
+from typing import Optional
 
 from telegram import Update
 from telegram.ext import (
@@ -17,20 +18,13 @@ from services.config_manager import ConfigManager
 from services.emby_connector import EmbyConnector
 from services.task_manager import TaskManager
 from tasks.subtitle_tasks import generate_subtitle_task
-from tgbot.keyboards import task_detail_keyboard
 from tgbot.middleware import require_auth
 from tgbot.services.user_service import (
     check_user_quota,
     get_or_create_user,
     increment_daily_task_count,
 )
-from tgbot.utils import (
-    format_duration,
-    format_progress,
-    format_task_status,
-    format_time_ago,
-    short_id,
-)
+from tgbot.utils import format_task_status, short_id
 
 logger = logging.getLogger(__name__)
 
@@ -91,18 +85,17 @@ async def _create_subtitle_task(
             emby_username=user.emby_username,
         )
 
-        # 记录来源 + 多语言信息（保留用于兼容性和重试恢复）
-        effective_target_languages = (
-            list(config.target_languages) if config.target_languages else [config.target_language]
-        )
+        # 用户偏好覆盖全局：/config 设置过的字段优先生效
+        from tgbot.handlers.config import _resolve_effective
+        effective_target_languages, effective_keep_source = _resolve_effective(user, config)
+
         task.extra_info = {
-            "telegram_user_id": user_telegram_id,
             "target_languages": effective_target_languages,
-            "keep_source_subtitle": bool(config.keep_source_subtitle),
+            "keep_source_subtitle": bool(effective_keep_source),
         }
         db.commit()
 
-        # 提交 Celery 任务（TG 任务统一走全局配置）
+        # 提交 Celery 任务：把生效后的偏好显式传给 worker（避免 worker 端只读全局配置）
         generate_subtitle_task.apply_async(
             kwargs=dict(
                 task_id=task.id,
@@ -112,8 +105,8 @@ async def _create_subtitle_task(
                 asr_model_id=getattr(config, "asr_model_id", None),
                 translation_service=config.translation_service,
                 source_language=config.source_language,
-                target_languages=None,
-                keep_source_subtitle=None,
+                target_languages=effective_target_languages,
+                keep_source_subtitle=bool(effective_keep_source),
             ),
             task_id=task.id,
         )
@@ -160,63 +153,95 @@ async def task_create_callback(
     await query.message.reply_text(msg)
 
 
+async def _query_user_tasks(
+    db, telegram_id: int, filter_kind: str, page: int,
+) -> tuple[list[Task], int]:
+    """按过滤档位和页码查询用户任务，返回 (tasks, total)。"""
+    from tgbot.views.task_view import filter_to_statuses, PAGE_SIZE
+
+    base = db.query(Task).filter(Task.telegram_user_id == telegram_id)
+    statuses = filter_to_statuses(filter_kind)
+    if statuses is not None:
+        base = base.filter(Task.status.in_(statuses))
+
+    total = base.count()
+    tasks = (
+        base.order_by(Task.created_at.desc())
+        .limit(PAGE_SIZE)
+        .offset(page * PAGE_SIZE)
+        .all()
+    )
+    return tasks, total
+
+
+async def _get_user_quota(db, user) -> tuple[int, int]:
+    """返回 (daily_count, daily_limit)。"""
+    from tgbot.services.user_service import get_daily_task_count
+
+    config_manager = ConfigManager(db)
+    config = await config_manager.get_config()
+    daily_count = get_daily_task_count(db, user)
+    daily_limit = (
+        user.daily_task_limit
+        if user.daily_task_limit is not None
+        else config.telegram_daily_task_limit
+    )
+    return daily_count, daily_limit
+
+
 @require_auth
 async def tasks_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """查看我的任务列表"""
+    """查看我的任务列表（交互式分页 + 状态过滤）"""
+    from tgbot.views.task_view import FILTER_ALL, render_task_list
+
     db = SessionLocal()
     try:
         user = get_or_create_user(db, update.effective_user)
+        tasks, total = await _query_user_tasks(db, user.telegram_id, FILTER_ALL, 0)
+        daily_count, daily_limit = await _get_user_quota(db, user)
 
-        # 查询该用户的任务
-        tasks = db.query(Task).filter(
-            Task.extra_info.contains(f'"telegram_user_id": {user.telegram_id}'),
-        ).order_by(Task.created_at.desc()).limit(10).all()
-
-        if not tasks:
-            await update.message.reply_text("你还没有任务记录")
-            return
-
-        # 获取配额信息
-        config_manager = ConfigManager(db)
-        config = await config_manager.get_config()
-
-        from tgbot.services.user_service import get_daily_task_count
-        daily_count = get_daily_task_count(db, user)
-        daily_limit = (
-            user.daily_task_limit
-            if user.daily_task_limit is not None
-            else config.telegram_daily_task_limit
+        text, keyboard = render_task_list(
+            tasks, total, FILTER_ALL, 0, daily_count, daily_limit,
         )
-
-        lines = ["📋 我的任务\n"]
-        for i, task in enumerate(tasks, 1):
-            status = format_task_status(
-                task.status.value if isinstance(task.status, TaskStatus) else task.status
-            )
-            title = task.media_item_title or "未知"
-            if len(title) > 25:
-                title = title[:24] + "…"
-
-            extra = ""
-            if task.status == TaskStatus.PROCESSING:
-                extra = f" {format_progress(task.progress)}"
-            elif task.status == TaskStatus.COMPLETED:
-                extra = f" {format_time_ago(task.completed_at)}"
-            elif task.status == TaskStatus.FAILED:
-                stage = task.error_stage or ""
-                extra = f" ({stage})" if stage else ""
-
-            lines.append(f"{i}. {status} {title}{extra}")
-
-        lines.append(f"\n今日配额: {daily_count}/{daily_limit}")
-
-        await update.message.reply_text("\n".join(lines))
-
+        await update.message.reply_text(text, reply_markup=keyboard)
     except Exception as e:
         logger.error(f"查看任务列表异常: {e}")
         await update.message.reply_text("❌ 获取任务列表失败")
+    finally:
+        db.close()
+
+
+@require_auth
+async def task_info_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """查看任务详情：/task_info 短码"""
+    from tgbot.views.task_view import render_task_detail
+
+    if not context.args:
+        await update.message.reply_text("用法: /task_info 任务ID短码")
+        return
+
+    task_short_id = context.args[0]
+    db = SessionLocal()
+    try:
+        user = get_or_create_user(db, update.effective_user)
+        task = db.query(Task).filter(
+            Task.id.like(f"{task_short_id}%"),
+            Task.telegram_user_id == user.telegram_id,
+        ).first()
+
+        if not task:
+            await update.message.reply_text("❌ 未找到任务，请检查 ID")
+            return
+
+        text, keyboard = render_task_detail(task)
+        await update.message.reply_text(text, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"查看任务详情异常: {e}")
+        await update.message.reply_text("❌ 获取任务详情失败")
     finally:
         db.close()
 
@@ -239,7 +264,7 @@ async def cancel_command(
         # 查找匹配的任务
         task = db.query(Task).filter(
             Task.id.like(f"{task_short_id}%"),
-            Task.extra_info.contains(f'"telegram_user_id": {user.telegram_id}'),
+            Task.telegram_user_id == user.telegram_id,
         ).first()
 
         if not task:
@@ -255,6 +280,11 @@ async def cancel_command(
         task_manager = TaskManager(db)
         result = await task_manager.cancel_task(task.id)
         if result:
+            from tgbot.services import audit as audit_service
+            audit_service.record(
+                db, update.effective_user.id, "cancel", target_id=task.id,
+            )
+            db.commit()
             await update.message.reply_text(
                 f"✅ 已取消任务: {task.media_item_title or short_id(task.id)}"
             )
@@ -285,7 +315,7 @@ async def retry_command(
 
         task = db.query(Task).filter(
             Task.id.like(f"{task_short_id}%"),
-            Task.extra_info.contains(f'"telegram_user_id": {user.telegram_id}'),
+            Task.telegram_user_id == user.telegram_id,
         ).first()
 
         if not task:
@@ -309,13 +339,46 @@ async def retry_command(
             await update.message.reply_text(f"❌ {quota_msg}")
             return
 
-        # 创建新任务
+        # 保留原任务 extra_info 中的多语言/字幕快照，重试时透传给 worker
+        original_extra = dict(task.extra_info) if task.extra_info else {}
+        snapshot_target_languages = original_extra.get("target_languages")
+        snapshot_keep_source = original_extra.get("keep_source_subtitle")
+
+        # 创建新任务（task_manager.retry_task 已复制基础字段和 telegram_user_id）
         task_manager = TaskManager(db)
         new_task = await task_manager.retry_task(task.id)
         if new_task:
-            new_task.extra_info = {"telegram_user_id": user.telegram_id}
+            # 完整复制原 extra_info（清掉一次性的通知/重试状态字段）
+            carry_over = {
+                k: v for k, v in original_extra.items()
+                if k not in ("telegram_notified", "notification_failed_count", "current_stage")
+            }
+            new_task.extra_info = carry_over
+            from tgbot.services import audit as audit_service
+            audit_service.record(
+                db, update.effective_user.id, "retry",
+                target_id=new_task.id,
+                payload={"original_task_id": task.id},
+            )
             db.commit()
             increment_daily_task_count(db, user)
+
+            # 提交 Celery，传入快照避免取到变化后的全局配置
+            generate_subtitle_task.apply_async(
+                kwargs=dict(
+                    task_id=new_task.id,
+                    media_item_id=new_task.media_item_id,
+                    video_path=new_task.video_path,
+                    asr_engine=new_task.asr_engine,
+                    asr_model_id=new_task.asr_model_id,
+                    translation_service=new_task.translation_service,
+                    source_language=new_task.source_language,
+                    target_languages=snapshot_target_languages,
+                    keep_source_subtitle=snapshot_keep_source,
+                ),
+                task_id=new_task.id,
+            )
+
             await update.message.reply_text(
                 f"🔄 重试任务已创建\n"
                 f"📺 {new_task.media_item_title}\n"
@@ -331,39 +394,396 @@ async def retry_command(
         db.close()
 
 
+def _is_task_owner_or_admin(task: Task, tg_user_id: int, admin_ids: list[int]) -> bool:
+    """判断当前 TG 用户是否有权操作该任务"""
+    if task.telegram_user_id is not None and int(task.telegram_user_id) == int(tg_user_id):
+        return True
+    if int(tg_user_id) in admin_ids:
+        return True
+    return False
+
+
+async def _safe_edit_text(query, text, reply_markup=None) -> None:
+    """安全修改消息文本：photo 消息不能 edit_message_text，回退到删除+发新消息。"""
+    try:
+        if query.message and query.message.photo:
+            chat_id = query.message.chat_id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await query.get_bot().send_message(
+                chat_id=chat_id, text=text, reply_markup=reply_markup,
+            )
+        else:
+            await query.edit_message_text(text, reply_markup=reply_markup)
+    except Exception as e:
+        logger.warning("_safe_edit_text 回退 send_message: %s", e)
+        try:
+            await query.get_bot().send_message(
+                chat_id=query.message.chat_id, text=text, reply_markup=reply_markup,
+            )
+        except Exception:
+            pass
+
+
+async def _op_cancel(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    task_short_id: str,
+) -> None:
+    """取消任务的统一 helper（供新旧 callback 共用）。"""
+    tg_user_id = query.from_user.id
+    admin_ids = context.bot_data.get("admin_ids", [])
+
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(
+            Task.id.like(f"{task_short_id}%"),
+        ).first()
+
+        if not task:
+            await query.answer("❌ 任务不存在", show_alert=True)
+            return
+
+        if not _is_task_owner_or_admin(task, tg_user_id, admin_ids):
+            logger.warning(
+                "TG 取消任务越权: tg_user=%s task=%s owner=%s",
+                tg_user_id, task.id, task.telegram_user_id,
+            )
+            await query.answer("❌ 无权操作此任务", show_alert=True)
+            return
+
+        await query.answer()
+        if task.status in (TaskStatus.PENDING, TaskStatus.PROCESSING):
+            task_manager = TaskManager(db)
+            await task_manager.cancel_task(task.id)
+            from tgbot.services import audit as audit_service
+            audit_service.record(
+                db, tg_user_id, "cancel", target_id=task.id,
+            )
+            db.commit()
+            await _safe_edit_text(
+                query,
+                f"✅ 已取消: {task.media_item_title or short_id(task.id)}",
+            )
+        else:
+            await _safe_edit_text(query, "❌ 无法取消此任务")
+    finally:
+        db.close()
+
+
+async def _op_retry(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    update: Update,
+    task_short_id: str,
+) -> None:
+    """重试任务的统一 helper。"""
+    tg_user_id = query.from_user.id
+    admin_ids = context.bot_data.get("admin_ids", [])
+
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(
+            Task.id.like(f"{task_short_id}%"),
+        ).first()
+
+        if not task:
+            await query.answer("❌ 任务不存在", show_alert=True)
+            return
+
+        if not _is_task_owner_or_admin(task, tg_user_id, admin_ids):
+            logger.warning(
+                "TG 重试任务越权: tg_user=%s task=%s owner=%s",
+                tg_user_id, task.id, task.telegram_user_id,
+            )
+            await query.answer("❌ 无权操作此任务", show_alert=True)
+            return
+
+        if task.status != TaskStatus.FAILED:
+            await query.answer("❌ 只能重试失败的任务", show_alert=True)
+            return
+
+        await query.answer(text="⏳ 正在创建重试任务…")
+
+        user = get_or_create_user(db, update.effective_user)
+
+        config_manager = ConfigManager(db)
+        config = await config_manager.get_config()
+
+        quota_msg = check_user_quota(
+            db, user,
+            config.telegram_daily_task_limit,
+            config.telegram_max_concurrent_per_user,
+        )
+        if quota_msg:
+            await _safe_edit_text(query, f"❌ {quota_msg}")
+            return
+
+        original_extra = dict(task.extra_info) if task.extra_info else {}
+        snapshot_target_languages = original_extra.get("target_languages")
+        snapshot_keep_source = original_extra.get("keep_source_subtitle")
+
+        task_manager = TaskManager(db)
+        new_task = await task_manager.retry_task(task.id)
+        if not new_task:
+            await _safe_edit_text(query, "❌ 重试失败")
+            return
+
+        carry_over = {
+            k: v for k, v in original_extra.items()
+            if k not in ("telegram_notified", "notification_failed_count", "current_stage")
+        }
+        new_task.extra_info = carry_over
+        from tgbot.services import audit as audit_service
+        audit_service.record(
+            db, tg_user_id, "retry",
+            target_id=new_task.id,
+            payload={"original_task_id": task.id},
+        )
+        db.commit()
+        increment_daily_task_count(db, user)
+
+        generate_subtitle_task.apply_async(
+            kwargs=dict(
+                task_id=new_task.id,
+                media_item_id=new_task.media_item_id,
+                video_path=new_task.video_path,
+                asr_engine=new_task.asr_engine,
+                asr_model_id=new_task.asr_model_id,
+                translation_service=new_task.translation_service,
+                source_language=new_task.source_language,
+                target_languages=snapshot_target_languages,
+                keep_source_subtitle=snapshot_keep_source,
+            ),
+            task_id=new_task.id,
+        )
+
+        await _safe_edit_text(
+            query,
+            f"🔄 重试任务已创建\n"
+            f"📺 {new_task.media_item_title}\n"
+            f"🆔 {short_id(new_task.id)}",
+        )
+    except Exception as e:
+        logger.error("TG 重试任务异常: %s", e)
+        try:
+            await _safe_edit_text(query, "❌ 重试失败")
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+async def _op_download(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    task_short_id: str,
+    lang: Optional[str] = None,
+) -> None:
+    """下载字幕文件的统一 helper。"""
+    import os
+
+    tg_user_id = query.from_user.id
+    admin_ids = context.bot_data.get("admin_ids", [])
+
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(
+            Task.id.like(f"{task_short_id}%"),
+        ).first()
+
+        if not task:
+            await query.answer("❌ 任务不存在", show_alert=True)
+            return
+
+        if not _is_task_owner_or_admin(task, tg_user_id, admin_ids):
+            logger.warning(
+                "TG 下载字幕越权: tg_user=%s task=%s owner=%s",
+                tg_user_id, task.id, task.telegram_user_id,
+            )
+            await query.answer("❌ 无权操作此任务", show_alert=True)
+            return
+
+        if task.status != TaskStatus.COMPLETED:
+            await query.answer("❌ 任务尚未完成", show_alert=True)
+            return
+
+        # 选择字幕文件路径
+        target_path: Optional[str] = None
+        target_lang_label = lang or (task.target_language or "")
+        if lang:
+            for sub in (task.extra_info or {}).get("subtitles") or []:
+                if isinstance(sub, dict) and sub.get("lang") == lang:
+                    target_path = sub.get("path")
+                    break
+        else:
+            target_path = task.subtitle_path
+            if not target_path:
+                # 单一下载按钮但只有多语言列表时取第一个
+                subs = (task.extra_info or {}).get("subtitles") or []
+                if subs and isinstance(subs[0], dict):
+                    target_path = subs[0].get("path")
+                    target_lang_label = subs[0].get("lang", target_lang_label)
+
+        if not target_path or not os.path.exists(target_path):
+            await query.answer("❌ 字幕文件不存在或已被清理", show_alert=True)
+            return
+
+        await query.answer(text="📤 正在发送字幕…")
+
+        # 文件名：使用源文件名 + 语言后缀
+        try:
+            base_name = os.path.basename(target_path)
+        except Exception:
+            base_name = f"{short_id(task.id)}.srt"
+
+        try:
+            with open(target_path, "rb") as f:
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=f,
+                    filename=base_name,
+                    caption=f"📺 {task.media_item_title or '字幕'}"
+                            + (f" · {target_lang_label}" if target_lang_label else ""),
+                )
+        except Exception as e:
+            logger.error("发送字幕文件失败: %s", e)
+            try:
+                await query.message.reply_text(f"❌ 发送字幕失败: {e}")
+            except Exception:
+                pass
+    finally:
+        db.close()
+
+
 async def task_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """处理任务相关的回调（取消、重试）"""
+    """旧 callback（t:x:、t:r:）兼容入口，统一走 helper。"""
     query = update.callback_query
-    await query.answer()
+    data = query.data
+    if data.startswith("t:x:"):
+        await _op_cancel(query, context, data[4:])
+    elif data.startswith("t:r:"):
+        await _op_retry(query, context, update, data[4:])
+
+
+async def task_action_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """新命名空间 to:* 任务操作回调。"""
+    from tgbot.views.task_view import (
+        FILTER_ALL,
+        render_task_list,
+    )
+
+    query = update.callback_query
     data = query.data
 
-    if data.startswith("t:x:"):
-        # 取消任务
-        task_short_id = data[4:]
+    if data.startswith("to:x:"):
+        await _op_cancel(query, context, data[5:])
+        return
+
+    if data.startswith("to:r:"):
+        await _op_retry(query, context, update, data[5:])
+        return
+
+    if data.startswith("to:dl:"):
+        rest = data[6:]
+        # 形如 {short_id} 或 {short_id}:{lang}
+        if ":" in rest:
+            short, lang = rest.split(":", 1)
+        else:
+            short, lang = rest, None
+        await _op_download(query, context, short, lang)
+        return
+
+    if data.startswith("to:back:"):
+        rest = data[8:]
+        # 形如 {filter}:{page}
+        try:
+            filter_kind, page_str = rest.split(":", 1)
+            page = int(page_str)
+        except (ValueError, IndexError):
+            filter_kind, page = FILTER_ALL, 0
+
+        await query.answer()
         db = SessionLocal()
         try:
-            task = db.query(Task).filter(
-                Task.id.like(f"{task_short_id}%"),
-            ).first()
-            if task and task.status in (TaskStatus.PENDING, TaskStatus.PROCESSING):
-                task_manager = TaskManager(db)
-                await task_manager.cancel_task(task.id)
-                await query.edit_message_text(
-                    f"✅ 已取消: {task.media_item_title or short_id(task.id)}"
-                )
-            else:
-                await query.edit_message_text("❌ 无法取消此任务")
+            user = get_or_create_user(db, update.effective_user)
+            tasks, total = await _query_user_tasks(db, user.telegram_id, filter_kind, page)
+            daily_count, daily_limit = await _get_user_quota(db, user)
+            text, keyboard = render_task_list(
+                tasks, total, filter_kind, page, daily_count, daily_limit,
+            )
+            await _safe_edit_text(query, text, reply_markup=keyboard)
         finally:
             db.close()
+        return
 
-    elif data.startswith("t:r:"):
-        # 重试任务 - 简化处理，发送提示
-        task_short_id = data[4:]
-        await query.edit_message_text(
-            f"请使用命令: /retry {task_short_id}"
+
+async def task_list_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """tl:{filter}:{page} 列表分页/过滤切换。"""
+    from tgbot.views.task_view import FILTER_ALL, render_task_list
+
+    query = update.callback_query
+    data = query.data
+    rest = data[3:]
+    try:
+        filter_kind, page_str = rest.split(":", 1)
+        page = int(page_str)
+    except (ValueError, IndexError):
+        filter_kind, page = FILTER_ALL, 0
+
+    await query.answer()
+    db = SessionLocal()
+    try:
+        user = get_or_create_user(db, update.effective_user)
+        tasks, total = await _query_user_tasks(db, user.telegram_id, filter_kind, page)
+        daily_count, daily_limit = await _get_user_quota(db, user)
+        text, keyboard = render_task_list(
+            tasks, total, filter_kind, page, daily_count, daily_limit,
         )
+        await _safe_edit_text(query, text, reply_markup=keyboard)
+    finally:
+        db.close()
+
+
+async def task_detail_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """td:{short_id} 进入任务详情。"""
+    from tgbot.views.task_view import render_task_detail
+
+    query = update.callback_query
+    task_short_id = query.data[3:]
+
+    db = SessionLocal()
+    try:
+        user = get_or_create_user(db, update.effective_user)
+        admin_ids = context.bot_data.get("admin_ids", [])
+
+        task = db.query(Task).filter(
+            Task.id.like(f"{task_short_id}%"),
+        ).first()
+
+        if not task:
+            await query.answer("❌ 任务不存在", show_alert=True)
+            return
+
+        if not _is_task_owner_or_admin(task, user.telegram_id, admin_ids):
+            await query.answer("❌ 无权查看此任务", show_alert=True)
+            return
+
+        await query.answer()
+        text, keyboard = render_task_detail(task)
+        await _safe_edit_text(query, text, reply_markup=keyboard)
+    finally:
+        db.close()
 
 
 @require_auth
@@ -419,9 +839,20 @@ async def settings_callback(
 def register(app: Application) -> None:
     """注册任务相关 handlers"""
     app.add_handler(CommandHandler("tasks", tasks_command))
+    app.add_handler(CommandHandler("task_info", task_info_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("retry", retry_command))
     app.add_handler(CommandHandler("settings", settings_command))
+
+    # 创建任务（媒体详情按钮 + 内联确认）
     app.add_handler(CallbackQueryHandler(task_create_callback, pattern=r"^t:c:"))
+
+    # 旧命名空间兼容（历史按钮）
     app.add_handler(CallbackQueryHandler(task_callback, pattern=r"^t:[xr]:"))
+
+    # 新命名空间：任务列表 / 详情 / 操作
+    app.add_handler(CallbackQueryHandler(task_list_callback, pattern=r"^tl:"))
+    app.add_handler(CallbackQueryHandler(task_detail_callback, pattern=r"^td:"))
+    app.add_handler(CallbackQueryHandler(task_action_callback, pattern=r"^to:"))
+
     app.add_handler(CallbackQueryHandler(settings_callback, pattern=r"^s:n[cf]$"))

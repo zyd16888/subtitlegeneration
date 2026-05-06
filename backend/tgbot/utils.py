@@ -1,10 +1,38 @@
 """
 文本格式化和工具函数
 """
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy.orm import Session
+
 from config.time_utils import utc_now, ensure_utc
+from models.base import SessionLocal
+
+
+@contextmanager
+def session_scope() -> Session:
+    """
+    数据库 session 上下文管理器：替换重复的 SessionLocal/try/finally 模板。
+
+    用法:
+        with session_scope() as db:
+            db.query(...)
+
+    异常时会自动 rollback，正常退出 close（不主动 commit，调用方按需 commit）。
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
 
 
 def format_duration(seconds: Optional[float]) -> str:

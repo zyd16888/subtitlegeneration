@@ -114,25 +114,34 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "🔐 账号\n"
         "/login - 绑定 Emby 账号\n"
         "/logout - 解绑 Emby 账号\n"
-        "/me - 查看个人信息\n\n"
-        "🔍 搜索\n"
+        "/me - 个人信息和任务统计\n\n"
+        "🔍 搜索 / 浏览\n"
         f"@{context.bot.username} 关键词 - 内联搜索\n"
-        "/search 关键词 - 搜索媒体\n"
-        "/browse - 浏览媒体库\n\n"
+        "/search 关键词 - 搜索（支持 --no-sub --movie --series 过滤）\n"
+        "/browse - 浏览媒体库\n"
+        "/recent - 最近添加\n"
+        "/no_subs - 无字幕媒体\n\n"
         "📋 任务\n"
-        "/tasks - 我的任务列表\n"
+        "/tasks - 我的任务列表（点按钮进入详情）\n"
+        "/task_info ID - 任务详情\n"
         "/cancel ID - 取消任务\n"
         "/retry ID - 重试失败任务\n\n"
         "⚙️ 设置\n"
+        "/config - 任务偏好（目标语言、保留源字幕）\n"
         "/settings - 通知偏好\n"
     )
 
 
 async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理 /me 命令，显示个人信息"""
+    """处理 /me 命令，显示个人信息和任务统计"""
     await update_last_active(update)
 
-    from tgbot.services.user_service import get_or_create_user
+    from tgbot.services.user_service import (
+        get_or_create_user,
+        get_daily_task_count,
+        get_user_task_stats,
+    )
+    from tgbot.utils import format_duration
     from models.base import SessionLocal
 
     db = SessionLocal()
@@ -150,16 +159,32 @@ async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             config = await cm.get_config()
             daily_limit = config.telegram_daily_task_limit
 
-        from tgbot.services.user_service import get_daily_task_count
         daily_count = get_daily_task_count(db, user)
+        stats = get_user_task_stats(db, user.telegram_id)
 
-        await update.message.reply_text(
-            f"👤 个人信息\n\n"
-            f"Telegram: @{user.telegram_username or '无'}\n"
-            f"Emby: {emby_info}\n"
-            f"今日任务: {daily_count}/{daily_limit}\n"
-            f"管理员: {'是' if user.is_admin else '否'}\n"
+        success_rate_str = (
+            f"{stats['success_rate'] * 100:.0f}%"
+            if stats["success_rate"] is not None else "—"
         )
+        avg_str = (
+            format_duration(stats["avg_processing_seconds"])
+            if stats["avg_processing_seconds"] is not None else "—"
+        )
+
+        lines = [
+            "👤 个人信息\n",
+            f"Telegram: @{user.telegram_username or '无'}",
+            f"Emby: {emby_info}",
+            f"管理员: {'是' if user.is_admin else '否'}",
+            f"\n今日任务: {daily_count}/{daily_limit}",
+            f"进行中: {stats['active']}",
+            f"近 7 天: {stats['last_7d']}",
+            "\n📊 累计任务",
+            f"总数: {stats['total']}",
+            f"✅ 成功: {stats['completed']}  ❌ 失败: {stats['failed']}  🚫 取消: {stats['cancelled']}",
+            f"成功率: {success_rate_str}  平均耗时: {avg_str}",
+        ]
+        await update.message.reply_text("\n".join(lines))
     finally:
         db.close()
 

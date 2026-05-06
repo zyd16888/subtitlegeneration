@@ -4,7 +4,7 @@
 from .base import Base, get_db, init_db, engine, SessionLocal
 from .task import Task, TaskStatus
 from .config import SystemConfig
-from tgbot.models import TelegramUser
+from tgbot.models import TelegramUser, TelegramAuditLog
 
 __all__ = [
     "Base",
@@ -16,4 +16,5 @@ __all__ = [
     "TaskStatus",
     "SystemConfig",
     "TelegramUser",
+    "TelegramAuditLog",
 ]

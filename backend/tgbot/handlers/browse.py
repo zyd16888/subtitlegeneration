@@ -2,6 +2,7 @@
 媒体浏览和搜索处理（/browse, /search）
 """
 import logging
+from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -19,6 +20,7 @@ from tgbot.keyboards import (
     library_list_keyboard,
     media_detail_keyboard,
     media_list_keyboard,
+    season_list_keyboard,
 )
 from tgbot.middleware import require_auth
 
@@ -101,16 +103,56 @@ async def browse_command(
         db.close()
 
 
+def _parse_search_flags(args: list[str]) -> tuple[str, dict]:
+    """
+    把 /search 参数中的 --flag 抽取为过滤选项，剩余拼成关键词。
+
+    支持的 flag：
+      --no-sub / --no-subs  仅显示无字幕媒体
+      --has-sub             仅显示有字幕媒体
+      --movie               仅电影
+      --series              仅剧集
+    """
+    keyword_parts: list[str] = []
+    opts: dict = {}
+    for token in args:
+        low = token.lower()
+        if low in ("--no-sub", "--no-subs", "--nosub"):
+            opts["has_subtitles"] = False
+        elif low in ("--has-sub", "--with-sub"):
+            opts["has_subtitles"] = True
+        elif low == "--movie":
+            opts["item_type"] = "Movie"
+        elif low == "--series":
+            opts["item_type"] = "Series"
+        else:
+            keyword_parts.append(token)
+    return " ".join(keyword_parts).strip(), opts
+
+
 @require_auth
 async def search_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """搜索媒体"""
+    """搜索媒体。
+
+    用法:
+      /search 关键词
+      /search 关键词 --no-sub        # 仅无字幕
+      /search 关键词 --has-sub       # 仅有字幕
+      /search 关键词 --movie         # 仅电影
+      /search 关键词 --series        # 仅剧集
+    """
     if not context.args:
-        await update.message.reply_text("用法: /search 关键词")
+        await update.message.reply_text(
+            "用法: /search 关键词 [--no-sub|--has-sub|--movie|--series]"
+        )
         return
 
-    keyword = " ".join(context.args)
+    keyword, opts = _parse_search_flags(list(context.args))
+    if not keyword:
+        await update.message.reply_text("请输入搜索关键词")
+        return
 
     db = SessionLocal()
     try:
@@ -124,13 +166,28 @@ async def search_command(
             items, total = await emby.get_media_items(
                 search=keyword, limit=10, offset=0,
                 accessible_library_ids=accessible_ids,
+                item_type=opts.get("item_type"),
+                has_subtitles=opts.get("has_subtitles"),
             )
 
+        flag_desc = []
+        if opts.get("item_type") == "Movie":
+            flag_desc.append("仅电影")
+        elif opts.get("item_type") == "Series":
+            flag_desc.append("仅剧集")
+        if opts.get("has_subtitles") is False:
+            flag_desc.append("无字幕")
+        elif opts.get("has_subtitles") is True:
+            flag_desc.append("有字幕")
+        flag_str = f"（{' · '.join(flag_desc)}）" if flag_desc else ""
+
         if not items:
-            await update.message.reply_text(f"没有找到与 \"{keyword}\" 相关的媒体")
+            await update.message.reply_text(
+                f"没有找到与 \"{keyword}\" 相关的媒体{flag_str}"
+            )
             return
 
-        text = f"🔍 搜索 \"{keyword}\" 找到 {total} 个结果：\n"
+        text = f"🔍 搜索 \"{keyword}\"{flag_str} 找到 {total} 个结果：\n"
         buttons = []
         for item in items:
             icon = "🎬" if item.type == "Movie" else "📺"
@@ -148,6 +205,98 @@ async def search_command(
     except Exception as e:
         logger.error(f"搜索异常: {e}")
         await update.message.reply_text("❌ 搜索失败")
+    finally:
+        db.close()
+
+
+@require_auth
+async def recent_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """最近添加的媒体。"""
+    db = SessionLocal()
+    try:
+        emby_url, emby_api_key, config = await _get_emby(db)
+        if not emby_url:
+            await update.message.reply_text("❌ Emby 服务未配置")
+            return
+
+        accessible_ids = _get_accessible_ids(config)
+        async with EmbyConnector(emby_url, emby_api_key) as emby:
+            items, total = await emby.get_media_items(
+                limit=10, offset=0,
+                accessible_library_ids=accessible_ids,
+                sort_by="DateCreated", sort_order="Descending",
+            )
+
+        if not items:
+            await update.message.reply_text("最近没有新增媒体")
+            return
+
+        text = f"🆕 最近添加（{total} 项）\n"
+        buttons = []
+        for item in items:
+            icon = "🎬" if item.type == "Movie" else "📺"
+            sub_icon = " ✅" if item.has_subtitles else ""
+            buttons.append([
+                InlineKeyboardButton(
+                    f"{icon} {item.name}{sub_icon}",
+                    callback_data=f"b:d:{item.id}",
+                )
+            ])
+
+        await update.message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(buttons)
+        )
+    except Exception as e:
+        logger.error(f"最近添加查询异常: {e}")
+        await update.message.reply_text("❌ 获取最近添加失败")
+    finally:
+        db.close()
+
+
+@require_auth
+async def no_subs_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """无字幕媒体快捷列表（按最近添加排序）。"""
+    db = SessionLocal()
+    try:
+        emby_url, emby_api_key, config = await _get_emby(db)
+        if not emby_url:
+            await update.message.reply_text("❌ Emby 服务未配置")
+            return
+
+        accessible_ids = _get_accessible_ids(config)
+        async with EmbyConnector(emby_url, emby_api_key) as emby:
+            items, total = await emby.get_media_items(
+                limit=10, offset=0,
+                accessible_library_ids=accessible_ids,
+                sort_by="DateCreated", sort_order="Descending",
+                has_subtitles=False,
+            )
+
+        if not items:
+            await update.message.reply_text("没有无字幕媒体 🎉")
+            return
+
+        text = f"❌ 无字幕媒体（{total} 项）\n"
+        buttons = []
+        for item in items:
+            icon = "🎬" if item.type == "Movie" else "📺"
+            buttons.append([
+                InlineKeyboardButton(
+                    f"{icon} {item.name}",
+                    callback_data=f"b:d:{item.id}",
+                )
+            ])
+
+        await update.message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(buttons)
+        )
+    except Exception as e:
+        logger.error(f"无字幕查询异常: {e}")
+        await update.message.reply_text("❌ 获取无字幕媒体失败")
     finally:
         db.close()
 
@@ -199,12 +348,31 @@ async def browse_callback(
         await _show_library_items(query, lib_id, page)
         return
 
+    if data.startswith("b:se:"):
+        # 某一季的集列表
+        rest = data[5:]
+        parts = rest.rsplit(":", 1)
+        if len(parts) < 2:
+            return
+        try:
+            page = int(parts[1])
+        except ValueError:
+            page = 0
+        # parts[0] 形如 "{series_id}:{season_key}"，可能 series_id 含冒号
+        head_parts = parts[0].rsplit(":", 1)
+        if len(head_parts) < 2:
+            return
+        series_id, season_key = head_parts
+        await _show_season_episodes(query, series_id, season_key, page)
+        return
+
     if data.startswith("b:s:"):
-        # 剧集列表翻页
-        parts = data[4:].rsplit(":", 1)
-        series_id = parts[0]
-        page = int(parts[1]) if len(parts) > 1 else 0
-        await _show_episodes(query, series_id, page)
+        # 季列表（剧集入口）
+        series_id = data[4:]
+        # 兼容旧格式 b:s:{id}:{page}：剥离尾部数字
+        if ":" in series_id:
+            series_id = series_id.split(":", 1)[0]
+        await _show_seasons(query, series_id)
         return
 
     if data.startswith("b:d:"):
@@ -256,17 +424,51 @@ async def _show_library_items(query, lib_id: str, page: int) -> None:
         db.close()
 
 
-async def _show_episodes(query, series_id: str, page: int) -> None:
-    """显示剧集列表"""
+def _group_episodes_by_season(
+    episodes: list,
+) -> tuple[list[tuple[int, int]], dict[str, list]]:
+    """
+    把集列表按季分组。
+
+    Returns:
+        (seasons_summary, by_season)
+        seasons_summary: [(season_number, count), ...] 升序，None/0 表示特别篇
+        by_season: {"1": [ep, ep, ...], "0": [...]} 集按 episode_number 升序
+    """
+    by_season: dict[str, list] = {}
+    for ep in episodes:
+        season = ep.season_number
+        key = "0" if (season is None or season == 0) else str(int(season))
+        by_season.setdefault(key, []).append(ep)
+
+    # 集内排序
+    for eps in by_season.values():
+        eps.sort(key=lambda e: (
+            e.episode_number if e.episode_number is not None else 9999
+        ))
+
+    # 季列表升序，特别篇放最后
+    keys_sorted = sorted(
+        by_season.keys(),
+        key=lambda k: (1 if k == "0" else 0, int(k) if k != "0" else 0),
+    )
+    summary = [
+        (None if k == "0" else int(k), len(by_season[k]))
+        for k in keys_sorted
+    ]
+    return summary, by_season
+
+
+async def _fetch_series_episodes_safe(query, series_id: str) -> Optional[list]:
+    """加载剧集，同时做访问控制。返回 None 表示已发回错误消息。"""
     db = SessionLocal()
     try:
         emby_url, emby_api_key, config = await _get_emby(db)
         if not emby_url:
-            return
+            return None
 
         accessible_ids = _get_accessible_ids(config)
         async with EmbyConnector(emby_url, emby_api_key) as emby:
-            # 先校验 series 所属媒体库是否在允许范围
             if accessible_ids is not None:
                 series = await emby.get_media_item(series_id)
                 if not await emby.is_item_accessible(series, accessible_ids):
@@ -274,22 +476,70 @@ async def _show_episodes(query, series_id: str, page: int) -> None:
                         f"TG 访问控制拒绝: user={query.from_user.id} series_id={series_id}"
                     )
                     await _reply_text(query, "❌ 无权访问该内容")
-                    return
-            episodes = await emby.get_series_episodes(series_id)
+                    return None
+            return await emby.get_series_episodes(series_id)
+    finally:
+        db.close()
 
+
+async def _show_seasons(query, series_id: str) -> None:
+    """显示某剧集下的季列表（仅一季时直接跳到集列表）。"""
+    try:
+        episodes = await _fetch_series_episodes_safe(query, series_id)
+        if episodes is None:
+            return
         if not episodes:
             await _reply_text(query, "此剧集暂无内容")
             return
 
+        summary, _ = _group_episodes_by_season(episodes)
+
+        # 只有单季时直接跳过季列表
+        if len(summary) == 1:
+            season_num = summary[0][0]
+            season_key = "0" if season_num is None else str(season_num)
+            await _show_season_episodes(query, series_id, season_key, 0)
+            return
+
         await _reply_text(
             query,
-            f"📺 剧集列表 (共 {len(episodes)} 集)：",
-            reply_markup=episode_list_keyboard(episodes, series_id, page),
+            f"📺 剧集结构（共 {len(summary)} 季 / {len(episodes)} 集）：",
+            reply_markup=season_list_keyboard(series_id, summary),
         )
     except Exception as e:
-        logger.error(f"显示剧集列表异常: {e}")
-    finally:
-        db.close()
+        logger.error(f"显示季列表异常: {e}")
+
+
+async def _show_season_episodes(
+    query, series_id: str, season_key: str, page: int,
+) -> None:
+    """显示某季的集列表（分页）。"""
+    try:
+        episodes = await _fetch_series_episodes_safe(query, series_id)
+        if episodes is None:
+            return
+        if not episodes:
+            await _reply_text(query, "此剧集暂无内容")
+            return
+
+        _, by_season = _group_episodes_by_season(episodes)
+        season_episodes = by_season.get(season_key, [])
+        if not season_episodes:
+            await _reply_text(query, "该季暂无内容")
+            return
+
+        if season_key == "0":
+            label = "特别篇"
+        else:
+            label = f"第 {int(season_key)} 季"
+
+        await _reply_text(
+            query,
+            f"📺 {label}（共 {len(season_episodes)} 集，第 {page + 1} 页）",
+            reply_markup=episode_list_keyboard(season_episodes, series_id, season_key, page),
+        )
+    except Exception as e:
+        logger.error(f"显示该季集列表异常: {e}")
 
 
 async def _show_media_detail(query, item_id: str) -> None:
@@ -332,7 +582,7 @@ async def _show_media_detail(query, item_id: str) -> None:
 
         if item.type == "Series":
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📋 查看剧集", callback_data=f"b:s:{item_id}:0")],
+                [InlineKeyboardButton("📋 查看剧集", callback_data=f"b:s:{item_id}")],
                 [InlineKeyboardButton("🔙 返回", callback_data="b:back")],
             ])
         else:
@@ -368,4 +618,6 @@ def register(app: Application) -> None:
     """注册浏览相关 handlers"""
     app.add_handler(CommandHandler("browse", browse_command))
     app.add_handler(CommandHandler("search", search_command))
+    app.add_handler(CommandHandler("recent", recent_command))
+    app.add_handler(CommandHandler("no_subs", no_subs_command))
     app.add_handler(CallbackQueryHandler(browse_callback, pattern=r"^b:|^noop$"))
