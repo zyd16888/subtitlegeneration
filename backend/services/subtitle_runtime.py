@@ -4,12 +4,26 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from services.progress_reporter import TaskProgressReporter
 from services.subtitle_translation import resolve_target_languages
 
 logger = logging.getLogger(__name__)
+
+
+def _prepend_search_stage(
+    weights: Dict[str, Tuple[int, int]],
+    search_pct: int = 5,
+) -> Dict[str, Tuple[int, int]]:
+    """把 0-100 的阶段权重压缩到 [search_pct, 100]，并在最前插入 search:(0, search_pct)。"""
+    span = 100 - search_pct
+    rescaled: Dict[str, Tuple[int, int]] = {"search": (0, search_pct)}
+    for name, (start, end) in weights.items():
+        new_start = search_pct + int(round(start / 100.0 * span))
+        new_end = search_pct + int(round(end / 100.0 * span))
+        rescaled[name] = (new_start, new_end)
+    return rescaled
 
 
 @dataclass
@@ -95,9 +109,13 @@ def create_progress_reporter(
     """根据可选处理阶段创建进度上报器。"""
     has_denoise = getattr(config, "enable_denoise", False)
     has_lid = bool(config.enable_language_detection and config.lid_model_id)
+    has_search = bool(
+        getattr(config, "subtitle_search_enabled", False)
+        and getattr(config, "subtitle_search_auto_in_task", False)
+    )
 
     if has_denoise and has_lid:
-        return TaskProgressReporter(task_id, session_factory, stage_weights={
+        weights = {
             "audio": (0, 13),
             "denoise": (13, 22),
             "lid": (22, 25),
@@ -105,26 +123,37 @@ def create_progress_reporter(
             "translation": (60, 90),
             "subtitle": (90, 95),
             "emby": (95, 100),
-        })
-    if has_denoise:
-        return TaskProgressReporter(task_id, session_factory, stage_weights={
+        }
+    elif has_denoise:
+        weights = {
             "audio": (0, 15),
             "denoise": (15, 25),
             "asr": (25, 60),
             "translation": (60, 90),
             "subtitle": (90, 95),
             "emby": (95, 100),
-        })
-    if has_lid:
-        return TaskProgressReporter(task_id, session_factory, stage_weights={
+        }
+    elif has_lid:
+        weights = {
             "audio": (0, 18),
             "lid": (18, 22),
             "asr": (22, 60),
             "translation": (60, 90),
             "subtitle": (90, 95),
             "emby": (95, 100),
-        })
-    return TaskProgressReporter(task_id, session_factory)
+        }
+    else:
+        weights = None  # 用 DEFAULT_STAGE_WEIGHTS
+
+    if has_search:
+        from services.progress_reporter import DEFAULT_STAGE_WEIGHTS
+
+        base = weights if weights is not None else dict(DEFAULT_STAGE_WEIGHTS)
+        weights = _prepend_search_stage(base)
+
+    if weights is None:
+        return TaskProgressReporter(task_id, session_factory)
+    return TaskProgressReporter(task_id, session_factory, stage_weights=weights)
 
 
 def create_task_work_dir(task_id: str, temp_dir: str) -> str:
