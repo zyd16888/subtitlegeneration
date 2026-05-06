@@ -1,7 +1,19 @@
 """
 InlineKeyboard 构建函数
 """
+from typing import Optional
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+
+SOURCE_LANGUAGE_CHOICES: list[tuple[str, str]] = [
+    ("ja", "日语"),
+    ("en", "English"),
+    ("zh", "中文"),
+    ("ko", "한국어"),
+    ("yue", "粤语"),
+]
+SOURCE_LANGUAGE_CODES: set[str] = {code for code, _ in SOURCE_LANGUAGE_CHOICES}
 
 
 def library_list_keyboard(
@@ -138,6 +150,7 @@ def media_detail_keyboard(media_item_id: str) -> InlineKeyboardMarkup:
     """构建媒体详情键盘（含生成字幕按钮）"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎯 生成字幕", callback_data=f"t:c:{media_item_id}")],
+        [InlineKeyboardButton("🌐 选源语言生成", callback_data=f"t:cl:{media_item_id}")],
         [InlineKeyboardButton("🔙 返回", callback_data="b:back")],
     ])
 
@@ -149,7 +162,47 @@ def confirm_task_keyboard(media_item_id: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("✅ 确认生成", callback_data=f"t:c:{media_item_id}"),
             InlineKeyboardButton("❌ 取消", callback_data="noop"),
         ],
+        [InlineKeyboardButton("🌐 选源语言生成", callback_data=f"t:cl:{media_item_id}")],
     ])
+
+
+def source_language_picker_keyboard(
+    action: str,
+    target: str,
+    current_lang: Optional[str] = None,
+) -> InlineKeyboardMarkup:
+    """构建源语言选择键盘。
+
+    Args:
+        action: "create" 或 "retry"
+        target: 媒体 ID（create）或任务短码（retry）
+        current_lang: 当前/原任务的源语言，用于在按钮上加 ✓ 标记
+    """
+    if action == "create":
+        submit_prefix = "t:cs:"
+        back_callback = f"b:d:{target}"
+    elif action == "retry":
+        submit_prefix = "to:rs:"
+        back_callback = f"td:{target}"
+    else:
+        raise ValueError(f"未知 action: {action}")
+
+    rows: list[list[InlineKeyboardButton]] = []
+    pair: list[InlineKeyboardButton] = []
+    for code, label in SOURCE_LANGUAGE_CHOICES:
+        marker = "✓ " if code == current_lang else ""
+        pair.append(InlineKeyboardButton(
+            f"{marker}{label}",
+            callback_data=f"{submit_prefix}{target}:{code}",
+        ))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+
+    rows.append([InlineKeyboardButton("🔙 返回", callback_data=back_callback)])
+    return InlineKeyboardMarkup(rows)
 
 
 def notification_settings_keyboard(

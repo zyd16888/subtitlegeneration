@@ -213,6 +213,7 @@ def render_task_detail_keyboard(
         rows.append([InlineKeyboardButton("❌ 取消", callback_data=f"to:x:{sid}")])
     elif task.status == TaskStatus.FAILED:
         rows.append([InlineKeyboardButton("🔄 重试", callback_data=f"to:r:{sid}")])
+        rows.append([InlineKeyboardButton("🌐 换源语言重试", callback_data=f"to:rl:{sid}")])
     elif task.status == TaskStatus.COMPLETED:
         # 多语言字幕：每个语言一个按钮；单语言：一个总下载按钮
         subtitles = _list_subtitles(task)
@@ -270,6 +271,7 @@ def render_failure_notification_keyboard(task: Task) -> InlineKeyboardMarkup:
     sid = short_id(task.id)
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 立即重试", callback_data=f"to:r:{sid}")],
+        [InlineKeyboardButton("🌐 换源语言重试", callback_data=f"to:rl:{sid}")],
         [InlineKeyboardButton("🔍 详情", callback_data=f"td:{sid}")],
     ])
 
