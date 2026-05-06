@@ -81,6 +81,9 @@ export interface Task {
   subtitle_path?: string;
   segment_count?: number;  // 识别的字幕段落数
   audio_duration?: number;  // 音频时长（秒）
+
+  // 字幕来源标记（"xunlei_search" 表示来自外部字幕搜索）
+  subtitle_source?: string;
 }
 
 /**
@@ -260,6 +263,78 @@ export interface SystemConfig {
   // 模型存储与下载
   model_storage_dir?: string;
   github_token?: string;
+
+  // 字幕搜索（迅雷字幕 API）
+  subtitle_search_enabled?: boolean;
+  subtitle_search_auto_in_task?: boolean;
+  subtitle_search_min_score?: number;
+  subtitle_search_timeout?: number;
+}
+
+/**
+ * 字幕搜索结果中语言信息
+ */
+export interface SubtitleSearchLanguageInfo {
+  code: string | null;
+  source: 'api_field' | 'filename' | 'content' | 'unknown' | string;
+  confidence: number;
+  is_bilingual: boolean;
+  secondary_code?: string | null;
+}
+
+/**
+ * 单条字幕搜索结果
+ */
+export interface SubtitleSearchResult {
+  gcid: string;
+  cid: string;
+  url: string;
+  ext: string;
+  name: string;
+  duration_ms: number;
+  raw_languages: string[];
+  extra_name?: string | null;
+  language: SubtitleSearchLanguageInfo;
+  score: number;
+  duration_match: number;
+  score_breakdown: Record<string, any>;
+}
+
+/**
+ * 字幕搜索响应
+ */
+export interface SubtitleSearchResponse {
+  query: string;
+  media_duration_ms?: number | null;
+  target_languages: string[];
+  items: SubtitleSearchResult[];
+}
+
+/**
+ * 字幕应用请求
+ */
+export interface SubtitleApplyRequest {
+  media_item_id: string;
+  url: string;
+  ext: string;
+  name?: string;
+  raw_languages?: string[];
+  library_id?: string;
+  path_mapping_index?: number;
+  force_language?: string;
+}
+
+/**
+ * 字幕应用响应
+ */
+export interface SubtitleApplyResponse {
+  media_item_id: string;
+  target_path: string;
+  ext: string;
+  language: SubtitleSearchLanguageInfo;
+  emby_refreshed: boolean;
+  source_url: string;
+  file_size: number;
 }
 
 /**

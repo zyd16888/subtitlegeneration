@@ -12,7 +12,7 @@ import time
 import os
 from pathlib import Path
 
-from api import media, tasks, config, stats, models, worker, auth, asr_audio
+from api import media, tasks, config, stats, models, worker, auth, asr_audio, subtitle_search
 from models.base import init_db
 from utils.logger import setup_logger, get_logger
 from config.settings import settings
@@ -293,6 +293,7 @@ app.include_router(stats.router)
 app.include_router(models.router)
 app.include_router(worker.router)
 app.include_router(asr_audio.router)
+app.include_router(subtitle_search.router)
 
 
 # ========== 托管前端静态文件 ==========

@@ -373,6 +373,7 @@ const LibraryPage: React.FC = () => {
           mediaItem={selectedMediaItem}
           configValid={configValid}
           configMessage={configMessage}
+          libraryId={selectedLibrary}
           onClose={() => { setMediaConfigModalVisible(false); setSelectedMediaItem(null); }}
           onGenerateSubtitle={handleMediaItemGenerateSubtitle}
         />

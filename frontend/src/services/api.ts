@@ -28,6 +28,9 @@ import type {
   TempDiskUsage,
   BotStatus,
   WorkerStatus,
+  SubtitleSearchResponse,
+  SubtitleApplyRequest,
+  SubtitleApplyResponse,
 } from '../types/api';
 
 /**
@@ -482,6 +485,36 @@ class ApiClient {
      */
     activateVadModel: async (modelId: string): Promise<void> => {
       await this.client.post(`/api/models/vad/${modelId}/activate`);
+    },
+  };
+
+  /**
+   * 字幕搜索相关 API（迅雷字幕 API 集成）
+   */
+  subtitleSearch = {
+    /**
+     * 搜索字幕候选
+     */
+    search: async (params: {
+      query: string;
+      media_item_id?: string;
+    }): Promise<SubtitleSearchResponse> => {
+      const response = await this.client.get<SubtitleSearchResponse>(
+        '/api/subtitle-search',
+        { params }
+      );
+      return response.data;
+    },
+
+    /**
+     * 下载并应用选中的字幕
+     */
+    apply: async (request: SubtitleApplyRequest): Promise<SubtitleApplyResponse> => {
+      const response = await this.client.post<SubtitleApplyResponse>(
+        '/api/subtitle-search/apply',
+        request
+      );
+      return response.data;
     },
   };
 

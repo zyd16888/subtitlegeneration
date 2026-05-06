@@ -145,6 +145,12 @@ class SystemConfigData(BaseModel):
     # 格式: [{"name": "映射名称", "emby_prefix": "/me/matched", "local_prefix": "/mnt/drive/matched", "library_ids": []}]
     path_mappings: list = []
 
+    # 字幕搜索（迅雷字幕 API）
+    subtitle_search_enabled: bool = False              # 总开关：关闭时手动入口与自动检索都不生效
+    subtitle_search_auto_in_task: bool = False         # 任务开始前自动检索；命中即跳过 ASR/翻译
+    subtitle_search_min_score: float = 0.7             # 自动模式下的命中阈值
+    subtitle_search_timeout: int = 5                   # API 超时（秒）
+
     # Telegram Bot 配置
     telegram_bot_enabled: bool = False  # Bot 启用开关（UI 控制）
     telegram_bot_token: Optional[str] = None
@@ -356,6 +362,22 @@ class SystemConfigData(BaseModel):
             return None
         if v < 1 or v > 32:
             raise ValueError('翻译并发数必须在 1-32 之间')
+        return v
+
+    @field_validator('subtitle_search_min_score')
+    @classmethod
+    def validate_subtitle_search_min_score(cls, v: float) -> float:
+        """字幕搜索命中阈值必须在 0-1 之间"""
+        if v < 0 or v > 1:
+            raise ValueError('subtitle_search_min_score 必须在 0-1 之间')
+        return v
+
+    @field_validator('subtitle_search_timeout')
+    @classmethod
+    def validate_subtitle_search_timeout(cls, v: int) -> int:
+        """字幕搜索 API 超时必须在 1-60 秒之间"""
+        if v < 1 or v > 60:
+            raise ValueError('subtitle_search_timeout 必须在 1-60 秒之间')
         return v
     
     @field_validator('telegram_accessible_libraries', mode='before')

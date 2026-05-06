@@ -19,7 +19,7 @@ import { useIsMobile } from '../utils/useIsMobile';
 const { Option } = Select;
 const { Text } = Typography;
 
-type CategoryKey = 'emby' | 'path' | 'translation' | 'asr' | 'language' | 'audio' | 'models' | 'worker' | 'telegram' | 'cleanup';
+type CategoryKey = 'emby' | 'path' | 'translation' | 'asr' | 'language' | 'audio' | 'models' | 'worker' | 'telegram' | 'subtitle_search' | 'cleanup';
 
 interface CategoryDef {
   key: CategoryKey;
@@ -40,6 +40,7 @@ const CATEGORIES: CategoryDef[] = [
   { key: 'models',     icon: <DatabaseOutlined />,    label: '模型管理',            description: '下载激活 · 自适应映射',    colorVar: '--accent-rose',     colorBgVar: '--accent-rose-bg' },
   { key: 'worker',     icon: <ThunderboltOutlined />, label: '任务 Worker',        description: '后台进程 · 并发控制',      colorVar: '--accent-emerald',  colorBgVar: '--accent-emerald-bg' },
   { key: 'telegram',   icon: <SendOutlined />,       label: 'Telegram 机器人',     description: 'Bot Token · 配额控制',     colorVar: '--accent-cyan',     colorBgVar: '--accent-cyan-bg' },
+  { key: 'subtitle_search', icon: <FilterOutlined />, label: '字幕搜索',         description: '迅雷字幕 API · 自动检索',  colorVar: '--accent-amber',    colorBgVar: '--accent-amber-bg' },
   { key: 'cleanup',    icon: <ClearOutlined />,      label: '临时文件管理',       description: '自动清理 · 磁盘占用',      colorVar: '--accent-rose',     colorBgVar: '--accent-rose-bg' },
 ];
 
@@ -64,6 +65,7 @@ const Settings: React.FC = () => {
   const [savingModels, setSavingModels] = useState(false);
   const [savingCleanup, setSavingCleanup] = useState(false);
   const [savingTelegram, setSavingTelegram] = useState(false);
+  const [savingSubtitleSearch, setSavingSubtitleSearch] = useState(false);
   const [botStatus, setBotStatus] = useState<{ running: boolean; uptime_seconds?: number } | null>(null);
   const [botLoading, setBotLoading] = useState(false);
   const [workerStatus, setWorkerStatus] = useState<{ running: boolean; pid?: number; uptime_seconds?: number } | null>(null);
@@ -406,6 +408,20 @@ const Settings: React.FC = () => {
     try { setSavingCleanup(true); await api.config.partialUpdateConfig({ cleanup_temp_files_on_success: form.getFieldValue('cleanup_temp_files_on_success') }); message.success('清理配置已保存'); }
     catch (err: any) { message.error(err.message || '保存失败'); }
     finally { setSavingCleanup(false); }
+  };
+
+  const handleSaveSubtitleSearch = async () => {
+    try {
+      setSavingSubtitleSearch(true);
+      await api.config.partialUpdateConfig({
+        subtitle_search_enabled: form.getFieldValue('subtitle_search_enabled'),
+        subtitle_search_auto_in_task: form.getFieldValue('subtitle_search_auto_in_task'),
+        subtitle_search_min_score: form.getFieldValue('subtitle_search_min_score'),
+        subtitle_search_timeout: form.getFieldValue('subtitle_search_timeout'),
+      });
+      message.success('字幕搜索配置已保存');
+    } catch (err: any) { message.error(err.message || '保存失败'); }
+    finally { setSavingSubtitleSearch(false); }
   };
 
   const handleSaveTelegram = async () => {
@@ -1738,6 +1754,63 @@ const Settings: React.FC = () => {
               <Button icon={<ReloadOutlined />} onClick={loadBotStatus} type="text">刷新状态</Button>
               <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveTelegram} loading={savingTelegram} style={{ background: 'var(--accent-cyan)', borderColor: 'var(--accent-cyan)' }}>保存配置</Button>
             </Space>
+          </div>
+        </div>
+      );
+
+      case 'subtitle_search': return (
+        <div className="cat-panel">
+          <div className="cat-hero">
+            <div className="cat-icon" style={{ background: 'var(' + activeCat.colorBgVar + ')', color: 'var(' + activeCat.colorVar + ')' }}>{activeCat.icon}</div>
+            <div>
+              <h2 className="cat-title">字幕搜索</h2>
+              <p className="cat-sub">通过第三方迅雷字幕 API 直接拉取已有字幕，跳过本地 ASR/翻译</p>
+            </div>
+          </div>
+          <div className="cat-info-banner">
+            <InfoCircleOutlined style={{ marginRight: 8, color: 'var(--accent-amber)', flexShrink: 0 }} />
+            <span>字幕来自第三方网友上传，质量参差不齐。建议先开启总开关、用手动搜索面板验证后，再考虑开启任务自动检索。落盘需要先在"路径映射"中配置规则。</span>
+          </div>
+          <div className="cat-section">
+            <div style={{ marginBottom: 20, padding: 14, background: 'var(--bg-input)', borderRadius: 8, border: '1px solid var(--glass-border)' }}>
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <div style={{ fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>启用字幕搜索</div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>关闭后媒体配置弹窗将隐藏"搜索现有字幕"按钮，自动检索也不会触发。</Text>
+                </Col>
+                <Col><Form.Item name="subtitle_search_enabled" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
+              </Row>
+            </div>
+            <div style={{ marginBottom: 20, padding: 14, background: 'var(--bg-input)', borderRadius: 8, border: '1px solid var(--glass-border)' }}>
+              <Row align="middle" gutter={16}>
+                <Col flex="auto">
+                  <div style={{ fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>任务开始前自动检索</div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>开启后，每个字幕生成任务开始前会先调 API 搜索；命中且分数达到阈值时直接下载并跳过 ASR/翻译；未命中则继续走原管线。</Text>
+                </Col>
+                <Col><Form.Item name="subtitle_search_auto_in_task" valuePropName="checked" style={{ margin: 0 }}><Switch /></Form.Item></Col>
+              </Row>
+            </div>
+            <Row gutter={24}>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="subtitle_search_min_score"
+                  label={<Space>命中阈值 <Tooltip title="0-1 之间。综合分大于等于此值才视为命中。建议 0.6-0.8。"><InfoCircleOutlined /></Tooltip></Space>}
+                >
+                  <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="subtitle_search_timeout"
+                  label={<Space>API 超时（秒） <Tooltip title="单次搜索请求的超时时间，建议 3-10 秒"><InfoCircleOutlined /></Tooltip></Space>}
+                >
+                  <InputNumber min={1} max={60} step={1} style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
+          <div className="cat-footer">
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveSubtitleSearch} loading={savingSubtitleSearch} style={{ background: 'var(--accent-amber)', borderColor: 'var(--accent-amber)' }}>保存配置</Button>
           </div>
         </div>
       );

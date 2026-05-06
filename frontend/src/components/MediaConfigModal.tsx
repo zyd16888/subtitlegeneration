@@ -19,10 +19,12 @@ import {
   PlayCircleOutlined,
   GlobalOutlined,
   InfoCircleOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
 import { api, getImageUrl } from '../services/api';
 import type { MediaItem, TaskConfig, SystemConfig } from '../types/api';
 import { useIsMobile } from '../utils/useIsMobile';
+import SubtitleSearchModal from './SubtitleSearchModal';
 
 const { Text } = Typography;
 
@@ -33,6 +35,7 @@ interface MediaConfigModalProps {
   mediaItem: MediaItem;
   configValid: boolean;
   configMessage: string;
+  libraryId?: string;
   onClose: () => void;
   onGenerateSubtitle: (task: TaskConfig) => void;
 }
@@ -51,6 +54,7 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
   mediaItem,
   configValid,
   configMessage,
+  libraryId,
   onClose,
   onGenerateSubtitle,
 }) => {
@@ -58,6 +62,8 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
   const isMobile = useIsMobile();
   const [globalConfig, setGlobalConfig] = useState<SystemConfig | null>(null);
   const [loading, setLoading] = useState(false);
+  const [searchModalVisible, setSearchModalVisible] = useState(false);
+  const [searchPathMappingIndex, setSearchPathMappingIndex] = useState<number | undefined>(undefined);
 
   // 加载全局配置
   const fetchGlobalConfig = async () => {
@@ -118,6 +124,18 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
         <Button key="cancel" onClick={onClose}>
           取消
         </Button>,
+        globalConfig?.subtitle_search_enabled ? (
+          <Button
+            key="search"
+            icon={<SearchOutlined />}
+            onClick={() => {
+              setSearchPathMappingIndex(form.getFieldValue('path_mapping_index'));
+              setSearchModalVisible(true);
+            }}
+          >
+            搜索现有字幕
+          </Button>
+        ) : null,
         <Button
           key="generate"
           type="primary"
@@ -128,7 +146,7 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
         >
           生成字幕
         </Button>,
-      ]}
+      ].filter(Boolean)}
     >
       {/* 配置不完整警告 */}
       {!configValid && (
@@ -341,6 +359,16 @@ const MediaConfigModal: React.FC<MediaConfigModalProps> = ({
           )}
         </Form.Item>
       </Form>
+
+      {searchModalVisible && (
+        <SubtitleSearchModal
+          visible={searchModalVisible}
+          mediaItem={mediaItem}
+          libraryId={libraryId}
+          pathMappingIndex={searchPathMappingIndex}
+          onClose={() => setSearchModalVisible(false)}
+        />
+      )}
     </Modal>
   );
 };

@@ -460,6 +460,37 @@ class EmbyConnector:
             logger.error(f"获取媒体文件路径失败 (ID: {item_id}): {e}")
             raise
     
+    async def get_media_duration_ms(self, item_id: str) -> Optional[int]:
+        """
+        获取媒体项时长（毫秒）。
+
+        从 RunTimeTicks 转毫秒（1 tick = 100ns）。
+        媒体项不存在或无时长信息时返回 None，不抛异常。
+        """
+        try:
+            user_id = await self._get_user_id()
+            url = f"{self.base_url}/Users/{user_id}/Items/{item_id}"
+            params = {"Fields": "RunTimeTicks"}
+
+            response = await self.client.get(
+                url, headers=self._get_headers(), params=params
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            ticks = data.get("RunTimeTicks")
+            if not ticks:
+                return None
+            return int(ticks // 10000)
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                f"获取媒体时长失败 (ID: {item_id}, HTTP {e.response.status_code})"
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"获取媒体时长失败 (ID: {item_id}): {e}")
+            return None
+
     async def get_audio_stream_url(self, item_id: str) -> str:
         """
         获取媒体项的视频流 URL（用于 FFmpeg 提取音频）
